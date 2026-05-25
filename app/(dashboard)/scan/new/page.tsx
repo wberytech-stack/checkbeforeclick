@@ -39,6 +39,8 @@ export default function NewScanPage() {
     try {
       const response = await fetch("/api/scan", {
         method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           input: input.trim(),
@@ -164,3 +166,4 @@ export default function NewScanPage() {
     </div>
   )
 }
+

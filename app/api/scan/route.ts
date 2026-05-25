@@ -1,15 +1,27 @@
 ﻿import { createClient } from "@/lib/supabase/server"
 import { inngest } from "@/inngest/client"
 import { NextResponse } from "next/server"
+import { cookies } from "next/headers"
 
 const VALID_INPUT_TYPES = ["url", "domain", "email", "header", "signature", "batch"]
 const MAX_INPUT_LENGTH = 10000
 
 export async function POST(request: Request) {
   try {
+    // DIAG: check cookies
+    const cookieStore = await cookies()
+    const allCookies = cookieStore.getAll()
+    const cookieNames = allCookies.map(c => c.name)
+    const hasAuthCookie = cookieNames.some(n => n.includes("auth-token"))
+    console.log("[DIAG] cookie names:", cookieNames)
+    console.log("[DIAG] hasAuthCookie:", hasAuthCookie)
+
     // 1. Authenticate user server-side
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
+    console.log("[DIAG] getUserOk:", !authError)
+    console.log("[DIAG] userIdPresent:", !!user)
+    if (authError) console.log("[DIAG] authError:", authError.message)
 
     if (authError || !user) {
       return NextResponse.json(
@@ -24,6 +36,7 @@ export async function POST(request: Request) {
       .select("organization_id, role")
       .eq("id", user.id)
       .single()
+    console.log("[DIAG] orgLookupOk:", !userError && !!userRecord)
 
     if (userError || !userRecord) {
       return NextResponse.json(
@@ -68,9 +81,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // 6. Create scan record with status pending
-    // Never accept organization_id, user_id, verdict, risk_score,
-    // confidence_score, or status from the client
+    // 6. Create scan record
     const { data: scan, error: scanError } = await supabase
       .from("scans")
       .insert({
@@ -96,16 +107,10 @@ export async function POST(request: Request) {
       name: "scan/requested",
       data: {
         scan_id: scan.id,
-        organization_id: userRecord.organization_id,
-        user_id: user.id,
-        input_type: input_type,
-        raw_input: input.trim(),
       },
     })
 
-    // 8. Return scan_id to client for result page redirect
     return NextResponse.json({ scan_id: scan.id }, { status: 201 })
-
   } catch (error) {
     console.error("Scan route error:", error)
     return NextResponse.json(
@@ -115,7 +120,7 @@ export async function POST(request: Request) {
   }
 }
 
-// Reject all other HTTP methods
 export async function GET() {
   return NextResponse.json({ error: "Method not allowed" }, { status: 405 })
 }
+

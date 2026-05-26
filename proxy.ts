@@ -1,30 +1,25 @@
-﻿import { NextResponse, type NextRequest } from "next/server"
+﻿import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server"
 
-const PROTECTED_PATHS = ["/dashboard", "/scan", "/history", "/watchlist", "/settings"]
+const isProtectedRoute = createRouteMatcher([
+  "/dashboard(.*)",
+  "/scan(.*)",
+  "/history(.*)",
+  "/watchlist(.*)",
+  "/settings(.*)",
+  "/onboarding(.*)",
+])
 
-export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
-
-  const isProtectedPath = PROTECTED_PATHS.some(p => pathname.startsWith(p))
-
-  const hasAuthCookie = request.cookies.getAll().some(
-    c => c.name.startsWith("sb-") && c.name.endsWith("-auth-token")
-  )
-
-  if (isProtectedPath && !hasAuthCookie) {
-    const url = request.nextUrl.clone()
-    url.pathname = "/login"
-    return NextResponse.redirect(url)
+export default clerkMiddleware(async (auth, req) => {
+  const { isAuthenticated, redirectToSignIn } = await auth()
+  if (!isAuthenticated && isProtectedRoute(req)) {
+    return redirectToSignIn()
   }
-
-  const response = NextResponse.next()
-  response.headers.set("X-CBC-Proxy", "1")
-  response.headers.set("X-Frame-Options", "DENY")
-  response.headers.set("X-Content-Type-Options", "nosniff")
-  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
-  return response
-}
+})
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/inngest).*)"],
+  matcher: [
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/(api|trpc)(.*)",
+    "/__clerk/(.*)",
+  ],
 }

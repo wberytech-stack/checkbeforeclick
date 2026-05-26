@@ -1,5 +1,6 @@
 ﻿import Link from "next/link"
 import { Shield } from "lucide-react"
+import { UserButton } from "@clerk/nextjs"
 
 export default function DashboardLayout({
   children,
@@ -32,13 +33,7 @@ export default function DashboardLayout({
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-sm text-slate-500">My Organization</span>
-              <Link
-                href="/auth/signout"
-                className="text-sm text-slate-500 hover:text-slate-900"
-              >
-                Sign out
-              </Link>
+              <UserButton />
             </div>
           </div>
         </div>

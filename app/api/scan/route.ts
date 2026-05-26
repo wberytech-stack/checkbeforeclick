@@ -1,46 +1,35 @@
-﻿import { createClient } from "@/lib/supabase/server"
+﻿import { auth } from "@clerk/nextjs/server"
 import { inngest } from "@/inngest/client"
-import { NextResponse } from "next/server"
-import { cookies } from "next/headers"
+import { NextResponse, type NextRequest } from "next/server"
+import { createServiceClient } from "@/lib/supabase/service"
 
 const VALID_INPUT_TYPES = ["url", "domain", "email", "header", "signature", "batch"]
 const MAX_INPUT_LENGTH = 10000
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    // DIAG: check cookies
-    const cookieStore = await cookies()
-    const allCookies = cookieStore.getAll()
-    const cookieNames = allCookies.map(c => c.name)
-    const hasAuthCookie = cookieNames.some(n => n.includes("auth-token"))
-    console.log("[DIAG] cookie names:", cookieNames)
-    console.log("[DIAG] hasAuthCookie:", hasAuthCookie)
+    // 1. Authenticate user via Clerk
+    const { isAuthenticated, userId } = await auth()
 
-    // 1. Authenticate user server-side
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    console.log("[DIAG] getUserOk:", !authError)
-    console.log("[DIAG] userIdPresent:", !!user)
-    if (authError) console.log("[DIAG] authError:", authError.message)
-
-    if (authError || !user) {
+    if (!isAuthenticated || !userId) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       )
     }
 
-    // 2. Get organization_id from database - never trust client
+    // 2. Get organization_id from database using Clerk user ID
+    // Never trust client-provided user_id or organization_id
+    const supabase = createServiceClient()
     const { data: userRecord, error: userError } = await supabase
       .from("users")
-      .select("organization_id, role")
-      .eq("id", user.id)
+      .select("id, organization_id, role")
+      .eq("clerk_user_id", userId)
       .single()
-    console.log("[DIAG] orgLookupOk:", !userError && !!userRecord)
 
     if (userError || !userRecord) {
       return NextResponse.json(
-        { error: "User profile not found. Please contact support." },
+        { error: "User profile not found. Please complete onboarding." },
         { status: 403 }
       )
     }
@@ -86,7 +75,7 @@ export async function POST(request: Request) {
       .from("scans")
       .insert({
         organization_id: userRecord.organization_id,
-        user_id: user.id,
+        user_id: userRecord.id,
         input_type: input_type,
         raw_input: input.trim(),
         status: "pending",
@@ -102,7 +91,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // 7. Trigger Inngest background job
+    // 7. Trigger Inngest background job - send only scan_id
     await inngest.send({
       name: "scan/requested",
       data: {
@@ -123,4 +112,5 @@ export async function POST(request: Request) {
 export async function GET() {
   return NextResponse.json({ error: "Method not allowed" }, { status: 405 })
 }
+
 

@@ -1,63 +1,30 @@
-﻿import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+﻿import { NextResponse, type NextRequest } from "next/server"
 
-export async function proxy(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
+const PROTECTED_PATHS = ["/dashboard", "/scan", "/history", "/watchlist", "/settings"]
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
+export function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  const isProtectedPath = PROTECTED_PATHS.some(p => pathname.startsWith(p))
+
+  const hasAuthCookie = request.cookies.getAll().some(
+    c => c.name.startsWith("sb-") && c.name.endsWith("-auth-token")
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
-
-  const protectedPaths = ['/dashboard', '/scan', '/history', '/watchlist', '/settings']
-  const isProtectedPath = protectedPaths.some(path =>
-    request.nextUrl.pathname.startsWith(path)
-  )
-
-  if (isProtectedPath && !user) {
+  if (isProtectedPath && !hasAuthCookie) {
     const url = request.nextUrl.clone()
-    url.pathname = '/login'
+    url.pathname = "/login"
     return NextResponse.redirect(url)
   }
 
-  const authPaths = ['/login', '/register']
-  const isAuthPath = authPaths.some(path =>
-    request.nextUrl.pathname.startsWith(path)
-  )
-
-  if (isAuthPath && user) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
-    return NextResponse.redirect(url)
-  }
-
-  supabaseResponse.headers.set('X-CBC-Proxy', '1')
-  supabaseResponse.headers.set('X-Frame-Options', 'DENY')
-  supabaseResponse.headers.set('X-Content-Type-Options', 'nosniff')
-  supabaseResponse.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
-
-  return supabaseResponse
+  const response = NextResponse.next()
+  response.headers.set("X-CBC-Proxy", "1")
+  response.headers.set("X-Frame-Options", "DENY")
+  response.headers.set("X-Content-Type-Options", "nosniff")
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
+  return response
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/inngest).*)'],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/inngest).*)"],
 }
-

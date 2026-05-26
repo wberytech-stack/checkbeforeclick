@@ -3,7 +3,6 @@
 import { useState } from "react"
 import Link from "next/link"
 import { Eye, EyeOff } from "lucide-react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,19 +18,28 @@ export default function LoginPage() {
     setLoading(true)
     setError("")
 
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      })
 
-    if (error) {
-      setError(error.message)
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.error || "Something went wrong. Please try again.")
+        setLoading(false)
+        return
+      }
+
+      window.location.assign(data.target || "/dashboard")
+    } catch {
+      setError("Could not connect. Please check your connection and try again.")
       setLoading(false)
-      return
     }
-
-    window.location.assign("/dashboard")
   }
 
   return (
@@ -93,5 +101,3 @@ export default function LoginPage() {
     </Card>
   )
 }
-
-

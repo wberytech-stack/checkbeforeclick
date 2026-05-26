@@ -1,17 +1,23 @@
-﻿import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
-import { NextResponse } from "next/server"
+﻿import { type NextRequest, NextResponse } from "next/server"
+import { createServerClient } from "@supabase/ssr"
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get("code")
-  const next = searchParams.get("next") ?? "/dashboard"
+
+  const rawNext = searchParams.get("next")
+  const safeNext =
+    rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//")
+      ? rawNext
+      : "/dashboard"
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? request.nextUrl.origin
 
   if (!code) {
-    return NextResponse.redirect(new URL("/login", request.url))
+    return NextResponse.redirect(new URL("/login", appUrl))
   }
 
-  const cookieStore = await cookies()
+  const response = NextResponse.redirect(new URL(safeNext, appUrl))
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,11 +25,11 @@ export async function GET(request: Request) {
     {
       cookies: {
         getAll() {
-          return cookieStore.getAll()
+          return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options)
+            response.cookies.set(name, value, options)
           })
         },
       },
@@ -34,9 +40,8 @@ export async function GET(request: Request) {
 
   if (error) {
     console.error("[auth/callback] exchangeCodeForSession error:", error.message)
-    return NextResponse.redirect(new URL("/login", request.url))
+    return NextResponse.redirect(new URL("/login", appUrl))
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? new URL(request.url).origin
-  return NextResponse.redirect(new URL(next, appUrl))
+  return response
 }

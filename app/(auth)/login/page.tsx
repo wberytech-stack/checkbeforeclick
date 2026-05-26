@@ -1,7 +1,6 @@
 ﻿"use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Eye, EyeOff } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
@@ -10,7 +9,6 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -33,8 +31,7 @@ export default function LoginPage() {
       return
     }
 
-    router.push("/dashboard")
-    router.refresh()
+    window.location.assign("/dashboard")
   }
 
   return (
@@ -96,3 +93,5 @@ export default function LoginPage() {
     </Card>
   )
 }
+
+

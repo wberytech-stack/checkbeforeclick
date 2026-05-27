@@ -1,12 +1,24 @@
-﻿import Link from "next/link"
+﻿"use client"
+
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Shield } from "lucide-react"
-import { UserButton } from "@clerk/nextjs"
+import { createClient } from "@/lib/supabase/client"
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
+  const router = useRouter()
+
+  async function handleLogout() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push("/login")
+    router.refresh()
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       <nav className="bg-white border-b border-slate-200">
@@ -33,7 +45,13 @@ export default function DashboardLayout({
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <UserButton />
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              >
+                Sign out
+              </button>
             </div>
           </div>
         </div>

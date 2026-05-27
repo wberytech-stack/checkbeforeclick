@@ -1,4 +1,4 @@
-﻿import { auth } from "@clerk/nextjs/server"
+﻿import { createClient } from "@/lib/supabase/server"
 import { redirect, notFound } from "next/navigation"
 import { createServiceClient } from "@/lib/supabase/service"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -73,9 +73,13 @@ export default async function ScanResultPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const { isAuthenticated, userId } = await auth()
+  const authClient = await createClient()
+  const {
+    data: { user },
+    error: authError,
+  } = await authClient.auth.getUser()
 
-  if (!isAuthenticated || !userId) {
+  if (authError || !user) {
     redirect("/login")
   }
 
@@ -84,11 +88,11 @@ export default async function ScanResultPage({
   const { data: userRecord } = await supabase
     .from("users")
     .select("id, organization_id")
-    .eq("clerk_user_id", userId)
+    .eq("id", user.id)
     .single()
 
   if (!userRecord) {
-    redirect("/onboarding")
+    redirect("/login")
   }
 
   const { data: scan, error: scanError } = await supabase
@@ -268,3 +272,5 @@ export default async function ScanResultPage({
     </div>
   )
 }
+
+

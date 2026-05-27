@@ -1,6 +1,6 @@
-﻿import { auth } from "@clerk/nextjs/server"
-import { inngest } from "@/inngest/client"
+﻿import { inngest } from "@/inngest/client"
 import { NextResponse, type NextRequest } from "next/server"
+import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 
 const VALID_INPUT_TYPES = ["url", "domain", "email", "header", "signature", "batch"]
@@ -8,28 +8,32 @@ const MAX_INPUT_LENGTH = 10000
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Authenticate user via Clerk
-    const { isAuthenticated, userId } = await auth()
+    // 1. Authenticate user via Supabase Auth
+    const authClient = await createClient()
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser()
 
-    if (!isAuthenticated || !userId) {
+    if (authError || !user) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       )
     }
 
-    // 2. Get organization_id from database using Clerk user ID
+    // 2. Get organization_id from database using Supabase auth user ID
     // Never trust client-provided user_id or organization_id
     const supabase = createServiceClient()
     const { data: userRecord, error: userError } = await supabase
       .from("users")
       .select("id, organization_id, role")
-      .eq("clerk_user_id", userId)
+      .eq("id", user.id)
       .single()
 
     if (userError || !userRecord) {
       return NextResponse.json(
-        { error: "User profile not found. Please complete onboarding." },
+        { error: "User profile not found. Please sign out and sign in again." },
         { status: 403 }
       )
     }
@@ -63,21 +67,29 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (input.length > MAX_INPUT_LENGTH) {
+    const cleanInput = input.trim()
+
+    if (cleanInput.length > MAX_INPUT_LENGTH) {
       return NextResponse.json(
         { error: `Input too long. Maximum ${MAX_INPUT_LENGTH} characters allowed.` },
         { status: 400 }
       )
     }
 
-    // 6. Create scan record
+    // TODO before client/pilot launch:
+    // Add SSRF protection for URL/domain scans:
+    // - block localhost, private IPs, link-local IPs, metadata IPs
+    // - block non-http/https schemes
+    // - block redirects to private/internal targets
+
+    // 6. Create scan record scoped to the authenticated user's organization
     const { data: scan, error: scanError } = await supabase
       .from("scans")
       .insert({
         organization_id: userRecord.organization_id,
         user_id: userRecord.id,
-        input_type: input_type,
-        raw_input: input.trim(),
+        input_type,
+        raw_input: cleanInput,
         status: "pending",
       })
       .select("id")
@@ -91,7 +103,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 7. Trigger Inngest background job - send only scan_id
+    // 7. Trigger Inngest background job — send only scan_id
+    // Inngest worker must reload scan/org data from DB and verify ownership/scope.
     await inngest.send({
       name: "scan/requested",
       data: {
@@ -112,5 +125,3 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({ error: "Method not allowed" }, { status: 405 })
 }
-
-

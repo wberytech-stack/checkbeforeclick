@@ -9,11 +9,10 @@ export default function AutoRefresh() {
   useEffect(() => {
     const interval = setInterval(() => {
       router.refresh()
-    }, 3000)
+    }, 1000)
 
     return () => clearInterval(interval)
   }, [router])
 
   return null
 }
-

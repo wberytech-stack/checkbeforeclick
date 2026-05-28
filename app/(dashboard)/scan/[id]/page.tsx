@@ -136,7 +136,7 @@ export default async function ScanResultPage({
         </p>
       </div>
 
-      {isInProgress && <AutoRefresh />}
+      {isInProgress && <AutoRefresh scanId={id} />}
 
       {isInProgress && (
         <Card className="border-slate-200">
@@ -272,5 +272,3 @@ export default async function ScanResultPage({
     </div>
   )
 }
-
-

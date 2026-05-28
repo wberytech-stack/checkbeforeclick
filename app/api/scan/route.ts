@@ -105,12 +105,30 @@ export async function POST(request: NextRequest) {
 
     // 7. Trigger Inngest background job — send only scan_id
     // Inngest worker must reload scan/org data from DB and verify ownership/scope.
-    await inngest.send({
-      name: "scan/requested",
-      data: {
-        scan_id: scan.id,
-      },
-    })
+    try {
+      await inngest.send({
+        name: "scan/requested",
+        data: {
+          scan_id: scan.id,
+        },
+      })
+    } catch (inngestError) {
+      console.error("Inngest send error:", inngestError)
+
+      await supabase
+        .from("scans")
+        .update({ status: "failed" })
+        .eq("id", scan.id)
+        .eq("organization_id", userRecord.organization_id)
+
+      return NextResponse.json(
+        {
+          error: "Scan was created but could not be queued. Please try again.",
+          scan_id: scan.id,
+        },
+        { status: 502 }
+      )
+    }
 
     return NextResponse.json({ scan_id: scan.id }, { status: 201 })
   } catch (error) {
@@ -125,3 +143,4 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({ error: "Method not allowed" }, { status: 405 })
 }
+

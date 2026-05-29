@@ -11,43 +11,51 @@ export default function AutoRefresh({ scanId }: { scanId: string }) {
 
   useEffect(() => {
     let stopped = false
+    let interval: ReturnType<typeof setInterval> | null = null
     const startTime = Date.now()
 
-    // Check immediately on mount — fast path scans may already be complete
+    const stopPolling = () => {
+      stopped = true
+      if (interval) {
+        clearInterval(interval)
+        interval = null
+      }
+    }
+
     const poll = async () => {
       if (stopped) return
 
       if (Date.now() - startTime > MAX_WAIT_MS) {
-        clearInterval(interval)
+        stopPolling()
         return
       }
 
       try {
-        const response = await fetch(`/api/scan/${scanId}/status`)
+        const response = await fetch(`/api/scan/${scanId}/status`, {
+          cache: "no-store",
+        })
 
         if (!response.ok) {
-          clearInterval(interval)
+          stopPolling()
           return
         }
 
         const data: { status?: string; verdict?: string | null } = await response.json()
 
         if (data.status === "complete" || data.status === "failed") {
-          clearInterval(interval)
+          stopPolling()
           router.refresh()
         }
       } catch {
-        // Temporary network errors should not stop polling
+        // Temporary network errors should not stop polling.
       }
     }
 
-    // Fire immediately then repeat
-    poll()
-    const interval = setInterval(poll, POLL_INTERVAL_MS)
+    interval = setInterval(poll, POLL_INTERVAL_MS)
+    void poll()
 
     return () => {
-      stopped = true
-      clearInterval(interval)
+      stopPolling()
     }
   }, [scanId, router])
 

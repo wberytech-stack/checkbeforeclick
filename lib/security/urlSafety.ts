@@ -104,7 +104,8 @@ export function normalizeScanTarget(
     let rawUrl: string
 
     if (inputType === "url") {
-      rawUrl = rawInput.trim()
+      const raw = rawInput.trim()
+      rawUrl = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`
     } else if (inputType === "domain") {
       const domain = rawInput.trim().toLowerCase()
       if (/\s/.test(domain)) return { ok: false, reason: "Domain contains spaces and cannot be checked." }

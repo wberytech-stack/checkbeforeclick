@@ -1,8 +1,7 @@
-﻿import { createClient } from "@/lib/supabase/server"
+﻿import type { ReactNode } from "react"
+import { createClient } from "@/lib/supabase/server"
 import { redirect, notFound } from "next/navigation"
 import { createServiceClient } from "@/lib/supabase/service"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import {
@@ -22,41 +21,65 @@ import AutoRefresh from "./AutoRefresh"
 type Verdict = "safe" | "suspicious" | "dangerous" | "unknown"
 type Severity = "critical" | "high" | "medium" | "low" | "info" | "good"
 
-function VerdictBadge({ verdict }: { verdict: Verdict | null }) {
-  if (!verdict) return <Badge variant="outline">Pending</Badge>
-  const config = {
-    safe: { label: "Safe", className: "bg-green-100 text-green-800 border-green-200" },
-    suspicious: { label: "Suspicious", className: "bg-amber-100 text-amber-800 border-amber-200" },
-    dangerous: { label: "Dangerous", className: "bg-red-100 text-red-800 border-red-200" },
-    unknown: { label: "Unknown", className: "bg-slate-100 text-slate-700 border-slate-200" },
-  }
-  const { label, className } = config[verdict]
-  return <Badge className={className}>{label}</Badge>
+const verdictConfig: Record<Verdict, {
+  label: string
+  summary: string
+  action: string
+  icon: ReactNode
+  heroBg: string
+  heroBorder: string
+  labelColor: string
+}> = {
+  safe: {
+    label: "Looks safe based on current checks",
+    summary: "No known threats were found for this link.",
+    action: "You can open it, but do not enter passwords, payment details, or sensitive information unless you expected this site.",
+    icon: <ShieldCheck className="h-14 w-14 text-green-500" />,
+    heroBg: "bg-green-50",
+    heroBorder: "border-green-200",
+    labelColor: "text-green-800",
+  },
+  suspicious: {
+    label: "Be careful",
+    summary: "Some warning signs were found.",
+    action: "Do not enter credentials or sensitive information. Ask your IT team before opening.",
+    icon: <ShieldAlert className="h-14 w-14 text-amber-500" />,
+    heroBg: "bg-amber-50",
+    heroBorder: "border-amber-200",
+    labelColor: "text-amber-800",
+  },
+  dangerous: {
+    label: "Do not open",
+    summary: "This appears dangerous based on the checks we ran.",
+    action: "Do not open this link. Report it to your IT or security team immediately.",
+    icon: <ShieldX className="h-14 w-14 text-red-500" />,
+    heroBg: "bg-red-50",
+    heroBorder: "border-red-200",
+    labelColor: "text-red-800",
+  },
+  unknown: {
+    label: "Could not determine",
+    summary: "We could not make a confident determination.",
+    action: "If you were not expecting this, do not click. Ask IT or verify through another trusted channel.",
+    icon: <ShieldQuestion className="h-14 w-14 text-slate-400" />,
+    heroBg: "bg-slate-50",
+    heroBorder: "border-slate-200",
+    labelColor: "text-slate-700",
+  },
 }
 
-function VerdictIcon({ verdict }: { verdict: Verdict | null }) {
-  if (!verdict) return <ShieldQuestion className="h-12 w-12 text-slate-300" />
-  const icons = {
-    safe: <ShieldCheck className="h-12 w-12 text-green-500" />,
-    suspicious: <ShieldAlert className="h-12 w-12 text-amber-500" />,
-    dangerous: <ShieldX className="h-12 w-12 text-red-500" />,
-    unknown: <ShieldQuestion className="h-12 w-12 text-slate-400" />,
-  }
-  return icons[verdict]
+function getVerdictConfig(verdict: string | null) {
+  if (!verdict || !(verdict in verdictConfig)) return verdictConfig.unknown
+  return verdictConfig[verdict as Verdict]
 }
 
-function VerdictCardColor(verdict: Verdict | null): string {
-  if (!verdict) return "border-slate-200 bg-slate-50"
-  return {
-    safe: "border-green-200 bg-green-50",
-    suspicious: "border-amber-200 bg-amber-50",
-    dangerous: "border-red-200 bg-red-50",
-    unknown: "border-slate-200 bg-slate-50",
-  }[verdict]
+function getRecommendedAction(scan: { verdict: string | null; recommended_action?: string | null }): string {
+  if (scan.recommended_action) return scan.recommended_action
+  return getVerdictConfig(scan.verdict).action
 }
 
 function SeverityIcon({ severity }: { severity: Severity }) {
-  const icons: Record<Severity, React.ReactNode> = {
+  const icons: Record<Severity, ReactNode> = {
     critical: <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />,
     high: <XCircle className="h-4 w-4 text-red-400 flex-shrink-0" />,
     medium: <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0" />,
@@ -65,6 +88,19 @@ function SeverityIcon({ severity }: { severity: Severity }) {
     good: <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />,
   }
   return <>{icons[severity]}</>
+}
+
+function VendorVerdict({ verdict }: { verdict: string | null }) {
+  const config: Record<string, { label: string; color: string }> = {
+    clean: { label: "Clean", color: "text-green-600" },
+    dangerous: { label: "Flagged", color: "text-red-600" },
+    skipped: { label: "Skipped", color: "text-slate-400" },
+    error: { label: "Error", color: "text-slate-400" },
+  }
+  const c = verdict && verdict in config
+    ? config[verdict]
+    : { label: verdict ?? "No result", color: "text-slate-500" }
+  return <span className={`text-sm font-medium ${c.color}`}>{c.label}</span>
 }
 
 export default async function ScanResultPage({
@@ -118,154 +154,178 @@ export default async function ScanResultPage({
     .eq("scan_id", id)
 
   const isInProgress = scan.status === "pending" || scan.status === "processing"
+  const config = getVerdictConfig(scan.verdict)
+  const recommendedAction = getRecommendedAction(scan)
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto space-y-5">
+
+      {/* Back link */}
       <Link
         href="/dashboard"
-        className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900"
+        className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-slate-700 transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to dashboard
       </Link>
 
+      {/* Submitted target */}
       <div>
-        <p className="text-xs text-slate-400 font-mono truncate">{scan.raw_input}</p>
-        <p className="text-xs text-slate-400 mt-1">
+        <p className="text-sm text-slate-600 font-medium truncate">{scan.raw_input}</p>
+        <p className="text-xs text-slate-400 mt-0.5">
           Submitted {new Date(scan.created_at).toLocaleString()}
         </p>
       </div>
 
+      {/* Polling for in-progress */}
       {isInProgress && <AutoRefresh scanId={id} />}
 
+      {/* Pending / processing state */}
       {isInProgress && (
-        <Card className="border-slate-200">
-          <CardContent className="py-12 text-center">
-            <Loader2 className="h-10 w-10 text-slate-400 animate-spin mx-auto mb-4" />
-            <p className="text-slate-700 font-medium">
-              {scan.status === "pending" ? "Scan queued..." : "Checking now..."}
-            </p>
-            <p className="text-slate-400 text-sm mt-1">
-              This usually takes a few seconds. The page will update automatically.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+          <Loader2 className="h-10 w-10 text-slate-300 animate-spin mx-auto mb-4" />
+          <p className="text-slate-700 font-semibold text-lg">
+            {scan.status === "pending" ? "Scan queued…" : "Checking now…"}
+          </p>
+          <p className="text-slate-400 text-sm mt-2">
+            This usually takes a few seconds. The page will update automatically.
+          </p>
+        </div>
       )}
 
+      {/* Failed state */}
       {scan.status === "failed" && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="py-8 text-center">
-            <ShieldX className="h-10 w-10 text-red-400 mx-auto mb-4" />
-            <p className="text-red-700 font-medium">Scan could not be completed</p>
-            <p className="text-red-500 text-sm mt-1">A system error occurred. Please try again.</p>
-            <Link href="/scan/new" className="mt-4 inline-block">
-              <Button variant="outline" className="mt-4">Try again</Button>
-            </Link>
-          </CardContent>
-        </Card>
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-10 text-center shadow-sm">
+          <ShieldX className="h-10 w-10 text-red-300 mx-auto mb-4" />
+          <p className="text-red-700 font-semibold text-lg">We could not complete this scan</p>
+          <p className="text-red-500 text-sm mt-2">
+            Please try again. If it keeps happening, contact support.
+          </p>
+          <Link href="/scan/new" className="mt-6 inline-block">
+            <Button variant="outline" className="mt-2">Try again</Button>
+          </Link>
+        </div>
       )}
 
+      {/* Complete state */}
       {scan.status === "complete" && (
         <>
-          <Card className={`border ${VerdictCardColor(scan.verdict)}`}>
-            <CardContent className="py-6">
-              <div className="flex items-start gap-4">
-                <VerdictIcon verdict={scan.verdict} />
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2 flex-wrap">
-                    <VerdictBadge verdict={scan.verdict} />
-                    {scan.risk_score !== null && (
-                      <span className="text-sm text-slate-500">
-                        Risk: <strong>{scan.risk_score}/100</strong>
-                      </span>
-                    )}
-                    {scan.confidence_score !== null && (
-                      <span className="text-sm text-slate-500">
-                        Confidence:{" "}
-                        <strong>
-                          {scan.confidence_score >= 70 ? "High" : scan.confidence_score >= 45 ? "Medium" : "Low"}
-                        </strong>
-                      </span>
-                    )}
-                  </div>
-                  {scan.ai_explanation && (
-                    <p className="text-slate-700 text-sm leading-relaxed">{scan.ai_explanation}</p>
-                  )}
-                  {!scan.ai_explanation && (
-                    <p className="text-slate-500 text-sm">
-                      {scan.verdict === "unknown"
-                        ? "Not enough information to make a confident determination."
-                        : scan.verdict === "safe"
-                        ? "No threats detected based on available sources."
-                        : scan.verdict === "suspicious"
-                        ? "Some signals suggest this may be risky. Review the evidence below."
-                        : "This content has been flagged as dangerous. Do not interact with it."}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          {/* Hero verdict card */}
+          <div className={`rounded-2xl border ${config.heroBorder} ${config.heroBg} p-8 shadow-sm`}>
+            <div className="flex flex-col items-center text-center gap-3">
+              {config.icon}
+              <h1 className={`text-2xl font-bold ${config.labelColor}`}>
+                {config.label}
+              </h1>
+              <p className="text-slate-600 text-sm">{config.summary}</p>
+              <p className="text-xs text-slate-400 mt-1">
+                Checked using available reputation and safety signals in real time.
+              </p>
+            </div>
+          </div>
 
-          {scan.recommended_action && (
-            <Card className="border-slate-200">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-700">Recommended action</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-slate-700 text-sm">{scan.recommended_action}</p>
-              </CardContent>
-            </Card>
-          )}
+          {/* Recommended action */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+              Recommended action
+            </p>
+            <p className="text-slate-800 text-sm leading-relaxed font-medium">
+              {recommendedAction}
+            </p>
+          </div>
 
-          {evidence && evidence.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-700">Why we flagged it</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
+          {/* Why we think this */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">
+              Why we think this
+            </p>
+            {evidence && evidence.length > 0 ? (
+              <div className="space-y-3">
                 {evidence.map((item) => (
-                  <div key={item.id} className="flex items-start gap-3 py-2 border-b border-slate-100 last:border-0">
+                  <div key={item.id} className="flex items-start gap-3">
                     <SeverityIcon severity={item.severity as Severity} />
                     <div>
                       <p className="text-sm font-medium text-slate-800">{item.title}</p>
-                      {item.detail && <p className="text-xs text-slate-500 mt-0.5">{item.detail}</p>}
+                      {item.detail && (
+                        <p className="text-xs text-slate-500 mt-0.5">{item.detail}</p>
+                      )}
                     </div>
                   </div>
                 ))}
-              </CardContent>
-            </Card>
-          )}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">
+                We completed the available checks and did not find warning signals.
+              </p>
+            )}
+          </div>
 
+          {/* What we checked */}
           {vendors && vendors.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-700">Sources checked</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-3">
-                  {vendors.map((v) => (
-                    <div key={v.id} className="bg-slate-50 rounded-md p-3 border border-slate-200">
-                      <p className="text-xs text-slate-500 capitalize">{v.vendor_name.replace(/_/g, " ")}</p>
-                      <p className={`text-sm font-medium mt-0.5 capitalize ${
-                        v.verdict === "dangerous" ? "text-red-600"
-                        : v.verdict === "clean" ? "text-green-600"
-                        : v.verdict === "skipped" ? "text-slate-400"
-                        : "text-slate-600"
-                      }`}>
-                        {v.verdict || "No result"}
-                      </p>
-                      {v.error_message && <p className="text-xs text-slate-400 mt-0.5">{v.error_message}</p>}
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">
+                What we checked
+              </p>
+              <div className="space-y-2">
+                {vendors.map((v) => (
+                  <div key={v.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
+                    <span className="text-sm text-slate-700">
+                      {v.vendor_name === "google_web_risk" ? "Google Web Risk" : v.vendor_name.replace(/_/g, " ")}
+                    </span>
+                    <VendorVerdict verdict={v.verdict} />
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
-          <div className="flex gap-3">
-            <Link href="/scan/new"><Button variant="outline">Check another</Button></Link>
-            <Link href="/dashboard"><Button variant="outline">Back to dashboard</Button></Link>
+          {/* Technical details */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">
+              Technical details
+            </p>
+            <div className="space-y-1.5 text-xs text-slate-500">
+              {scan.risk_score !== null && (
+                <div className="flex justify-between">
+                  <span>Risk score</span>
+                  <span className="font-medium text-slate-700">{scan.risk_score} / 100</span>
+                </div>
+              )}
+              {scan.confidence_score !== null && (
+                <div className="flex justify-between">
+                  <span>Confidence</span>
+                  <span className="font-medium text-slate-700">
+                    {scan.confidence_score >= 70 ? "High" : scan.confidence_score >= 45 ? "Medium" : "Low"}
+                    {" "}({scan.confidence_score})
+                  </span>
+                </div>
+              )}
+              {scan.scan_duration_ms !== null && (
+                <div className="flex justify-between">
+                  <span>Scan duration</span>
+                  <span className="font-medium text-slate-700">{scan.scan_duration_ms}ms</span>
+                </div>
+              )}
+              <div className="flex justify-between pt-1">
+                <span>Scan ID</span>
+                <span className="font-mono text-slate-400 text-xs">{scan.id}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-wrap gap-3 pb-6">
+            <Link href="/scan/new">
+              <Button className="bg-slate-900 text-white hover:bg-slate-700">
+                Check another
+              </Button>
+            </Link>
+            <Link href="/dashboard">
+              <Button variant="outline">Back to dashboard</Button>
+            </Link>
+            <Button variant="outline" disabled className="text-slate-400 cursor-not-allowed">
+              Report to IT — coming soon
+            </Button>
           </div>
         </>
       )}

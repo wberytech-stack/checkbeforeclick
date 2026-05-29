@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
@@ -13,7 +13,8 @@ export default function AutoRefresh({ scanId }: { scanId: string }) {
     let stopped = false
     const startTime = Date.now()
 
-    const interval = setInterval(async () => {
+    // Check immediately on mount — fast path scans may already be complete
+    const poll = async () => {
       if (stopped) return
 
       if (Date.now() - startTime > MAX_WAIT_MS) {
@@ -36,9 +37,13 @@ export default function AutoRefresh({ scanId }: { scanId: string }) {
           router.refresh()
         }
       } catch {
-        // Temporary network errors should not stop polling while the scan is active.
+        // Temporary network errors should not stop polling
       }
-    }, POLL_INTERVAL_MS)
+    }
+
+    // Fire immediately then repeat
+    poll()
+    const interval = setInterval(poll, POLL_INTERVAL_MS)
 
     return () => {
       stopped = true

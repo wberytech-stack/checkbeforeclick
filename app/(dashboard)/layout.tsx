@@ -1,5 +1,4 @@
 ﻿"use client"
-
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Shield } from "lucide-react"
@@ -23,12 +22,14 @@ export default function DashboardLayout({
     <div className="min-h-screen bg-slate-50">
       <nav className="bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* Top bar */}
           <div className="flex justify-between h-16 items-center">
             <div className="flex items-center gap-8">
               <Link href="/dashboard" className="flex items-center gap-2">
                 <Shield className="h-6 w-6 text-slate-900" />
                 <span className="font-bold text-slate-900">CheckBeforeClick</span>
               </Link>
+              {/* Desktop nav */}
               <div className="hidden md:flex items-center gap-6">
                 <Link href="/dashboard" className="text-sm font-medium text-slate-900">
                   Dashboard
@@ -55,7 +56,26 @@ export default function DashboardLayout({
             </div>
           </div>
         </div>
+
+        {/* Mobile nav — always visible below top bar on small screens */}
+        <div className="md:hidden border-t border-slate-100 overflow-x-auto">
+          <div className="flex gap-6 px-4 py-3 text-sm whitespace-nowrap">
+            <Link href="/dashboard" className="font-medium text-slate-900">
+              Dashboard
+            </Link>
+            <Link href="/scan/new" className="text-slate-500 hover:text-slate-900">
+              New scan
+            </Link>
+            <Link href="/history" className="text-slate-500 hover:text-slate-900">
+              History
+            </Link>
+            <Link href="/watchlist" className="text-slate-500 hover:text-slate-900">
+              Watchlist
+            </Link>
+          </div>
+        </div>
       </nav>
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {children}
       </main>

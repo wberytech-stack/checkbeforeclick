@@ -15,6 +15,7 @@ import {
   Info,
   Loader2,
   ArrowLeft,
+  ExternalLink,
 } from "lucide-react"
 import AutoRefresh from "./AutoRefresh"
 
@@ -103,6 +104,15 @@ function VendorVerdict({ verdict }: { verdict: string | null }) {
   return <span className={`text-sm font-medium ${c.color}`}>{c.label}</span>
 }
 
+function isValidUrl(str: string): boolean {
+  try {
+    new URL(str.startsWith("http") ? str : `https://${str}`)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export default async function ScanResultPage({
   params,
 }: {
@@ -156,6 +166,7 @@ export default async function ScanResultPage({
   const isInProgress = scan.status === "pending" || scan.status === "processing"
   const config = getVerdictConfig(scan.verdict)
   const recommendedAction = getRecommendedAction(scan)
+  const urlLike = isValidUrl(scan.raw_input)
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
@@ -169,10 +180,16 @@ export default async function ScanResultPage({
         Back to dashboard
       </Link>
 
-      {/* Submitted target */}
-      <div>
-        <p className="text-sm text-slate-600 font-medium truncate">{scan.raw_input}</p>
-        <p className="text-xs text-slate-400 mt-0.5">
+      {/* Scan input chip */}
+      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
+          Checked item
+        </p>
+        <div className="flex items-center gap-2">
+          {urlLike && <ExternalLink className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />}
+          <p className="text-sm text-slate-700 font-medium truncate">{scan.raw_input}</p>
+        </div>
+        <p className="text-xs text-slate-400 mt-1">
           Submitted {new Date(scan.created_at).toLocaleString()}
         </p>
       </div>
@@ -279,12 +296,16 @@ export default async function ScanResultPage({
             </div>
           )}
 
-          {/* Technical details */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">
-              Technical details
-            </p>
-            <div className="space-y-1.5 text-xs text-slate-500">
+          {/* Technical details — collapsed by default */}
+          <details className="rounded-2xl border border-slate-200 bg-white shadow-sm group">
+            <summary className="px-6 py-4 cursor-pointer list-none flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                Technical details
+              </p>
+              <span className="text-xs text-slate-400 group-open:hidden">Show</span>
+              <span className="text-xs text-slate-400 hidden group-open:inline">Hide</span>
+            </summary>
+            <div className="px-6 pb-5 space-y-1.5 text-xs text-slate-500 border-t border-slate-100 pt-4">
               {scan.risk_score !== null && (
                 <div className="flex justify-between">
                   <span>Risk score</span>
@@ -311,19 +332,25 @@ export default async function ScanResultPage({
                 <span className="font-mono text-slate-400 text-xs">{scan.id}</span>
               </div>
             </div>
-          </div>
+          </details>
 
           {/* Actions */}
-          <div className="flex flex-wrap gap-3 pb-6">
-            <Link href="/scan/new">
-              <Button className="bg-slate-900 text-white hover:bg-slate-700">
+          <div className="flex flex-col sm:flex-row gap-3 pb-6">
+            <Link href="/scan/new" className="w-full sm:w-auto">
+              <Button className="w-full sm:w-auto bg-slate-900 text-white hover:bg-slate-700">
                 Check another
               </Button>
             </Link>
-            <Link href="/dashboard">
-              <Button variant="outline">Back to dashboard</Button>
+            <Link href="/dashboard" className="w-full sm:w-auto">
+              <Button variant="outline" className="w-full sm:w-auto">
+                Back to dashboard
+              </Button>
             </Link>
-            <Button variant="outline" disabled className="text-slate-400 cursor-not-allowed">
+            <Button
+              variant="outline"
+              disabled
+              className="w-full sm:w-auto text-slate-400 cursor-not-allowed"
+            >
               Report to IT — coming soon
             </Button>
           </div>

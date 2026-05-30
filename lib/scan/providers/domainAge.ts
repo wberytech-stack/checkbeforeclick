@@ -168,7 +168,7 @@ export const domainAgeProvider: ScanProvider = {
   name: "domain_age",
   displayName: "Domain age check",
   path: "fast",
-  enabled: true,
+  enabled: process.env.DOMAIN_AGE_PROVIDER_ENABLED !== "false",
 
   supportedInputTypes: ["url", "domain"],
 

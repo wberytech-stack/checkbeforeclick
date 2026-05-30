@@ -111,7 +111,7 @@ export const googleWebRiskProvider: ScanProvider = {
   name: "google_web_risk",
   displayName: "Google Web Risk",
   path: "fast",
-  enabled: true,
+  enabled: process.env.WEB_RISK_PROVIDER_ENABLED !== "false",
 
   supportedInputTypes: ["url", "domain"],
 

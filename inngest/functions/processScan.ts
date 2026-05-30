@@ -1,7 +1,7 @@
 ﻿import { inngest } from "../client"
 import { createClient } from "@supabase/supabase-js"
 import { normalizeScanTarget } from "@/lib/security/urlSafety"
-import { getAsyncProviders } from "@/lib/scan/providers"
+import { getFastProviders, getAsyncProviders } from "@/lib/scan/providers"
 import {
   calculateRiskScoreFromProviders,
   calculateConfidenceFromProviders,
@@ -9,8 +9,6 @@ import {
   buildVendorResultRow,
 } from "@/lib/scan/scanHelpers"
 
-// Service role client for background jobs only
-// Bypasses RLS safely - never used in client code
 function getServiceClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -25,13 +23,10 @@ export const processScan = inngest.createFunction(
     triggers: [{ event: "scan/requested" }],
   },
   async ({ event }) => {
-    // Only trust scan_id from event
-    // All scan data loaded from database - never trust client values
     const { scan_id } = event.data
     const supabase = getServiceClient()
     const startTime = Date.now()
 
-    // Load scan record from database
     const { data: scanRecord, error: scanLoadError } = await supabase
       .from("scans")
       .select("id, organization_id, raw_input, input_type")
@@ -47,14 +42,12 @@ export const processScan = inngest.createFunction(
 
     const { organization_id, raw_input, input_type } = scanRecord
 
-    // Update status to processing
     await supabase
       .from("scans")
       .update({ status: "processing" })
       .eq("id", scan_id)
 
     try {
-      // SSRF validation
       const target = normalizeScanTarget(raw_input, input_type)
 
       if (!target.ok) {
@@ -83,10 +76,18 @@ export const processScan = inngest.createFunction(
         return { scan_id, verdict: "unknown", reason: target.reason }
       }
 
-      // Get all enabled async providers for this input type
-      const providers = getAsyncProviders(input_type as "url" | "domain" | "email" | "header")
+      // Use normalized URL if available, otherwise raw input
+      // For email/header, normalizeScanTarget extracts the first URL found
+      const providerInput = target.normalizedUrl ?? raw_input
+      const providerInputType = target.normalizedUrl ? "url" : input_type
 
-      // If no async providers registered, complete as unknown
+      // If a URL was extracted, run URL-capable providers inside Inngest
+      // If no URL extracted, get async providers for the input type
+      const providers = target.normalizedUrl
+        ? getFastProviders("url")
+        : getAsyncProviders(input_type as "email" | "header")
+
+      // If no providers available, complete as unknown
       if (providers.length === 0) {
         await supabase
           .from("scans")
@@ -100,18 +101,16 @@ export const processScan = inngest.createFunction(
           })
           .eq("id", scan_id)
 
-        return { scan_id, verdict: "unknown", reason: "No async providers configured" }
+        return { scan_id, verdict: "unknown", reason: "No providers available for this input" }
       }
 
-      // Run all async providers in parallel
-      const scanInput = target.normalizedUrl ?? raw_input
+      // Run all providers in parallel
       const providerResults = await Promise.allSettled(
         providers.map((provider) =>
-          provider.run(scanInput, input_type as "url" | "domain" | "email" | "header")
+          provider.run(providerInput, providerInputType as "url" | "domain")
         )
       )
 
-      // Collect results with provider names
       const results = providers.map((provider, i) => ({
         providerName: provider.name,
         result:
@@ -130,12 +129,10 @@ export const processScan = inngest.createFunction(
               },
       }))
 
-      // Calculate scores
       const { riskScore, verdict } = calculateRiskScoreFromProviders(results)
       const confidenceScore = calculateConfidenceFromProviders(results, providers.length)
       const scanDurationMs = Date.now() - startTime
 
-      // Write evidence_items
       const evidenceRows = results.map(({ providerName, result }) =>
         buildEvidenceItem(scan_id, organization_id, providerName, result)
       )
@@ -143,7 +140,6 @@ export const processScan = inngest.createFunction(
         await supabase.from("evidence_items").insert(evidenceRows)
       }
 
-      // Write vendor_results
       const vendorRows = results.map(({ providerName, result }) =>
         buildVendorResultRow(scan_id, organization_id, providerName, result)
       )
@@ -151,7 +147,6 @@ export const processScan = inngest.createFunction(
         await supabase.from("vendor_results").insert(vendorRows)
       }
 
-      // Update scan to complete
       await supabase
         .from("scans")
         .update({

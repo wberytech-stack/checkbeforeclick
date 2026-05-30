@@ -200,9 +200,14 @@ async function runFastPath({
     const providers = getFastProviders(input_type as "url" | "domain")
 
     // Run all providers in parallel — one failure never blocks others
+    // Always use normalized URL and "url" type after normalization
+    // This ensures domain inputs like "yahoo.com" are handled consistently
+    const providerInput = target.normalizedUrl!
+    const providerInputType = "url" as const
+
     const providerResults = await Promise.allSettled(
       providers.map((provider) =>
-        provider.run(target.normalizedUrl!, input_type as "url" | "domain")
+        provider.run(providerInput, providerInputType)
       )
     )
 

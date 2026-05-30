@@ -4,12 +4,12 @@ import { NextResponse, type NextRequest } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { normalizeScanTarget } from "@/lib/security/urlSafety"
-import { checkGoogleWebRisk, withTimeout } from "@/lib/scan/googleWebRisk"
+import { getFastProviders } from "@/lib/scan/providers"
 import {
-  calculateRiskScore,
-  calculateConfidence,
-  buildWebRiskEvidence,
-  type EvidenceItem,
+  calculateRiskScoreFromProviders,
+  calculateConfidenceFromProviders,
+  buildEvidenceItem,
+  buildVendorResultRow,
 } from "@/lib/scan/scanHelpers"
 
 const VALID_INPUT_TYPES = ["url", "domain", "email", "header", "signature", "batch"]
@@ -18,6 +18,7 @@ const MAX_INPUT_LENGTH = 10000
 
 export async function POST(request: NextRequest) {
   try {
+    // 1. Authenticate user via Supabase Auth
     const authClient = await createClient()
     const {
       data: { user },
@@ -28,6 +29,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    // 2. Get organization_id from database — never trust client
     const supabase = createServiceClient()
     const { data: userRecord, error: userError } = await supabase
       .from("users")
@@ -42,6 +44,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // 3. Parse and validate request body
     let body: { input?: string; input_type?: string }
     try {
       body = await request.json()
@@ -51,10 +54,12 @@ export async function POST(request: NextRequest) {
 
     const { input, input_type } = body
 
+    // 4. Validate input_type
     if (!input_type || !VALID_INPUT_TYPES.includes(input_type)) {
       return NextResponse.json({ error: "Invalid input type." }, { status: 400 })
     }
 
+    // 5. Validate raw_input
     if (!input || typeof input !== "string" || input.trim().length === 0) {
       return NextResponse.json({ error: "Please provide content to check." }, { status: 400 })
     }
@@ -68,6 +73,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // 6. Create scan record
     const { data: scan, error: scanError } = await supabase
       .from("scans")
       .insert({
@@ -88,6 +94,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // 7. Route to fast path or slow path
     if (FAST_PATH_TYPES.includes(input_type)) {
       return await runFastPath({
         supabase,
@@ -98,6 +105,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // 8. Slow path — Inngest for email/header/heavy types
     try {
       await inngest.send({
         name: "scan/requested",
@@ -132,6 +140,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Fast synchronous path — runs all enabled fast providers in parallel
 async function runFastPath({
   supabase,
   scan_id,
@@ -154,20 +163,20 @@ async function runFastPath({
       .eq("id", scan_id)
       .eq("organization_id", organization_id)
 
+    // SSRF validation
     const target = normalizeScanTarget(raw_input, input_type)
 
     if (!target.ok) {
-      const evidenceItems: EvidenceItem[] = [{
+      await supabase.from("evidence_items").insert({
         scan_id,
         organization_id,
         signal_type: "invalid_target",
         severity: "info",
         title: "Target could not be safely scanned",
-        detail: target.reason || "Input could not be parsed into a safe scan target.",
+        detail: target.reason ?? "Input could not be parsed into a safe scan target.",
         score_impact: 0,
-      }]
+      })
 
-      await supabase.from("evidence_items").insert(evidenceItems)
       await supabase
         .from("scans")
         .update({
@@ -187,49 +196,58 @@ async function runFastPath({
       )
     }
 
-    const [webRiskResult] = await Promise.allSettled([
-      withTimeout(
-        checkGoogleWebRisk(target.normalizedUrl!),
-        8000,
-        { flagged: false, error: "Timeout", skipped: false }
-      ),
-    ])
+    // Get all enabled fast providers for this input type
+    const providers = getFastProviders(input_type as "url" | "domain")
 
-    const webRisk =
-      webRiskResult.status === "fulfilled"
-        ? webRiskResult.value
-        : { flagged: false, error: "Scanner failed", skipped: false }
+    // Run all providers in parallel — one failure never blocks others
+    const providerResults = await Promise.allSettled(
+      providers.map((provider) =>
+        provider.run(target.normalizedUrl!, input_type as "url" | "domain")
+      )
+    )
 
-    const evidenceItems: EvidenceItem[] = [
-      buildWebRiskEvidence(scan_id, organization_id, webRisk),
-    ]
+    // Collect results with provider names
+    const results = providers.map((provider, i) => ({
+      providerName: provider.name,
+      result:
+        providerResults[i].status === "fulfilled"
+          ? providerResults[i].value
+          : {
+              verdict: "error" as const,
+              error: "Provider threw unexpectedly",
+              scoreImpact: 0,
+              confidenceImpact: -10,
+              evidenceTitle: `${provider.displayName} check failed`,
+              evidenceDetail: "An unexpected error occurred.",
+              evidenceSeverity: "info" as const,
+              rawResponse: null,
+              responseTimeMs: 0,
+            },
+    }))
 
-    const { riskScore, verdict } = calculateRiskScore({
-      webRiskFlagged: webRisk.flagged,
-      webRiskSkipped: !!webRisk.skipped,
-      targetValid: true,
-    })
-
-    const confidenceScore = calculateConfidence({
-      webRiskSkipped: !!webRisk.skipped,
-      webRiskError: !!webRisk.error,
-      targetValid: true,
-    })
+    // Calculate scores from all provider results
+    const { riskScore, verdict } = calculateRiskScoreFromProviders(results)
+    const confidenceScore = calculateConfidenceFromProviders(results, providers.length)
 
     const scanDurationMs = Date.now() - startTime
 
-    await supabase.from("evidence_items").insert(evidenceItems)
+    // Write evidence_items — one row per provider
+    const evidenceRows = results.map(({ providerName, result }) =>
+      buildEvidenceItem(scan_id, organization_id, providerName, result)
+    )
+    if (evidenceRows.length > 0) {
+      await supabase.from("evidence_items").insert(evidenceRows)
+    }
 
-    await supabase.from("vendor_results").insert({
-      scan_id,
-      organization_id,
-      vendor_name: "google_web_risk",
-      verdict: webRisk.flagged ? "dangerous" : webRisk.skipped ? "skipped" : "clean",
-      raw_response: webRisk,
-      error_message: webRisk.error || null,
-      response_time_ms: scanDurationMs,
-    })
+    // Write vendor_results — one row per provider
+    const vendorRows = results.map(({ providerName, result }) =>
+      buildVendorResultRow(scan_id, organization_id, providerName, result)
+    )
+    if (vendorRows.length > 0) {
+      await supabase.from("vendor_results").insert(vendorRows)
+    }
 
+    // Update scan to complete
     await supabase
       .from("scans")
       .update({

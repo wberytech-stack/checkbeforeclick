@@ -1,12 +1,12 @@
 ﻿import { inngest } from "../client"
 import { createClient } from "@supabase/supabase-js"
 import { normalizeScanTarget } from "@/lib/security/urlSafety"
-import { checkGoogleWebRisk, withTimeout } from "@/lib/scan/googleWebRisk"
+import { getAsyncProviders } from "@/lib/scan/providers"
 import {
-  calculateRiskScore,
-  calculateConfidence,
-  buildWebRiskEvidence,
-  type EvidenceItem,
+  calculateRiskScoreFromProviders,
+  calculateConfidenceFromProviders,
+  buildEvidenceItem,
+  buildVendorResultRow,
 } from "@/lib/scan/scanHelpers"
 
 // Service role client for background jobs only
@@ -38,7 +38,6 @@ export const processScan = inngest.createFunction(
       .eq("id", scan_id)
       .single()
 
-    // Catastrophic error if scan or org missing
     if (scanLoadError || !scanRecord) {
       throw new Error(`Could not load scan record for scan_id: ${scan_id}`)
     }
@@ -54,25 +53,21 @@ export const processScan = inngest.createFunction(
       .update({ status: "processing" })
       .eq("id", scan_id)
 
-    const evidenceItems: EvidenceItem[] = []
-
     try {
-      // Normalize and validate target with full SSRF protection
+      // SSRF validation
       const target = normalizeScanTarget(raw_input, input_type)
 
       if (!target.ok) {
-        // Bad or unsafe input - complete as unknown, not failed
-        evidenceItems.push({
+        await supabase.from("evidence_items").insert({
           scan_id,
           organization_id,
           signal_type: "invalid_target",
           severity: "info",
           title: "Target could not be safely scanned",
-          detail: target.reason || "Input could not be parsed into a safe scan target.",
+          detail: target.reason ?? "Input could not be parsed into a safe scan target.",
           score_impact: 0,
         })
 
-        await supabase.from("evidence_items").insert(evidenceItems)
         await supabase
           .from("scans")
           .update({
@@ -88,50 +83,73 @@ export const processScan = inngest.createFunction(
         return { scan_id, verdict: "unknown", reason: target.reason }
       }
 
-      // Run scanners in parallel with timeout
-      // Promise.allSettled ensures one failure never kills the whole scan
-      const [webRiskResult] = await Promise.allSettled([
-        withTimeout(
-          checkGoogleWebRisk(target.normalizedUrl!),
-          8000,
-          { flagged: false, error: "Timeout", skipped: false }
-        ),
-      ])
+      // Get all enabled async providers for this input type
+      const providers = getAsyncProviders(input_type as "url" | "domain" | "email" | "header")
 
-      const webRisk =
-        webRiskResult.status === "fulfilled"
-          ? webRiskResult.value
-          : { flagged: false, error: "Scanner failed", skipped: false }
+      // If no async providers registered, complete as unknown
+      if (providers.length === 0) {
+        await supabase
+          .from("scans")
+          .update({
+            status: "complete",
+            risk_score: 0,
+            confidence_score: 10,
+            verdict: "unknown",
+            completed_at: new Date().toISOString(),
+            scan_duration_ms: Date.now() - startTime,
+          })
+          .eq("id", scan_id)
 
-      // Build evidence item using shared helper
-      evidenceItems.push(buildWebRiskEvidence(scan_id, organization_id, webRisk))
+        return { scan_id, verdict: "unknown", reason: "No async providers configured" }
+      }
+
+      // Run all async providers in parallel
+      const scanInput = target.normalizedUrl ?? raw_input
+      const providerResults = await Promise.allSettled(
+        providers.map((provider) =>
+          provider.run(scanInput, input_type as "url" | "domain" | "email" | "header")
+        )
+      )
+
+      // Collect results with provider names
+      const results = providers.map((provider, i) => ({
+        providerName: provider.name,
+        result:
+          providerResults[i].status === "fulfilled"
+            ? providerResults[i].value
+            : {
+                verdict: "error" as const,
+                error: "Provider threw unexpectedly",
+                scoreImpact: 0,
+                confidenceImpact: -10,
+                evidenceTitle: `${provider.displayName} check failed`,
+                evidenceDetail: "An unexpected error occurred.",
+                evidenceSeverity: "info" as const,
+                rawResponse: null,
+                responseTimeMs: 0,
+              },
+      }))
 
       // Calculate scores
-      const { riskScore, verdict } = calculateRiskScore({
-        webRiskFlagged: webRisk.flagged,
-        webRiskSkipped: !!webRisk.skipped,
-        targetValid: true,
-      })
+      const { riskScore, verdict } = calculateRiskScoreFromProviders(results)
+      const confidenceScore = calculateConfidenceFromProviders(results, providers.length)
+      const scanDurationMs = Date.now() - startTime
 
-      const confidenceScore = calculateConfidence({
-        webRiskSkipped: !!webRisk.skipped,
-        webRiskError: !!webRisk.error,
-        targetValid: true,
-      })
+      // Write evidence_items
+      const evidenceRows = results.map(({ providerName, result }) =>
+        buildEvidenceItem(scan_id, organization_id, providerName, result)
+      )
+      if (evidenceRows.length > 0) {
+        await supabase.from("evidence_items").insert(evidenceRows)
+      }
 
-      // Save evidence items
-      await supabase.from("evidence_items").insert(evidenceItems)
-
-      // Save vendor result
-      await supabase.from("vendor_results").insert({
-        scan_id,
-        organization_id,
-        vendor_name: "google_web_risk",
-        verdict: webRisk.flagged ? "dangerous" : webRisk.skipped ? "skipped" : "clean",
-        raw_response: webRisk,
-        error_message: webRisk.error || null,
-        response_time_ms: Date.now() - startTime,
-      })
+      // Write vendor_results
+      const vendorRows = results.map(({ providerName, result }) =>
+        buildVendorResultRow(scan_id, organization_id, providerName, result)
+      )
+      if (vendorRows.length > 0) {
+        await supabase.from("vendor_results").insert(vendorRows)
+      }
 
       // Update scan to complete
       await supabase
@@ -142,14 +160,13 @@ export const processScan = inngest.createFunction(
           confidence_score: confidenceScore,
           verdict,
           completed_at: new Date().toISOString(),
-          scan_duration_ms: Date.now() - startTime,
+          scan_duration_ms: scanDurationMs,
         })
         .eq("id", scan_id)
 
       return { scan_id, verdict, riskScore, confidenceScore }
 
     } catch (error) {
-      // Mark failed only for system/database/job failures
       await supabase
         .from("scans")
         .update({

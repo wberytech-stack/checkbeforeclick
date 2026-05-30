@@ -1,18 +1,120 @@
 ﻿// Shared scan scoring, confidence, and evidence types
 // Pure functions — no secrets, no env vars, no server-only required
 
-export type Severity = "critical" | "high" | "medium" | "low" | "info" | "good"
+import type { ScanProviderResult, EvidenceSeverity } from "./providers/types"
+
+export type { EvidenceSeverity }
+export type Severity = EvidenceSeverity
 
 export type EvidenceItem = {
   scan_id: string
   organization_id: string
   signal_type: string
-  severity: Severity
+  severity: EvidenceSeverity
   title: string
   detail: string
   score_impact: number
 }
 
+export type VendorResultRow = {
+  scan_id: string
+  organization_id: string
+  vendor_name: string
+  verdict: string
+  raw_response: unknown
+  error_message: string | null
+  response_time_ms: number
+}
+
+// Build evidence item from a provider result
+export function buildEvidenceItem(
+  scan_id: string,
+  organization_id: string,
+  providerName: string,
+  result: ScanProviderResult
+): EvidenceItem {
+  return {
+    scan_id,
+    organization_id,
+    signal_type: providerName,
+    severity: result.evidenceSeverity,
+    title: result.evidenceTitle,
+    detail: result.evidenceDetail,
+    score_impact: result.scoreImpact,
+  }
+}
+
+// Build vendor result row from a provider result
+export function buildVendorResultRow(
+  scan_id: string,
+  organization_id: string,
+  providerName: string,
+  result: ScanProviderResult
+): VendorResultRow {
+  return {
+    scan_id,
+    organization_id,
+    vendor_name: providerName,
+    verdict: result.verdict,
+    raw_response: result.rawResponse,
+    error_message: result.error ?? null,
+    response_time_ms: result.responseTimeMs,
+  }
+}
+
+// Calculate risk score from multiple provider results
+// Domain age alone can make a scan suspicious, never dangerous by itself
+export function calculateRiskScoreFromProviders(
+  results: Array<{ providerName: string; result: ScanProviderResult }>
+): { riskScore: number; verdict: string } {
+  let score = 0
+
+  for (const { result } of results) {
+    if (result.verdict !== "error" && result.verdict !== "skipped") {
+      score += result.scoreImpact
+    }
+  }
+
+  score = Math.min(100, Math.max(0, score))
+
+  const hasReputableDangerousSignal = results.some(
+    (r) =>
+      r.result.verdict === "dangerous" &&
+      r.providerName === "google_web_risk"
+  )
+
+  let verdict: string
+
+  if (score >= 60 && hasReputableDangerousSignal) {
+    verdict = "dangerous"
+  } else if (score >= 20) {
+    verdict = "suspicious"
+  } else {
+    verdict = "safe"
+  }
+
+  return { riskScore: score, verdict }
+}
+
+// Calculate confidence score from multiple provider results
+export function calculateConfidenceFromProviders(
+  results: Array<{ result: ScanProviderResult }>,
+  totalProviders: number
+): number {
+  let score = 50
+
+  for (const { result } of results) {
+    score += result.confidenceImpact
+  }
+
+  // Penalty if no providers ran at all
+  if (totalProviders === 0) score = 10
+
+  return Math.min(100, Math.max(0, score))
+}
+
+// Legacy single-provider helpers — kept for Inngest worker compatibility
+// Will be removed once processScan.ts is fully migrated
 export function calculateRiskScore(signals: {
   webRiskFlagged: boolean
   webRiskSkipped: boolean
@@ -91,7 +193,7 @@ export function buildWebRiskEvidence(
       signal_type: "google_web_risk_flagged",
       severity: "critical",
       title: "Flagged by Google Web Risk",
-      detail: `Google has identified this as: ${webRisk.threatType || "dangerous content"}`,
+      detail: `Google has identified this as: ${webRisk.threatType ?? "dangerous content"}`,
       score_impact: 65,
     }
   }

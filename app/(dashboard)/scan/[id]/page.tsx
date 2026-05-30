@@ -287,7 +287,13 @@ export default async function ScanResultPage({
                 {vendors.map((v) => (
                   <div key={v.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                     <span className="text-sm text-slate-700">
-                      {v.vendor_name === "google_web_risk" ? "Google Web Risk" : v.vendor_name.replace(/_/g, " ")}
+                      {(() => {
+                      const names: Record<string, string> = {
+                        google_web_risk: "Google Web Risk",
+                        domain_age: "Domain age check",
+                      }
+                      return names[v.vendor_name] ?? v.vendor_name.replace(/_/g, " ")
+                    })()}
                     </span>
                     <VendorVerdict verdict={v.verdict} />
                   </div>

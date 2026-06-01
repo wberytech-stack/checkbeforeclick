@@ -1,4 +1,4 @@
-﻿type BrandLockupProps = {
+type BrandLockupProps = {
   size?: number
   onDark?: boolean
   showWordmark?: boolean

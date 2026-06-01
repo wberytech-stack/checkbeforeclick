@@ -1,4 +1,4 @@
-﻿import type { ReactNode } from "react"
+import type { ReactNode } from "react"
 import { BrandLockup } from "@/components/brand/BrandLockup"
 
 type AuthShellProps = {

@@ -72,9 +72,9 @@ export function AuthShell({ headline, subhead, title, subtitle, children, footer
           </div>
         </div>
 
-        <div className="flex flex-col justify-center px-6 py-9 sm:px-10">
+        <div className="flex flex-col justify-center px-5 py-7 sm:px-10 sm:py-9">
 
-          <div className="mb-8 md:hidden rounded-xl bg-[#13182a] p-5">
+          <div className="mb-6 md:hidden rounded-xl bg-[#13182a] p-5">
             <BrandLockup size={24} onDark />
             <p className="mt-3 text-[17px] font-semibold leading-snug tracking-[-0.01em] text-white">
               {headline}
@@ -96,9 +96,9 @@ export function AuthShell({ headline, subhead, title, subtitle, children, footer
             <h1 className="text-[22px] font-semibold tracking-[-0.01em] text-[#13182a]">{title}</h1>
             <p className="mt-1.5 text-sm text-[#6b7280]">{subtitle}</p>
 
-            <div className="mt-7">{children}</div>
+            <div className="mt-6">{children}</div>
 
-            <div className="mt-7 border-t border-[#ececea] pt-5">
+            <div className="mt-6 border-t border-[#ececea] pt-4">
               <p className="text-center text-sm text-[#6b7280]">{footer}</p>
             </div>
           </div>

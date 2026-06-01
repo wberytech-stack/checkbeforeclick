@@ -4,6 +4,8 @@ import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
+import { Mail, Lock, User, Building2, ArrowRight } from "lucide-react"
+import { AuthShell } from "@/components/auth/AuthShell"
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -62,20 +64,27 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">Create your account</h1>
-          <p className="mt-2 text-sm text-slate-500">
-            Start checking suspicious links in a secure workspace.
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div>
-            <label htmlFor="fullName" className="block text-sm font-medium text-slate-700">
-              Full name
-            </label>
+    <AuthShell
+      headline="Clarity before you click."
+      subhead="Give your team a simple way to check suspicious links and emails — and a clear answer before anyone acts."
+      title="Create your account"
+      subtitle="Start checking suspicious links in a secure workspace"
+      footer={
+        <>
+          Already have an account?{" "}
+          <Link href="/login" className="font-semibold text-[#6d5ef0] hover:text-[#5d4ee0]">
+            Sign in
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="fullName" className="mb-1.5 block text-[13px] font-medium text-[#3a4156]">
+            Full name
+          </label>
+          <div className="flex h-11 items-center gap-2.5 rounded-[10px] border border-[#dcdcd6] bg-white px-3 transition-all focus-within:border-[#6d5ef0] focus-within:ring-2 focus-within:ring-[#6d5ef0]/15">
+            <User className="h-4 w-4 flex-shrink-0 text-[#9aa1b0]" />
             <input
               id="fullName"
               type="text"
@@ -83,15 +92,18 @@ export default function RegisterPage() {
               required
               value={fullName}
               onChange={(event) => setFullName(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-slate-900"
+              className="w-full bg-transparent text-sm text-[#13182a] outline-none placeholder:text-[#aab0bc]"
               placeholder="Your name"
             />
           </div>
+        </div>
 
-          <div>
-            <label htmlFor="organizationName" className="block text-sm font-medium text-slate-700">
-              Company or organization name
-            </label>
+        <div>
+          <label htmlFor="organizationName" className="mb-1.5 block text-[13px] font-medium text-[#3a4156]">
+            Company or organization name
+          </label>
+          <div className="flex h-11 items-center gap-2.5 rounded-[10px] border border-[#dcdcd6] bg-white px-3 transition-all focus-within:border-[#6d5ef0] focus-within:ring-2 focus-within:ring-[#6d5ef0]/15">
+            <Building2 className="h-4 w-4 flex-shrink-0 text-[#9aa1b0]" />
             <input
               id="organizationName"
               type="text"
@@ -99,15 +111,18 @@ export default function RegisterPage() {
               required
               value={organizationName}
               onChange={(event) => setOrganizationName(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-slate-900"
+              className="w-full bg-transparent text-sm text-[#13182a] outline-none placeholder:text-[#aab0bc]"
               placeholder="Acme Corp"
             />
           </div>
+        </div>
 
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-slate-700">
-              Work email
-            </label>
+        <div>
+          <label htmlFor="email" className="mb-1.5 block text-[13px] font-medium text-[#3a4156]">
+            Work email
+          </label>
+          <div className="flex h-11 items-center gap-2.5 rounded-[10px] border border-[#dcdcd6] bg-white px-3 transition-all focus-within:border-[#6d5ef0] focus-within:ring-2 focus-within:ring-[#6d5ef0]/15">
+            <Mail className="h-4 w-4 flex-shrink-0 text-[#9aa1b0]" />
             <input
               id="email"
               type="email"
@@ -115,15 +130,18 @@ export default function RegisterPage() {
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-slate-900"
+              className="w-full bg-transparent text-sm text-[#13182a] outline-none placeholder:text-[#aab0bc]"
               placeholder="you@company.com"
             />
           </div>
+        </div>
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-slate-700">
-              Password
-            </label>
+        <div>
+          <label htmlFor="password" className="mb-1.5 block text-[13px] font-medium text-[#3a4156]">
+            Password
+          </label>
+          <div className="flex h-11 items-center gap-2.5 rounded-[10px] border border-[#dcdcd6] bg-white px-3 transition-all focus-within:border-[#6d5ef0] focus-within:ring-2 focus-within:ring-[#6d5ef0]/15">
+            <Lock className="h-4 w-4 flex-shrink-0 text-[#9aa1b0]" />
             <input
               id="password"
               type="password"
@@ -132,39 +150,33 @@ export default function RegisterPage() {
               minLength={8}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-slate-900"
+              className="w-full bg-transparent text-sm text-[#13182a] outline-none placeholder:text-[#aab0bc]"
               placeholder="At least 8 characters"
             />
           </div>
+        </div>
 
-          {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
+        {error && (
+          <div className="rounded-[10px] border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+            {error}
+          </div>
+        )}
 
-          {message && (
-            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-              {message}
-            </div>
-          )}
+        {message && (
+          <div className="rounded-[10px] border border-green-200 bg-green-50 px-3.5 py-2.5 text-sm text-green-700">
+            {message}
+          </div>
+        )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? "Creating account..." : "Create account"}
-          </button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-slate-500">
-          Already have an account?{" "}
-          <Link href="/login" className="font-medium text-slate-900 hover:underline">
-            Sign in
-          </Link>
-        </p>
-      </div>
-    </main>
+        <button
+          type="submit"
+          disabled={loading}
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-[10px] bg-[#6d5ef0] text-sm font-semibold text-white shadow-[0_1px_2px_rgba(19,24,42,0.18)] transition-all hover:bg-[#5d4ee0] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading ? "Creating account..." : "Create account"}
+          {!loading && <ArrowRight className="h-4 w-4" />}
+        </button>
+      </form>
+    </AuthShell>
   )
 }

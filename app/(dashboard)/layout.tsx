@@ -1,7 +1,7 @@
 ﻿"use client"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Shield } from "lucide-react"
+import { BrandLockup } from "@/components/brand/BrandLockup"
 import { createClient } from "@/lib/supabase/client"
 
 export default function DashboardLayout({
@@ -25,9 +25,8 @@ export default function DashboardLayout({
           {/* Top bar */}
           <div className="flex justify-between h-16 items-center">
             <div className="flex items-center gap-8">
-              <Link href="/dashboard" className="flex items-center gap-2">
-                <Shield className="h-6 w-6 text-slate-900" />
-                <span className="font-bold text-slate-900">CheckBeforeClick</span>
+              <Link href="/dashboard" className="flex items-center">
+                <BrandLockup size={26} />
               </Link>
               {/* Desktop nav */}
               <div className="hidden md:flex items-center gap-6">

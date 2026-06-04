@@ -1,4 +1,4 @@
-﻿import { inngest } from "../client"
+import { inngest } from "../client"
 import { createClient } from "@supabase/supabase-js"
 import { normalizeScanTarget } from "@/lib/security/urlSafety"
 import { getFastProviders, getAsyncProviders } from "@/lib/scan/providers"
@@ -129,8 +129,8 @@ export const processScan = inngest.createFunction(
               },
       }))
 
-      const { riskScore, verdict } = calculateRiskScoreFromProviders(results)
       const confidenceScore = calculateConfidenceFromProviders(results, providers.length)
+      const { riskScore, verdict } = calculateRiskScoreFromProviders(results, confidenceScore)
       const scanDurationMs = Date.now() - startTime
 
       const evidenceRows = results.map(({ providerName, result }) =>

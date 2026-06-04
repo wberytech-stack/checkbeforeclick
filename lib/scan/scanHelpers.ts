@@ -1,5 +1,5 @@
-﻿// Shared scan scoring, confidence, and evidence types
-// Pure functions — no secrets, no env vars, no server-only required
+// Shared scan scoring, confidence, and evidence types
+// Pure functions - no secrets, no env vars, no server-only required
 
 import type { ScanProviderResult, EvidenceSeverity } from "./providers/types"
 
@@ -26,7 +26,6 @@ export type VendorResultRow = {
   response_time_ms: number
 }
 
-// Build evidence item from a provider result
 export function buildEvidenceItem(
   scan_id: string,
   organization_id: string,
@@ -44,7 +43,6 @@ export function buildEvidenceItem(
   }
 }
 
-// Build vendor result row from a provider result
 export function buildVendorResultRow(
   scan_id: string,
   organization_id: string,
@@ -62,10 +60,27 @@ export function buildVendorResultRow(
   }
 }
 
-// Calculate risk score from multiple provider results
-// Domain age alone can make a scan suspicious, never dangerous by itself
+// Calculate risk score and verdict from multiple provider results.
+//
+// FAIL-CLOSED POLICY (feat/safer-url-verdicts):
+//   "safe" is EARNED, not a default. It requires that every REQUIRED provider
+//   positively completed with a "clean" result AND overall confidence clears a
+//   floor. A provider that returned unknown / error / skipped / suspicious /
+//   dangerous does NOT count as positive confirmation. When safety cannot be
+//   confirmed, the verdict is "unknown" (Could not confirm) - never "safe".
+//
+//   - Reputable dangerous signal (Google Web Risk flag) overrides everything.
+//   - Any provider raising "suspicious" blocks "safe".
+//   - If a required check fails, times out, cannot resolve, or returns unknown,
+//     the verdict is "unknown", not "safe".
+//
+// NOTE: signature now takes confidenceScore, so verdict can require it.
+const REQUIRED_PROVIDERS = ["google_web_risk", "domain_age"]
+const SAFE_CONFIDENCE_FLOOR = 60
+
 export function calculateRiskScoreFromProviders(
-  results: Array<{ providerName: string; result: ScanProviderResult }>
+  results: Array<{ providerName: string; result: ScanProviderResult }>,
+  confidenceScore: number
 ): { riskScore: number; verdict: string } {
   let score = 0
 
@@ -83,20 +98,30 @@ export function calculateRiskScoreFromProviders(
       r.providerName === "google_web_risk"
   )
 
+  const anySuspicious = results.some((r) => r.result.verdict === "suspicious")
+
+  const requiredAllClean = REQUIRED_PROVIDERS.every((name) => {
+    const entry = results.find((r) => r.providerName === name)
+    return entry !== undefined && entry.result.verdict === "clean"
+  })
+
+  const hasSufficientConfidence = confidenceScore >= SAFE_CONFIDENCE_FLOOR
+
   let verdict: string
 
   if (score >= 60 && hasReputableDangerousSignal) {
     verdict = "dangerous"
-  } else if (score >= 20) {
+  } else if (score >= 20 || anySuspicious) {
     verdict = "suspicious"
-  } else {
+  } else if (requiredAllClean && hasSufficientConfidence) {
     verdict = "safe"
+  } else {
+    verdict = "unknown"
   }
 
   return { riskScore: score, verdict }
 }
 
-// Calculate confidence score from multiple provider results
 export function calculateConfidenceFromProviders(
   results: Array<{ result: ScanProviderResult }>,
   totalProviders: number
@@ -107,14 +132,12 @@ export function calculateConfidenceFromProviders(
     score += result.confidenceImpact
   }
 
-  // Penalty if no providers ran at all
   if (totalProviders === 0) score = 10
 
   return Math.min(100, Math.max(0, score))
 }
 
-// Legacy single-provider helpers — kept for Inngest worker compatibility
-// Will be removed once processScan.ts is fully migrated
+// Legacy single-provider helpers - kept for Inngest worker compatibility
 export function calculateRiskScore(signals: {
   webRiskFlagged: boolean
   webRiskSkipped: boolean

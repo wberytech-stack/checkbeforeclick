@@ -1,4 +1,4 @@
-﻿import "server-only"
+import "server-only"
 import { inngest } from "@/inngest/client"
 import { NextResponse, type NextRequest } from "next/server"
 import { createClient } from "@/lib/supabase/server"
@@ -231,8 +231,8 @@ async function runFastPath({
     }))
 
     // Calculate scores from all provider results
-    const { riskScore, verdict } = calculateRiskScoreFromProviders(results)
     const confidenceScore = calculateConfidenceFromProviders(results, providers.length)
+    const { riskScore, verdict } = calculateRiskScoreFromProviders(results, confidenceScore)
 
     const scanDurationMs = Date.now() - startTime
 

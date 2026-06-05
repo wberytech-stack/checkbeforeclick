@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Phase 0A - generated private schema baseline exports (never commit)
+
+# Local audit outputs and Supabase link metadata (never commit)
+/audit/
+supabase/.temp/

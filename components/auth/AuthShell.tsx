@@ -33,7 +33,7 @@ function VerdictArtifact() {
 
 export function AuthShell({ headline, subhead, title, subtitle, children, footer }: AuthShellProps) {
   return (
-    <main className="min-h-screen bg-[#f6f6f4] flex items-start sm:items-center justify-center p-4 sm:p-6 py-8 sm:py-10">
+    <main className="min-h-full bg-[#f6f6f4] flex items-start sm:items-center justify-center p-4 sm:p-6 py-8 sm:py-10">
       <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-[#e7e7e3] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04),0_12px_40px_-12px_rgba(19,24,42,0.12)] grid md:grid-cols-[1.05fr_1fr]">
 
         <div className="relative hidden md:flex flex-col justify-between overflow-hidden bg-[#13182a] p-9">

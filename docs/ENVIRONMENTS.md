@@ -1,3 +1,4 @@
+```markdown
 # Environments — CheckBeforeClick
 
 > Single source of truth for how Production and Preview/staging are separated.
@@ -50,7 +51,7 @@ Values referenced by *source*, never written here.
 | `NEXT_PUBLIC_SUPABASE_URL` | Prod Supabase API URL (`qnjqwmcsfpmpnvlnomat`) | Staging Supabase API URL (`zgxmvpbvvakpsnzcymsf`) | No — must be split | Low | The backend API URL; drives which DB the app uses |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Prod anon | Staging anon | No — must be split | Low–Med | Browser-exposed; RLS-protected |
 | `SUPABASE_SERVICE_ROLE_KEY` | Prod service_role | Staging service_role | **No — never cross** | **HIGH** | Bypasses RLS. See §5. |
-| `NEXT_PUBLIC_APP_URL` | `https://checkbeforeclick.com` | Target: unset so Preview uses request-origin fallback | No | Low | Currently still shared; must be changed or formally accepted as interim. See §9 and §15. |
+| `NEXT_PUBLIC_APP_URL` | https://checkbeforeclick.com | **unset** (origin fallback) | No | Low | See §9. Production-only; Preview uses origin fallback. |
 | `INNGEST_EVENT_KEY` | Prod Inngest | Staging/dev Inngest — *target* | Interim only | Med | See §10. Currently shared. |
 | `INNGEST_SIGNING_KEY` | Prod Inngest | Staging/dev Inngest — *target* | Interim only | Med | See §10. Currently shared. |
 | `ANTHROPIC_API_KEY` | Prod key | Shared (acceptable) | Yes — documented | Low–Med | See §11 |
@@ -65,7 +66,7 @@ Values referenced by *source*, never written here.
 
 ### Production (`checkbeforeclick` / `qnjqwmcsfpmpnvlnomat`)
 
-```text
+```
 Site URL:      https://checkbeforeclick.com
 Redirect URLs: https://checkbeforeclick.com/auth/callback        (primary — keep permanently)
                https://checkbeforeclick.vercel.app/auth/callback (intentional — keep until bare vercel.app URL deprecated)
@@ -73,16 +74,16 @@ Redirect URLs: https://checkbeforeclick.com/auth/callback        (primary — ke
 ```
 
 All three are deliberate, previously-approved entries. Production contains **no**
-staging or Preview-branch URLs. ✅
+staging or Preview-branch URLs.
 
 ### Staging (`checkbeforeclick-staging` / `zgxmvpbvvakpsnzcymsf`)
 
-```text
+```
 Site URL:      https://checkbeforeclick-git-audit-azure-current-state-checkbeforeclick.vercel.app
 Redirect URLs: https://checkbeforeclick-git-audit-azure-current-state-checkbeforeclick.vercel.app/**
 ```
 
-Staging contains **no** production URLs. Stale debug-branch URL removed during cleanup. ✅
+Staging contains **no** production URLs. Stale debug-branch URL removed during cleanup.
 
 > When a Preview branch is deleted, remove its corresponding staging Redirect URL.
 
@@ -101,7 +102,7 @@ can read/write any tenant's data.
 
 ## 6. Incident lesson (why verify-by-behavior)
 
-A Preview `/dashboard ↔ /login` redirect loop was traced to a **malformed/truncated
+A Preview `/dashboard <-> /login` redirect loop was traced to a **malformed/truncated
 Preview `SUPABASE_SERVICE_ROLE_KEY`** (missing one character). The server-side service
 client could not authenticate, the dashboard's `public.users` read returned 401, and
 the app looped to login.
@@ -127,30 +128,39 @@ Lessons:
 
 - Production smoke tests run **only** against https://checkbeforeclick.com.
 - Any change in Production row counts must be **intentional** (e.g. a labeled test
-  signup) and recorded.
+  signup or a deliberate scan) and recorded.
 - Production session cookie is keyed `sb-qnjqwmcsfpmpnvlnomat-auth-token`.
 
 ## 9. `NEXT_PUBLIC_APP_URL` policy
 
-```text
+```
 Production: https://checkbeforeclick.com
-Preview:    unset (unless a proven need exists)
+Preview:    unset (uses request-origin fallback)
 ```
 
 Preview relies on `request.nextUrl.origin` fallback (used in
 `app/auth/callback/route.ts`). Hardcoding a Preview value risks wrong-origin
 auth/callback behavior. Set in Production only.
 
+**Status:** Implemented 2026-06-07. Removed from Preview (Production retains
+`https://checkbeforeclick.com`); verified the auth callback stays on the Preview
+domain (relative `/dashboard` redirect; request authority = the `.vercel.app`
+Preview URL, not `checkbeforeclick.com`).
+
 ## 10. Inngest policy
 
 Target state:
 
-```text
+```
 Production: production Inngest app/keys
 Preview:    staging/dev Inngest app/keys
 ```
 
 Preview jobs/events must not trigger or validate against production workflows.
+
+**Current state:** Inngest keys are shared (Production + Preview, production values).
+Documented as a temporary interim, not the final model. Follow-up: create a separate
+staging/dev Inngest app and scope Preview keys to it.
 
 ## 11. Anthropic / Google Web Risk policy
 
@@ -169,7 +179,7 @@ Production and Preview for now.
 - **No secrets in this document.** Refs and URLs only.
 - **No keys pasted into chat** or any shared channel.
 - **No production changes without gate review** (dual-review for auth/authz, schema/RLS,
-  secrets, service-role keys, staging→prod promotion, and Vercel env changes affecting
+  secrets, service-role keys, staging->prod promotion, and Vercel env changes affecting
   production).
 
 ## 13. Acceptance criteria (close environment-separation phase)
@@ -177,21 +187,21 @@ Production and Preview for now.
 - [x] Vercel Pro active; production healthy; no unintended production changes during upgrade.
 - [ ] Vercel inventory complete: all env vars' names + scopes recorded; no extra vars beyond the known 8.
 - [ ] Three Supabase vars confirmed split (Prod prod-scoped; Preview staging-scoped), verified by behavior.
-- [ ] `NEXT_PUBLIC_APP_URL` set Production-only / Preview unset (or documented exception).
+- [x] `NEXT_PUBLIC_APP_URL` set Production-only / Preview unset. (Done 2026-06-07; verified callback stays on Preview domain.)
 - [ ] Inngest: separated, or documented as accepted shared-interim with follow-up.
 - [x] Anthropic / Web Risk documented as intentionally shared (cost/quota risk).
 - [x] Production Auth URLs free of staging/Preview URLs; staging free of production URLs.
 - [x] Production redirect URLs documented as intentional-keep with rationale.
-- [ ] This document reviewed by ChatGPT, then created and committed.
-- [ ] Behavioral isolation re-confirmed once after doc/decisions: Preview signup → staging; production unchanged.
+- [x] This document reviewed by ChatGPT, then created and committed.
+- [ ] Behavioral isolation re-confirmed once after doc/decisions: Preview signup -> staging; production unchanged.
 
 ## 14. Open follow-ups
 
-- [ ] Final content of this document reviewed by ChatGPT.
-- [ ] File created at `docs/ENVIRONMENTS.md` and committed (docs-only).
+- [x] Final content of this document reviewed by ChatGPT.
+- [x] File created at `docs/ENVIRONMENTS.md` and committed (docs-only).
 - [ ] Confirm no Vercel env vars exist beyond the known 8.
 - [ ] Record the literal Preview-side scope labels for each variable.
-- [ ] Implement Preview-unset for `NEXT_PUBLIC_APP_URL` (gated change).
+- [x] Implement Preview-unset for `NEXT_PUBLIC_APP_URL` (gated change). — Done 2026-06-07.
 - [ ] Create/separate a staging/dev Inngest app; scope Preview keys to it.
 - [ ] Re-run one Preview isolation test (§7) after the above.
 - [ ] Production test user (org/user #4 from RISK-05 smoke test) — retain-labeled or remove carefully (auth + public.users + org together).
@@ -202,23 +212,21 @@ Production and Preview for now.
 A clear separation of what is true *now* vs. what is *intended*:
 
 **Implemented now (live, verified):**
-- Three Supabase vars split: Production→prod ref, Preview→staging ref (Preview verified by behavior).
+- Three Supabase vars split: Production->prod ref, Preview->staging ref (Preview verified by behavior).
+- `NEXT_PUBLIC_APP_URL` → Production-only; Preview unset (request-origin fallback). Verified by callback domain 2026-06-07.
 - Production & staging Supabase Auth URL isolation (no cross-environment URLs).
 - Service-role key separation in effect (Preview uses corrected staging key).
 - Vercel Pro active; production healthy; spend cap + notifications configured.
 
 **Documented target state (decided, NOT yet implemented):**
-- `NEXT_PUBLIC_APP_URL` → Production-only / Preview unset.
 - Inngest → separate Production vs staging/dev keys.
 
 **Accepted temporary interim (known, allowed for now):**
-- `NEXT_PUBLIC_APP_URL` currently shared (Production + Preview).
 - Inngest keys currently shared (Production values in Preview).
 - `ANTHROPIC_API_KEY` and `GOOGLE_WEB_RISK_API_KEY` shared (cost/quota risk only).
 
 **Still pending (owed work):**
 - Formal Vercel env-var inventory (no extras; literal Preview scope labels).
-- This document's ChatGPT review, then creation + commit.
 - One fresh Preview isolation re-test after decisions.
 - Production RISK-05 test user retain/remove decision.
 - Dependabot moderate vulnerability review.
@@ -227,3 +235,4 @@ A clear separation of what is true *now* vs. what is *intended*:
 
 *This document must not contain secret values. Update it whenever an environment
 variable's scope or an Auth URL changes. Last reviewed: 2026-06-07.*
+```

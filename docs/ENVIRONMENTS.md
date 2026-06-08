@@ -1,3 +1,8 @@
+Here's the complete updated `docs/ENVIRONMENTS.md` (delete-all and paste, like before) followed by the git commands. All of ChatGPT's required updates are applied. Most of §3/§10/§13/§15 were already updated in the last commit (`cf0618d`); this version completes the remaining items — adds the explicit `INNGEST_ENV` matrix row note, marks the inventory + isolation criteria done, clears the completed §14 follow-ups, and adds the closing statement.
+
+In VS Code: Ctrl+A, delete, paste this, save.
+
+```markdown
 # Environments — CheckBeforeClick
 
 > Single source of truth for how Production and Preview/staging are separated.
@@ -48,7 +53,8 @@ environments, and the verification protocols that confirm isolation holds.
 
 ## 3. Vercel environment variable matrix
 
-Values referenced by *source*, never written here.
+Values referenced by *source*, never written here. Scopes verified by Production/Preview
+filter inventory 2026-06-08 (no unexpected variables).
 
 | Variable | Production source | Preview source | Sharing allowed? | Risk | Notes |
 |---|---|---|---|---|---|
@@ -58,22 +64,36 @@ Values referenced by *source*, never written here.
 | `NEXT_PUBLIC_APP_URL` | https://checkbeforeclick.com | **unset** (origin fallback) | No | Low | See §9. Production-only; Preview uses origin fallback. |
 | `INNGEST_EVENT_KEY` | Prod Inngest env event key | Branch-env event key | No — must be split | Med | See §10. Implemented. |
 | `INNGEST_SIGNING_KEY` | Prod Inngest env signing key | Branch-env signing key | No — must be split | Med | See §10. Implemented. |
-| `INNGEST_ENV` | (absent — defaults to Production env) | `audit/azure-current-state` | Preview-only | Low | Selects the Inngest branch environment. See §10. |
+| `INNGEST_ENV` | not used (absent → defaults to Production env) | branch environment name (`audit/azure-current-state`) | No | Low–Med | Preview-only; routes Preview runs to the Inngest Branch Environment. See §10. |
 | `ANTHROPIC_API_KEY` | Prod key | Shared (acceptable) | Yes — documented | Low–Med | See §11 |
 | `GOOGLE_WEB_RISK_API_KEY` | Prod key | Shared (acceptable) | Yes — documented | Low–Med | See §11 |
 
 > The three Supabase variables and the two Inngest keys are split into separate
 > Production-scoped and Preview-scoped entries. Production values reference the
 > Production environments; Preview values reference staging / the Inngest branch
-> environment.
+> environment. `INNGEST_ENV` is Preview-only.
 
 ## 4. Supabase Auth URL matrix
 
 ### Production (`checkbeforeclick` / `qnjqwmcsfpmpnvlnomat`)
+
+```
+Site URL:      https://checkbeforeclick.com
+Redirect URLs: https://checkbeforeclick.com/auth/callback        (primary — keep permanently)
+               https://checkbeforeclick.vercel.app/auth/callback (intentional — keep until bare vercel.app URL deprecated)
+               http://localhost:3000/auth/callback               (intentional — local dev workflow; keep)
+```
+
 All three are deliberate, previously-approved entries. Production contains **no**
 staging or Preview-branch URLs.
 
 ### Staging (`checkbeforeclick-staging` / `zgxmvpbvvakpsnzcymsf`)
+
+```
+Site URL:      https://checkbeforeclick-git-audit-azure-current-state-checkbeforeclick.vercel.app
+Redirect URLs: https://checkbeforeclick-git-audit-azure-current-state-checkbeforeclick.vercel.app/**
+```
+
 Staging contains **no** production URLs. Stale debug-branch URL removed during cleanup.
 
 > When a Preview branch is deleted, remove its corresponding staging Redirect URL.
@@ -133,6 +153,12 @@ Lessons:
   matches our action window.
 
 ## 9. `NEXT_PUBLIC_APP_URL` policy
+
+```
+Production: https://checkbeforeclick.com
+Preview:    unset (uses request-origin fallback)
+```
+
 Preview relies on `request.nextUrl.origin` fallback (used in
 `app/auth/callback/route.ts`). Hardcoding a Preview value risks wrong-origin
 auth/callback behavior. Set in Production only.
@@ -145,6 +171,19 @@ Preview URL, not `checkbeforeclick.com`).
 ## 10. Inngest policy
 
 Model: **Inngest Branch Environments** (Path A).
+
+```
+Production: Inngest Production environment
+            INNGEST_EVENT_KEY   = Production env event key   (Production scope)
+            INNGEST_SIGNING_KEY = Production env signing key  (Production scope)
+            (no INNGEST_ENV → defaults to Production)
+
+Preview:    Inngest branch environment "audit/azure-current-state"
+            INNGEST_EVENT_KEY   = branch-env event key   (Preview scope)
+            INNGEST_SIGNING_KEY = branch-env signing key  (Preview scope)
+            INNGEST_ENV         = audit/azure-current-state (Preview scope)
+```
+
 The app code (`inngest/client.ts`, `app/api/inngest/route.ts`) does not hardcode keys
 or environment — the Inngest SDK reads them from the environment. So separation is
 config-only (no code change). The branch event/signing keys are shared across all
@@ -188,26 +227,27 @@ Production and Preview for now.
 ## 13. Acceptance criteria (close environment-separation phase)
 
 - [x] Vercel Pro active; production healthy; no unintended production changes during upgrade.
-- [ ] Vercel inventory complete: all env vars' names + scopes recorded; no extra vars beyond the known set.
-- [ ] Three Supabase vars confirmed split (Prod prod-scoped; Preview staging-scoped), verified by behavior.
+- [x] Vercel inventory complete: all env vars' names + scopes recorded; no extra vars beyond the known set. (Verified 2026-06-08.)
+- [x] Three Supabase vars confirmed split (Prod prod-scoped; Preview staging-scoped), verified by behavior.
 - [x] `NEXT_PUBLIC_APP_URL` set Production-only / Preview unset. (Done 2026-06-07.)
 - [x] Inngest separated via Branch Environments (Preview → branch env; Production → Production env). (Done 2026-06-07; verified by behavior.)
 - [x] Anthropic / Web Risk documented as intentionally shared (cost/quota risk).
 - [x] Production Auth URLs free of staging/Preview URLs; staging free of production URLs.
 - [x] Production redirect URLs documented as intentional-keep with rationale.
 - [x] This document reviewed by ChatGPT, then created and committed.
-- [ ] Behavioral isolation re-confirmed once after doc/decisions: Preview signup -> staging; production routing/timestamps clean.
+- [x] Behavioral isolation re-confirmed: the two `audit/azure-current-state` branch-environment slow-path scans (2026-06-07) — runs completed in the branch env, none in Production Inngest, scans wrote to staging, production untouched — are accepted as the re-confirmation.
 
 ## 14. Open follow-ups
 
 - [x] Final content of this document reviewed by ChatGPT.
 - [x] File created at `docs/ENVIRONMENTS.md` and committed (docs-only).
-- [ ] Confirm no Vercel env vars exist beyond the known set.
-- [ ] Record the literal Preview-side scope labels for each variable.
+- [x] Confirm no Vercel env vars exist beyond the known set. (Verified 2026-06-08.)
+- [x] Record the literal Preview-side scope labels for each variable. (Done — §3 / inventory 2026-06-08.)
 - [x] Implement Preview-unset for `NEXT_PUBLIC_APP_URL` (gated change). — Done 2026-06-07.
 - [x] Separate Inngest via Branch Environments; scope Preview keys to branch env. — Done 2026-06-07.
-- [ ] Production test user (org/user from RISK-05 smoke test) — retain-labeled or remove carefully (auth + public.users + org together).
-- [ ] GitHub Dependabot: 1 moderate vulnerability on default branch — review later.
+- [x] Re-run Preview isolation test. — Done 2026-06-07 (branch-environment slow-path scans).
+- [ ] Production test user (org/user from RISK-05 smoke test) — retain-labeled or remove carefully (auth + public.users + org together). *(Housekeeping, not an env-separation blocker.)*
+- [ ] GitHub Dependabot: 1 moderate vulnerability on default branch — review later. *(Security maintenance, not an env-separation blocker.)*
 - [ ] (Optional, needs code) Per-branch Inngest isolation via `VERCEL_GIT_COMMIT_REF`.
 
 ## 15. Current implementation status
@@ -217,24 +257,38 @@ A clear separation of what is true *now* vs. what is *intended*:
 **Implemented now (live, verified):**
 - Three Supabase vars split: Production->prod ref, Preview->staging ref (verified by behavior).
 - `NEXT_PUBLIC_APP_URL` → Production-only; Preview unset (request-origin fallback). Verified 2026-06-07.
-- Inngest → Branch Environments: Preview uses branch-env keys + `INNGEST_ENV`; Production uses Production env keys. Verified by behavior 2026-06-07.
+- Inngest → Branch Environments: Preview uses branch-env keys + `INNGEST_ENV` (Preview-only); Production uses Production env keys. Verified by behavior 2026-06-07.
 - Production & staging Supabase Auth URL isolation (no cross-environment URLs).
 - Service-role key separation in effect (Preview uses corrected staging key).
+- Vercel env-var scopes verified by inventory 2026-06-08 (no unexpected vars).
 - Vercel Pro active; production healthy; spend cap + notifications configured.
 
 **Documented target state (decided, NOT yet implemented):**
-- (none outstanding — APP_URL and Inngest now implemented.)
+- (none outstanding.)
 
 **Accepted temporary interim (known, allowed for now):**
 - `ANTHROPIC_API_KEY` and `GOOGLE_WEB_RISK_API_KEY` shared (cost/quota risk only).
 
-**Still pending (owed work):**
-- Formal Vercel env-var inventory (no extras; literal Preview scope labels).
+**Still pending (housekeeping / security-maintenance, NOT env-separation blockers):**
 - Production RISK-05 test user retain/remove decision.
 - Dependabot moderate vulnerability review.
 - (Optional) per-branch Inngest isolation via code.
 
+## 16. Phase closure
+
+**Environment separation is CLOSED as of this commit (2026-06-08).**
+
+All core separation is implemented and verified by behavior: Supabase (Preview→staging,
+Production→production), `NEXT_PUBLIC_APP_URL` (Production-only), and Inngest (Branch
+Environments). The Vercel env-var inventory confirms no unexpected variables and correct
+scoping throughout. Third-party API keys (Anthropic, Google Web Risk) remain intentionally
+shared as a documented, accepted cost/quota decision.
+
+Remaining items (production RISK-05 test user decision; Dependabot review; optional
+per-branch Inngest isolation) are **housekeeping / security-maintenance, not blockers**
+to environment separation.
+
 ---
 
 *This document must not contain secret values. Update it whenever an environment
-variable's scope or an Auth URL changes. Last reviewed: 2026-06-07.*
+variable's scope or an Auth URL changes. Last reviewed: 2026-06-08.*

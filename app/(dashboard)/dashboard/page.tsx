@@ -1,7 +1,7 @@
 ﻿import Link from "next/link"
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
-import { createServiceClient } from "@/lib/supabase/service"
+import { getUserOrgContext, getDashboardData } from "@/lib/data"
 import {
   ShieldAlert,
   ShieldCheck,
@@ -124,50 +124,26 @@ export default async function DashboardPage() {
     redirect("/login")
   }
 
-  const supabase = createServiceClient()
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("id, organization_id, full_name")
-    .eq("id", user.id)
-    .single()
+  const ctx = await getUserOrgContext(user.id)
 
-  if (!userRecord) {
+  if (!ctx) {
     redirect("/login")
   }
 
-  const { data: completedScans } = await supabase
-    .from("scans")
-    .select("verdict, created_at")
-    .eq("organization_id", userRecord.organization_id)
-    .eq("status", "complete")
+  const { completedScans, weekCount, recentScans } = await getDashboardData(
+    ctx.organizationId
+  )
 
   const counts = { dangerous: 0, suspicious: 0, safe: 0 }
-  if (completedScans) {
-    for (const s of completedScans) {
-      if (s.verdict === "dangerous") counts.dangerous++
-      else if (s.verdict === "suspicious") counts.suspicious++
-      else if (s.verdict === "safe") counts.safe++
-    }
+  for (const s of completedScans) {
+    if (s.verdict === "dangerous") counts.dangerous++
+    else if (s.verdict === "suspicious") counts.suspicious++
+    else if (s.verdict === "safe") counts.safe++
   }
-
-  // Total checked this week — org-scoped, last 7 days
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString()
-  const { count: weekCount } = await supabase
-    .from("scans")
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", userRecord.organization_id)
-    .gte("created_at", sevenDaysAgo)
-
-  const { data: recentScans } = await supabase
-    .from("scans")
-    .select("id, raw_input, input_type, verdict, status, created_at, risk_score")
-    .eq("organization_id", userRecord.organization_id)
-    .order("created_at", { ascending: false })
-    .limit(10)
 
   const scans = (recentScans ?? []) as ScanRow[]
   const hasScans = scans.length > 0
-  const firstName = userRecord.full_name?.trim()?.split(" ")[0] || null
+  const firstName = ctx.fullName?.trim()?.split(" ")[0] || null
 
   const hour = new Date().getHours()
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"

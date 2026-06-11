@@ -650,3 +650,43 @@ Production resource group:
 No application runtime, database, queue, Key Vault, storage account, or production traffic has been moved yet.
 
 Status: Gate 2A complete.
+
+## 28. Key Vault foundation evidence
+
+Completed Key Vault foundation setup:
+
+- Microsoft.KeyVault provider registered
+- Production Key Vault created
+- RBAC authorization enabled
+- Purge protection enabled
+- Soft delete retention set to 30 days
+- Founder/operator secret-management access verified
+- Secret listing command succeeds
+- No production secrets have been added yet
+
+Key Vault:
+
+| Setting | Value |
+|---|---|
+| Name | `kv-cbc-prod-cc-001` |
+| Resource group | `rg-cbc-prod-canadacentral-001` |
+| Region | `canadacentral` |
+| RBAC authorization | Enabled |
+| Purge protection | Enabled |
+| Soft delete retention | 30 days |
+| Purpose tag | `secrets-foundation` |
+
+Current secret state:
+
+| Secret category | Status |
+|---|---|
+| Database secrets | Not created yet |
+| Entra secrets | Not created yet |
+| Google Web Risk key | Not migrated yet |
+| Anthropic key | Not migrated yet |
+| Queue secrets | Not created yet |
+| App runtime secrets | Not created yet |
+
+No application runtime, database, queue, storage account, or production traffic has been moved yet.
+
+Status: Gate 2B complete.

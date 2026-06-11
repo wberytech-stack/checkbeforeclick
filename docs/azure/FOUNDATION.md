@@ -613,3 +613,40 @@ The winning path is:
 - demo/investor readiness in parallel
 
 Last updated: 2026-06-10
+
+## 27. Azure foundation setup evidence
+
+Completed Azure foundation setup:
+
+- Azure CLI installed and authenticated
+- Default subscription selected: Azure subscription 1
+- Region confirmed: Canada Central (`canadacentral`)
+- Monthly budget guardrail created
+- Production resource group created
+
+Budget guardrail:
+
+| Setting | Value |
+|---|---|
+| Budget name | `cbc-monthly-cost-guardrail` |
+| Amount | `$300/month` |
+| Time grain | Monthly |
+| Notifications | 50%, 75%, 90%, 100%, forecasted 100% |
+| Contact emails | `mr.waberi@gmail.com`, `wberytech@gmail.com` |
+
+Production resource group:
+
+| Setting | Value |
+|---|---|
+| Name | `rg-cbc-prod-canadacentral-001` |
+| Region | `canadacentral` |
+| Product tag | `checkbeforeclick` |
+| App tag | `cbc` |
+| Environment tag | `prod` |
+| Owner tag | `wabcan` |
+| Purpose tag | `azure-foundation` |
+| Cost guardrail tag | `cbc-monthly-cost-guardrail` |
+
+No application runtime, database, queue, Key Vault, storage account, or production traffic has been moved yet.
+
+Status: Gate 2A complete.

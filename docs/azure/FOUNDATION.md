@@ -736,3 +736,71 @@ Do not use the simplified `az postgres flexible-server create` flow for producti
 Next PostgreSQL attempt must use a controlled template, explicit deployment method, or carefully reviewed Azure Portal creation path.
 
 Status: Failed creation attempt safely corrected.
+
+## 30. PostgreSQL foundation deployment evidence
+
+A controlled ARM deployment was used to create the production PostgreSQL foundation after the earlier simplified CLI attempt was rejected.
+
+Deployment source:
+
+- Template: `infra/azure/postgres-flexible-server.prod.json`
+- Parameters: `infra/azure/postgres-flexible-server.prod.parameters.json`
+- Deployment method: Azure Resource Manager group deployment
+- What-if reviewed before creation
+- Template committed before deployment
+
+PostgreSQL Flexible Server:
+
+| Setting | Value |
+|---|---|
+| Server name | `pg-cbc-prod-cc-001` |
+| FQDN | `pg-cbc-prod-cc-001.postgres.database.azure.com` |
+| Resource group | `rg-cbc-prod-canadacentral-001` |
+| Region | `canadacentral` |
+| PostgreSQL version | `16` |
+| SKU | `Standard_B2s` |
+| Tier | `Burstable` |
+| Storage | `32 GB` |
+| Public network access | Enabled |
+| High availability | Disabled |
+| Backup retention | 7 days |
+| Managed by | `arm-template` |
+
+Database:
+
+| Setting | Value |
+|---|---|
+| Database name | `cbc_prod` |
+| Charset | `UTF8` |
+| Collation | `en_US.utf8` |
+
+Firewall:
+
+| Rule | Start IP | End IP |
+|---|---|---|
+| `admin-current-ip` | `129.224.217.0` | `129.224.217.255` |
+
+Secret storage:
+
+| Secret | Status |
+|---|---|
+| `postgres-prod-admin-password` | Created in Key Vault |
+| Secret value exposed in verification output | No |
+| Local password variable | Removed after storage |
+
+Tags verified:
+
+- `product=checkbeforeclick`
+- `app=cbc`
+- `environment=prod`
+- `region=canadacentral`
+- `owner=wabcan`
+- `purpose=postgres-foundation`
+- `costGuardrail=cbc-monthly-cost-guardrail`
+- `managedBy=arm-template`
+
+No schema migration has been run yet.
+No Supabase production data has been imported yet.
+No application traffic has been moved yet.
+
+Status: Gate 2C PostgreSQL foundation complete.

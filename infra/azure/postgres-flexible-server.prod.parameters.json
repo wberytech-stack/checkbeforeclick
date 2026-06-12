@@ -1,0 +1,24 @@
+﻿{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "serverName": {
+      "value": "pg-cbc-prod-cc-001"
+    },
+    "databaseName": {
+      "value": "cbc_prod"
+    },
+    "administratorLogin": {
+      "value": "cbcpgadmin"
+    },
+    "location": {
+      "value": "canadacentral"
+    },
+    "allowedStartIp": {
+      "value": "129.224.217.0"
+    },
+    "allowedEndIp": {
+      "value": "129.224.217.255"
+    }
+  }
+}

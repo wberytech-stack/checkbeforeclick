@@ -690,3 +690,49 @@ Current secret state:
 No application runtime, database, queue, storage account, or production traffic has been moved yet.
 
 Status: Gate 2B complete.
+
+## 29. PostgreSQL creation attempt and correction
+
+A first PostgreSQL Flexible Server creation attempt was made during Gate 2C discovery.
+
+The requested design was:
+
+- Server: `pg-cbc-prod-cc-001`
+- SKU: `Standard_B2s`
+- Tier: Burstable
+- PostgreSQL version: 16
+- Storage: 32 GB
+- Tags: required foundation tags
+
+Azure CLI created a different server shape than intended:
+
+- SKU: `Standard_D2ds_v5`
+- Tier: GeneralPurpose
+- PostgreSQL version: 18
+- Storage: 128 GB
+- Tags: null
+
+Decision:
+
+- The created server was not accepted.
+- The server was deleted immediately.
+- No app traffic was moved.
+- No customer data was stored.
+- No schema migration was run.
+
+Secret handling:
+
+- A temporary database admin password was generated locally.
+- The temporary Key Vault secret `postgres-admin-password` was deleted.
+- Because purge protection is enabled, the deleted secret cannot be manually purged.
+- Azure will automatically purge it after the retention period.
+- Active Key Vault secret list is empty.
+- Future PostgreSQL creation must use a new secret name.
+
+New rule:
+
+Do not use the simplified `az postgres flexible-server create` flow for production foundation unless exact resulting SKU, version, storage, networking, and tags can be guaranteed.
+
+Next PostgreSQL attempt must use a controlled template, explicit deployment method, or carefully reviewed Azure Portal creation path.
+
+Status: Failed creation attempt safely corrected.

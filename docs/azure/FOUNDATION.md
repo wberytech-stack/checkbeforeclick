@@ -804,3 +804,49 @@ No Supabase production data has been imported yet.
 No application traffic has been moved yet.
 
 Status: Gate 2C PostgreSQL foundation complete.
+
+## 31. PostgreSQL connection test evidence
+
+A direct PostgreSQL client connection test was completed against the Azure PostgreSQL Flexible Server foundation.
+
+Client:
+
+| Setting | Value |
+|---|---|
+| Client | `psql` |
+| Client version | `16.14` |
+| Connection method | Full local `psql.exe` path |
+| Password handling | Loaded from Key Vault into memory only |
+| Password printed in terminal | No |
+
+Connection target:
+
+| Setting | Value |
+|---|---|
+| Host | `pg-cbc-prod-cc-001.postgres.database.azure.com` |
+| Database | `cbc_prod` |
+| User | `cbcpgadmin` |
+| SSL mode | `require` |
+
+Connection evidence:
+
+| Check | Result |
+|---|---|
+| SSL connection | Success |
+| TLS version | `TLSv1.3` |
+| Cipher | `TLS_AES_256_GCM_SHA384` |
+| Database prompt reached | Yes |
+| User tables found | No relations found |
+| Current database | `cbc_prod` |
+| Current user | `cbcpgadmin` |
+| PostgreSQL server version | `PostgreSQL 16.14` |
+
+Result:
+
+The Azure PostgreSQL production foundation is reachable, SSL-protected, and empty as expected before schema migration.
+
+No schema migration has been run yet.
+No Supabase production data has been imported yet.
+No application traffic has been moved yet.
+
+Status: Gate 2D PostgreSQL connection test complete.

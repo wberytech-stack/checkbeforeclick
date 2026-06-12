@@ -6,8 +6,8 @@
 -- - managed identity schema dependencies
 -- - provider-specific session helper functions
 -- - provider-specific secret extension
--- - provider-specific realtime publication ownership
--- - provider-specific web role grants
+-- - provider-specific live publication ownership
+-- - provider-specific web role permissions
 -- - provider-specific RLS policies
 -- - ownership override statements
 --
@@ -308,4 +308,5 @@ ALTER TABLE ONLY public.alerts
   FOREIGN KEY (watchlist_id) REFERENCES public.watchlist(id) ON DELETE CASCADE;
 
 COMMIT;
+
 

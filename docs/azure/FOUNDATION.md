@@ -850,3 +850,39 @@ No Supabase production data has been imported yet.
 No application traffic has been moved yet.
 
 Status: Gate 2D PostgreSQL connection test complete.
+
+## 32. Gate 2H production baseline schema apply
+
+Gate 2H applied the approved Azure-safe baseline schema migration to `cbc_prod`.
+
+Migration file:
+
+- `infra/db/migrations/001_initial_schema.sql`
+
+Result:
+
+- Production database target confirmed as `cbc_prod`
+- Database was empty before apply
+- Baseline migration applied successfully
+- 10 expected baseline tables created
+- 18 public foreign keys verified
+- No `auth.users` foreign key
+- No Supabase schemas detected
+- No RLS enabled
+- Policy count is 0
+- No app traffic moved
+- No data imported
+
+Important scope note:
+
+`001_initial_schema.sql` is baseline-only. It is not the final tenant-isolation model.
+
+The following remain deferred to Gate 002:
+
+- `memberships`
+- RLS
+- session-variable authorization
+- app-layer tenant authorization
+- tenant-isolation enforcement tests
+
+Status: Gate 2H production baseline schema apply complete.

@@ -1,4 +1,10 @@
-﻿-- CheckBeforeClick Azure PostgreSQL baseline schema
+-- ============================================================================
+-- BASELINE SCHEMA ONLY (pre-tenant-isolation).
+-- RLS + memberships + app-layer tenant authorization are added in a later
+-- migration (002) and are the gating safety milestone before any production
+-- cutover. Do NOT treat this baseline as tenant-isolation-ready.
+-- ============================================================================
+-- CheckBeforeClick Azure PostgreSQL baseline schema
 -- Source: audit/database/export/20260605T232800Z-schema.sql
 -- Curated for Azure PostgreSQL Flexible Server.
 --
@@ -17,7 +23,6 @@
 
 BEGIN;
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE OR REPLACE FUNCTION public.generate_org_slug(org_name text, user_id uuid)
 RETURNS text

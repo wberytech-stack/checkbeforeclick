@@ -886,3 +886,28 @@ The following remain deferred to Gate 002:
 - tenant-isolation enforcement tests
 
 Status: Gate 2H production baseline schema apply complete.
+
+## Gate 002 disposable dry-run
+
+Gate 002 tenant isolation was validated against disposable database `cbc_002_validation`.
+
+Results:
+
+- 001 baseline applied successfully
+- 002 tenant-isolation migration applied successfully
+- RLS tested as `cbc_app_validation`, a non-owner NOBYPASSRLS runtime-like role
+- Missing tenant context denied access
+- Wrong tenant context denied access
+- Valid membership allowed only own-tenant access
+- Cross-tenant read/write attempts were denied
+- Membership SELECT worked without recursion
+- Membership mutation was restricted to owner/admin logic
+- Audit log runtime behavior was append-only
+- Bootstrap mismatch was denied
+- Bootstrap session-user path succeeded
+- `scan_cache` remained global/internal and outside tenant RLS
+- Disposable DB and validation role were cleaned up
+
+Status: Gate 002 disposable dry-run PASS.
+
+No production database change was made.

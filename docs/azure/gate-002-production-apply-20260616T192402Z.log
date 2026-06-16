@@ -1,0 +1,84 @@
+BEGIN
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+INSERT 0 0
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+psql : psql:infra/db/migrations/002_tenant_isolation.sql:294: NOTICE:  Role cbc_app not present; skipping grants. 
+Create it in the server-role gate, then re-run grants.
+At line:1 char:1
++ psql -v ON_ERROR_STOP=1 -W `
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (psql:infra/db/m... re-run grants.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+DO
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:303: NOTICE:  policy "org_tenant_isolation" for relation 
+"public.organizations" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:310: NOTICE:  policy "users_tenant_isolation" for relation 
+"public.users" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:317: NOTICE:  policy "memberships_select" for relation 
+"public.memberships" does not exist, skipping
+DROP POLICY
+psql:infra/db/migrations/002_tenant_isolation.sql:318: NOTICE:  policy "memberships_insert" for relation 
+"public.memberships" does not exist, skipping
+DROP POLICY
+psql:infra/db/migrations/002_tenant_isolation.sql:319: NOTICE:  policy "memberships_update" for relation 
+"public.memberships" does not exist, skipping
+DROP POLICY
+psql:infra/db/migrations/002_tenant_isolation.sql:320: NOTICE:  policy "memberships_delete" for relation 
+"public.memberships" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+CREATE POLICY
+CREATE POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:337: NOTICE:  policy "scans_tenant_isolation" for relation 
+"public.scans" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:344: NOTICE:  policy "vendor_results_tenant_isolation" for relation 
+"public.vendor_results" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:351: NOTICE:  policy "evidence_items_tenant_isolation" for relation 
+"public.evidence_items" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:358: NOTICE:  policy "scan_feedback_tenant_isolation" for relation 
+"public.scan_feedback" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:365: NOTICE:  policy "audit_log_tenant_isolation" for relation 
+"public.audit_log" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:372: NOTICE:  policy "watchlist_tenant_isolation" for relation 
+"public.watchlist" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+ALTER TABLE
+psql:infra/db/migrations/002_tenant_isolation.sql:379: NOTICE:  policy "alerts_tenant_isolation" for relation 
+"public.alerts" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+COMMIT

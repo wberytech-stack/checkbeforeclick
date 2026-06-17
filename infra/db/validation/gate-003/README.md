@@ -30,6 +30,26 @@ The current worker path reloads organization_id from the trusted scan row in app
 
 Gate 003B must not validate fake worker functions that may not match the final worker implementation.
 
+## Blocking implementation dependency
+
+Gate 003B validates the target cbc_app permission model, not the current synchronous fast-path implementation.
+
+Current app behavior still includes synchronous scan processing in app/api/scan/route.ts. That path may update scans and insert vendor_results and evidence_items during the user/API request.
+
+The Gate 003B cbc_app grant model intentionally does not allow those writes.
+
+Therefore, before cbc_app can become the real runtime role for the app, the scan API must be changed so that user/API requests only:
+
+* authenticate the user
+* resolve the organization
+* create a pending scan
+* enqueue scan_id for worker processing
+* return scan_id/status to the client
+
+All provider execution, scan status transitions, vendor_results writes, evidence_items writes, and scan completion/failure updates must move to the worker path or to explicitly designed controlled database functions in a later worker migration gate.
+
+Gate 003B disposable validation may still proceed as validation of the target cbc_app model, but it must not be interpreted as proving that the current app code can run unchanged with cbc_app.
+
 ## Relationship to Gate 002 validation
 
 Gate 002 already validated core tenant isolation using a disposable runtime-like role named cbc_app_validation.

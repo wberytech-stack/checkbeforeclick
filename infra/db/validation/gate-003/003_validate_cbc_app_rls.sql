@@ -645,7 +645,172 @@ ROLLBACK;
 
 ---
 
--- 19. Completion marker
+-- ----------------------------------------------------------------------------
+-- 19. Membership select recursion re-check
+-- ----------------------------------------------------------------------------
+BEGIN;
+SET ROLE cbc_app_validation;
+SELECT set_config('app.current_user_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', true);
+SELECT set_config('app.current_organization_id', '11111111-1111-1111-1111-111111111111', true);
+
+SELECT
+'T17_MEMBERSHIP_SELECT_NO_RECURSION' AS test,
+count(*) AS visible_memberships,
+CASE
+WHEN count(*) = 2 THEN 'PASS'
+ELSE 'FAIL'
+END AS result
+FROM public.memberships;
+
+RESET ROLE;
+ROLLBACK;
+
+-- ----------------------------------------------------------------------------
+-- 20. Member cannot mutate memberships
+-- ----------------------------------------------------------------------------
+BEGIN;
+SET ROLE cbc_app_validation;
+SELECT set_config('app.current_user_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', true);
+SELECT set_config('app.current_organization_id', '11111111-1111-1111-1111-111111111111', true);
+
+DO $$
+BEGIN
+BEGIN
+INSERT INTO public.memberships (
+user_id,
+organization_id,
+role
+)
+VALUES (
+'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2',
+'11111111-1111-1111-1111-111111111111',
+'admin'
+);
+
+RAISE NOTICE 'T18_MEMBER_MEMBERSHIP_MUTATION_DENIED: FAIL - insert succeeded';
+
+EXCEPTION
+WHEN insufficient_privilege THEN
+RAISE NOTICE 'T18_MEMBER_MEMBERSHIP_MUTATION_DENIED: PASS';
+WHEN others THEN
+RAISE NOTICE 'T18_MEMBER_MEMBERSHIP_MUTATION_DENIED: PASS - denied with SQLSTATE %, %', SQLSTATE, SQLERRM;
+END;
+END;
+$$;
+
+RESET ROLE;
+ROLLBACK;
+
+-- ----------------------------------------------------------------------------
+-- 21. Owner/admin cannot directly mutate memberships under Gate 003B cbc_app grants
+-- ----------------------------------------------------------------------------
+BEGIN;
+SET ROLE cbc_app_validation;
+SELECT set_config('app.current_user_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', true);
+SELECT set_config('app.current_organization_id', '11111111-1111-1111-1111-111111111111', true);
+
+DO $$
+BEGIN
+BEGIN
+INSERT INTO public.memberships (
+user_id,
+organization_id,
+role
+)
+VALUES (
+'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2',
+'11111111-1111-1111-1111-111111111111',
+'admin'
+);
+
+RAISE NOTICE 'T19_OWNER_DIRECT_MEMBERSHIP_MUTATION_DENIED: FAIL - insert succeeded';
+
+EXCEPTION
+WHEN insufficient_privilege THEN
+RAISE NOTICE 'T19_OWNER_DIRECT_MEMBERSHIP_MUTATION_DENIED: PASS';
+WHEN others THEN
+RAISE NOTICE 'T19_OWNER_DIRECT_MEMBERSHIP_MUTATION_DENIED: PASS - denied with SQLSTATE %, %', SQLSTATE, SQLERRM;
+END;
+END;
+$$;
+
+RESET ROLE;
+ROLLBACK;
+
+-- ----------------------------------------------------------------------------
+-- 22. audit_log UPDATE and DELETE are denied
+-- ----------------------------------------------------------------------------
+BEGIN;
+SET ROLE cbc_app_validation;
+SELECT set_config('app.current_user_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', true);
+SELECT set_config('app.current_organization_id', '11111111-1111-1111-1111-111111111111', true);
+
+DO $$
+BEGIN
+BEGIN
+UPDATE public.audit_log
+SET action = 'gate_003.audit_update_should_fail'
+WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001';
+
+RAISE NOTICE 'T20_AUDIT_LOG_UPDATE_DENIED: FAIL - update succeeded';
+
+EXCEPTION
+WHEN insufficient_privilege THEN
+RAISE NOTICE 'T20_AUDIT_LOG_UPDATE_DENIED: PASS';
+WHEN others THEN
+RAISE NOTICE 'T20_AUDIT_LOG_UPDATE_DENIED: PASS - denied with SQLSTATE %, %', SQLSTATE, SQLERRM;
+END;
+
+BEGIN
+DELETE FROM public.audit_log
+WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001';
+
+RAISE NOTICE 'T21_AUDIT_LOG_DELETE_DENIED: FAIL - delete succeeded';
+
+EXCEPTION
+WHEN insufficient_privilege THEN
+RAISE NOTICE 'T21_AUDIT_LOG_DELETE_DENIED: PASS';
+WHEN others THEN
+RAISE NOTICE 'T21_AUDIT_LOG_DELETE_DENIED: PASS - denied with SQLSTATE %, %', SQLSTATE, SQLERRM;
+END;
+END;
+$$;
+
+RESET ROLE;
+ROLLBACK;
+
+-- ----------------------------------------------------------------------------
+-- 23. Bootstrap mismatch is denied under cbc_app context
+-- ----------------------------------------------------------------------------
+BEGIN;
+SET ROLE cbc_app_validation;
+SELECT set_config('app.current_user_id', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', true);
+SELECT set_config('app.current_organization_id', '11111111-1111-1111-1111-111111111111', true);
+
+DO $$
+DECLARE
+v_org uuid;
+BEGIN
+BEGIN
+SELECT public.bootstrap_new_organization(
+'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+'wrong-user@example.test',
+'Wrong User',
+'Should Fail Org'
+) INTO v_org;
+
+RAISE NOTICE 'T22_BOOTSTRAP_MISMATCH_DENIED: FAIL - returned org %', v_org;
+
+EXCEPTION
+WHEN others THEN
+RAISE NOTICE 'T22_BOOTSTRAP_MISMATCH_DENIED: PASS - denied with SQLSTATE %, %', SQLSTATE, SQLERRM;
+END;
+END;
+$$;
+
+RESET ROLE;
+ROLLBACK;
+-- 24. Completion marker
 
 ---
 

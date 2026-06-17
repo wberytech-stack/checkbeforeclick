@@ -424,3 +424,192 @@ Preferred direction:
 Additional security note:
 
 Local `.env.local` is ignored by Git and not tracked, but secret values were exposed during terminal output review. Supabase service role and active Clerk secrets should be rotated before relying on them further.
+
+## 16. Gate 003 architecture decision
+
+Gate 003 will use a two-runtime-role architecture for Azure PostgreSQL readiness.
+
+This decision separates user/API request traffic from asynchronous background worker processing.
+
+### 16.1 Runtime roles
+
+Gate 003 will design for two non-owner runtime roles:
+
+- `cbc_app`
+- `cbc_worker`
+
+Both roles must be:
+
+- `NOBYPASSRLS`
+- non-superuser
+- non-owner of the database
+- non-owner of the schema
+- non-owner of tenant tables
+- unable to disable RLS
+- unable to perform broad DDL
+- granted only the minimum permissions required for their path
+
+### 16.2 `cbc_app` purpose
+
+`cbc_app` is the runtime role for user-facing and API request paths.
+
+Expected callers include:
+
+- dashboard page reads
+- scan result page reads
+- scan status API reads
+- scan creation API writes
+- future user-facing tenant features
+
+`cbc_app` must use transaction-bound context for tenant isolation.
+
+Each tenant-scoped database operation must run inside a transaction that sets:
+
+- `SET LOCAL app.current_user_id = '<authenticated-user-id>'`
+- `SET LOCAL app.current_organization_id = '<resolved-organization-id>'`
+
+The tenant-scoped query must execute in the same transaction as the `SET LOCAL` statements.
+
+`cbc_app` must not rely on session-level `SET` across pooled connections.
+
+`cbc_app` must not trust organization IDs provided by the browser or client payload.
+
+`cbc_app` must resolve the authenticated user to an allowed organization server-side before tenant-scoped access.
+
+### 16.3 `cbc_worker` purpose
+
+`cbc_worker` is the runtime role for asynchronous background processing.
+
+Expected callers include:
+
+- scan processing workers
+- provider-result writers
+- evidence writers
+- scan completion/failure updates
+- future queue-driven jobs
+
+The worker path has a different trust model than user/API requests.
+
+A worker begins from trusted queue state such as `scan_id`, not from a logged-in user session. Therefore, the worker must not pretend to be a normal human user unless a deliberate system-user model is explicitly designed.
+
+The worker must not trust `organization_id` from queue payloads.
+
+The worker must reload scan and organization context from trusted database state.
+
+### 16.4 Worker access model
+
+The preferred worker model is:
+
+- `cbc_worker` is `NOBYPASSRLS`
+- `cbc_worker` has no broad tenant-table DML by default
+- `cbc_worker` receives narrow `EXECUTE` permission on controlled database functions
+- worker functions validate scan ownership and operation safety internally
+
+Preferred controlled functions include:
+
+- `claim_scan_for_processing(scan_id)`
+- `mark_scan_processing(scan_id)`
+- `insert_scan_evidence(scan_id, rows)`
+- `insert_vendor_results(scan_id, rows)`
+- `complete_scan(scan_id, result)`
+- `fail_scan(scan_id, reason)`
+
+The exact function names and signatures may change during implementation design, but the security principle must remain:
+
+> The worker should perform narrowly defined scan lifecycle operations, not arbitrary tenant-table reads and writes.
+
+### 16.5 Worker function requirements
+
+Worker database functions must verify:
+
+- the scan exists
+- the scan belongs to an organization
+- the scan status transition is valid
+- inserted evidence rows are stamped with the scan organization
+- inserted vendor result rows are stamped with the scan organization
+- caller-provided organization IDs cannot override trusted database state
+- one tenant's scan cannot receive another tenant's evidence or vendor results
+
+Worker functions may be `SECURITY DEFINER` only when necessary, and only if:
+
+- owned by a controlled owner role
+- search path is fixed
+- input validation is explicit
+- privileges are limited to the function surface
+- direct table access remains restricted
+- behavior is tested using `cbc_worker`
+
+### 16.6 Why one runtime role is rejected
+
+A single `cbc_app` role for both user/API and worker paths is not the preferred design because it mixes two different trust models.
+
+User/API path:
+
+- has authenticated user context
+- has user ID
+- has resolved organization ID
+- represents a user acting inside an organization
+
+Worker path:
+
+- starts from queue event state
+- may not have user context
+- needs to reload scan organization from DB
+- writes provider/evidence/completion records
+- must not depend on browser/session identity
+
+Combining these paths into one broad role increases audit risk and makes future least-privilege enforcement harder.
+
+### 16.7 Rejected shortcut
+
+Gate 003 explicitly rejects a direct connection-string flip from Supabase service-role access to `cbc_app`.
+
+Reasons:
+
+- current `lib/data` uses Supabase SDK service-role calls
+- current data layer bypasses RLS
+- Azure PostgreSQL requires transaction-bound `SET LOCAL` context
+- the worker path has no natural human user context
+- a simple flip would likely break app behavior or create unsafe exceptions
+
+### 16.8 Required validation
+
+Gate 003 must validate the two-role model against a disposable Azure PostgreSQL database before any production role/grant execution.
+
+Validation must prove at minimum:
+
+- `cbc_app` without context cannot read tenant data
+- `cbc_app` with valid user/org context can read/write only that organization
+- `cbc_app` with wrong org context is denied
+- `cbc_app` cannot cross-read or cross-write tenant data
+- `cbc_worker` cannot broadly read tenant tables
+- `cbc_worker` can perform only approved scan lifecycle operations
+- worker functions cannot write evidence/vendor rows across tenants
+- neither role has `BYPASSRLS`
+- neither role owns tenant tables
+- neither role can disable RLS
+
+### 16.9 Gate boundary
+
+Gate 003 remains a readiness gate.
+
+Gate 003 may design and validate:
+
+- runtime roles
+- least-privilege grants
+- app/worker access model
+- database function model
+- disposable validation scripts
+- app adapter implementation plan
+
+Gate 003 must not:
+
+- move live app traffic
+- import Supabase production data
+- point production app to `cbc_prod`
+- change DNS
+- change Front Door
+- deploy Azure Container Apps for live traffic
+- perform cutover
+
+Controlled cutover belongs to Gate 004.

@@ -330,3 +330,97 @@ Gate 003 is successful only when:
 Gate 003 does not mean the app is live on `cbc_prod`.
 
 Gate 003 means the runtime enforcement path is ready for controlled cutover planning.
+
+## 15. Current application data-access findings
+
+A Gate 003 code inspection confirmed the current application still uses Supabase Auth and a centralized Supabase service-role data layer.
+
+Current authentication/session path:
+
+- `lib/supabase/server.ts`
+- `lib/supabase/client.ts`
+- `proxy.ts`
+- `app/api/auth/login/route.ts`
+- `app/auth/callback/route.ts`
+- Dashboard and API routes use Supabase Auth user identity.
+
+Current privileged data-access path:
+
+- `lib/data/client.ts`
+- `lib/data/index.ts`
+
+`lib/data/client.ts` creates a privileged Supabase client using `SUPABASE_SERVICE_ROLE_KEY`.
+
+This is intentionally centralized and currently acts as the backend data chokepoint. That is good for migration control, but it means current backend data access bypasses RLS.
+
+Current application callers of `@/lib/data` include:
+
+- `app/(dashboard)/dashboard/page.tsx`
+- `app/(dashboard)/scan/[id]/page.tsx`
+- `app/api/scan/[id]/status/route.ts`
+- `app/api/scan/route.ts`
+- `inngest/functions/processScan.ts`
+
+The main tenant-scoped functions in `lib/data/index.ts` include:
+
+- `getUserOrgContext`
+- `createScan`
+- `markScanProcessing`
+- `completeScan`
+- `failScan`
+- `insertEvidenceItems`
+- `insertVendorResults`
+- `getScanById`
+- `getScanStatus`
+- `getEvidenceForScan`
+- `getVendorResultsForScan`
+- `getDashboardData`
+- `loadScanForProcessing`
+
+Existing safety properties:
+
+- Data access is centralized.
+- Most functions take `orgId`.
+- Reads and updates filter by `organization_id`.
+- Inserts stamp `organization_id`.
+- Worker processing reloads `organization_id` from DB state instead of trusting event payload.
+
+Gate 003 risk:
+
+- The current Supabase service-role client bypasses RLS.
+- Azure `cbc_app` cannot simply replace the Supabase service-role client without a new Postgres transaction wrapper.
+- Supabase SDK-style `.from(...).select/insert/update` calls do not provide the required transaction-bound `SET LOCAL` pattern for Azure PostgreSQL RLS context.
+- A direct connection-string flip would likely break reads/writes or silently fail RLS context requirements.
+
+Gate 003 design implication:
+
+- Do not hard-switch `lib/data` from Supabase service role directly to `cbc_app`.
+- Build an Azure/Postgres runtime data adapter beside the current Supabase adapter.
+- The Azure/Postgres adapter must wrap tenant-scoped operations in transactions.
+- Each transaction must set:
+  - `app.current_user_id`
+  - `app.current_organization_id`
+- Tenant-scoped queries must run in the same transaction as the context setting.
+- Tests must prove no-context denial, valid-context success, and cross-tenant denial.
+
+Worker design implication:
+
+`inngest/functions/processScan.ts` currently calls `loadScanForProcessing(scan_id)` without user context, then writes scan results under the scan organization.
+
+Under RLS, the worker path needs explicit design. Gate 003 should evaluate one of these models:
+
+- `cbc_app` for both API and worker, with a controlled worker context pattern.
+- Separate `cbc_worker` role, also `NOBYPASSRLS`, with narrow grants and RLS-compatible context.
+- Temporary privileged worker access only if explicitly justified and isolated.
+
+Preferred direction:
+
+- Use `cbc_app` for user/API request paths.
+- Consider a separate `cbc_worker` role for background scan processing.
+- Both runtime roles should be non-owner and `NOBYPASSRLS`.
+- Neither runtime role should bypass tenant isolation.
+- Worker access must be validated with synthetic scan rows before any production traffic movement.
+
+Additional security note:
+
+Local `.env.local` is ignored by Git and not tracked, but secret values were exposed during terminal output review. Supabase service role and active Clerk secrets should be rotated before relying on them further.

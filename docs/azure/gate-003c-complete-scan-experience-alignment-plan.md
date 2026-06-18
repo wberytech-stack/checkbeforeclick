@@ -1,24 +1,28 @@
 # Gate 003C - Complete Scan Experience Alignment Plan
 
 > PLANNING DOCUMENT ONLY. No production execution is approved by this document.
-> This gate aligns the application scan flow with the target `cbc_app` runtime
-> role model proven in Gate 003B. It does not create production roles, does not
-> move traffic, does not pause Supabase, and does not cut over DNS/Azure app
-> hosting.
+> This gate aligns the application scan experience with the target `cbc_app`
+> runtime role model proven in Gate 003B.
+>
+> This document does not create production roles, does not move traffic, does not
+> pause Supabase, does not cut over DNS, and does not approve Azure production
+> app deployment.
 >
 > Branch: `audit/azure-current-state`
+>
 > Builds on:
 >
 > * Gate 002 production tenant isolation
 > * Gate 003B disposable DB validation
 > * Gate 003B fast-path dependency note
+> * Gate 003B result evidence
 
 ## 1. Purpose
 
-Gate 003C exists because Gate 003B proved the target `cbc_app` database model,
-but also exposed an application mismatch.
+Gate 003C exists because Gate 003B proved the target database security model, but
+also exposed an application mismatch.
 
-Gate 003B intentionally proved that `cbc_app` cannot directly:
+Gate 003B proved that the target `cbc_app` role must not directly:
 
 * update `scans`
 * insert `vendor_results`
@@ -26,19 +30,20 @@ Gate 003B intentionally proved that `cbc_app` cannot directly:
 * read `scan_cache`
 * directly mutate `memberships`
 
-That is correct for least privilege.
+That is the correct least-privilege model.
 
-However, current application behavior still includes synchronous scan processing
-inside:
+However, the current application request path still includes synchronous scan
+processing inside:
 
 ```text
 app/api/scan/route.ts
 ```
 
-That request path may update scan status and insert provider/evidence rows.
+That path may update scan status and insert provider/evidence rows during the
+user request.
 
-Therefore, Gate 003C must align the app scan flow with the database security
-model while preserving a complete, beautiful, trustworthy product experience.
+Gate 003C defines how to preserve the complete scan experience without weakening
+the security model.
 
 ## 2. Product promise
 
@@ -58,15 +63,17 @@ The product must feel:
 * premium
 * complete
 * trustworthy
+* bold and beautiful
 
 ## 3. Product Gate Lens Stack
 
-Every Gate 003C decision must be judged through these lenses:
+Every Gate 003C and later implementation decision must be judged through these
+lenses.
 
 ### Security lens
 
-Does this preserve least privilege, RLS, tenant isolation, and safe trust
-boundaries?
+Does this preserve least privilege, RLS, safe trust boundaries, and reduce blast
+radius?
 
 ### Tenant-isolation lens
 
@@ -74,7 +81,7 @@ Can Org A ever see, write, count, infer, or mutate Org B data?
 
 ### Product / UX lens
 
-Does the scan flow remain simple and useful for a normal business user?
+Does the scan flow remain simple, useful, and easy for a normal business user?
 
 ### Bold & Beautiful lens
 
@@ -83,13 +90,13 @@ it within the first 10 seconds?
 
 ### Completeness lens
 
-Are we avoiding fake MVP behavior, dead buttons, unfinished flows, and broken
+Are we avoiding fake MVP behavior, dead buttons, half-built flows, and broken
 states?
 
 ### Trust & explainability lens
 
 Does the result explain why a verdict was produced without overwhelming the user
-with technical noise?
+with raw technical noise?
 
 ### Speed / response-time lens
 
@@ -98,7 +105,7 @@ Does the user get useful feedback quickly, even if deeper analysis continues?
 ### Failure-mode lens
 
 If providers fail, queues delay, or inputs are malformed, does the product fail
-safely and explain clearly?
+safely and clearly?
 
 ### Operational lens
 
@@ -118,12 +125,12 @@ Would an IT or security manager believe this can become a serious B2B product?
 
 ### Founder / differentiation lens
 
-Does this make CheckBeforeClick feel smarter and clearer than a generic URL
-checker?
+Does this make CheckBeforeClick feel smarter, clearer, and more trustworthy than
+a generic URL checker?
 
 ### Legal / compliance lens
 
-Are claims and stored data appropriate, defensible, and not excessive?
+Are claims, retained data, and user-facing statements appropriate and defensible?
 
 ### Cost / practicality lens
 
@@ -131,7 +138,7 @@ Does this add useful capability without unnecessary complexity or waste?
 
 ## 4. Current problem
 
-The current app request path is too powerful for the target role model.
+The current request path is too powerful for the target role model.
 
 Current-style request path:
 
@@ -153,8 +160,8 @@ cbc_app can create/read same-org scan records.
 cbc_app cannot directly write provider results/evidence/status completion.
 ```
 
-So we must choose an implementation model that keeps the user experience complete
-without broadening `cbc_app` dangerously.
+Therefore, the application must be aligned so that the user still gets a complete
+scan experience without granting `cbc_app` broad direct table privileges.
 
 ## 5. Options considered
 
@@ -185,7 +192,7 @@ Disadvantages:
 * introduces more frontend states
 * can feel unfinished if not beautifully designed
 * weaker first-use product impression
-* harder to demo as instant safety tool
+* harder to demo as an instant click-safety product
 
 ### Option B - Controlled SECURITY DEFINER fast-path function
 
@@ -209,9 +216,9 @@ Advantages:
 Disadvantages:
 
 * requires careful database function design
-* SECURITY DEFINER must be tightly controlled
+* `SECURITY DEFINER` must be tightly controlled
 * function could become dangerous if too generic
-* needs strong tests and code review
+* needs strong validation because caller RLS is not enough inside definer code
 
 ### Option C - Hybrid fast verdict + async deep scan
 
@@ -220,7 +227,7 @@ Flow:
 ```text
 API request
 -> create scan
--> run fast provider / cache-safe checks
+-> run fast provider/cache-safe checks
 -> call controlled fast-path result function
 -> return useful verdict quickly
 -> enqueue scan_id for deeper/background enrichment when needed
@@ -239,13 +246,17 @@ Advantages:
 Disadvantages:
 
 * most design work
-* requires clear status model
-* requires UI that handles both immediate and enriched results gracefully
-* requires careful function + worker boundaries
+* requires clear scan state model
+* requires UI that handles immediate and enriched results gracefully
+* requires careful function and worker boundaries
 
 ## 6. Recommended direction
 
-Gate 003C recommends **Option C: Hybrid fast verdict + async deep scan**.
+Gate 003C recommends:
+
+```text
+Option C - Hybrid fast verdict + async deep scan
+```
 
 This best satisfies the lens stack:
 
@@ -257,7 +268,7 @@ This best satisfies the lens stack:
 * Architecture: controlled function handles fast writes; worker handles deeper
   processing.
 
-## 7. Target 003C runtime behavior
+## 7. Target runtime behavior
 
 ### API request path may do
 
@@ -282,9 +293,21 @@ This best satisfies the lens stack:
 * raw membership mutation
 * trust browser-provided `organization_id`
 
-## 8. Controlled fast-path function requirements
+## 8. Gate 003D scope
 
-The fast-path function should be designed in the next implementation sub-gate before app-code changes are approved and must follow these rules.
+Before app-code changes are approved, the next implementation sub-gate must be:
+
+```text
+Gate 003D - Controlled fast-path DB function design + disposable-DB validation
+```
+
+Gate 003D must design the function, write the migration/script, and validate the
+function behavior in a disposable database before `app/api/scan/route.ts` is
+changed.
+
+Gate 003D is still not a production cutover gate.
+
+## 9. Controlled fast-path function requirements
 
 Working name:
 
@@ -301,25 +324,122 @@ Required properties:
 * no broad table grants added to `cbc_app`
 * input includes `scan_id` and controlled result payload
 * input must not trust browser-provided `organization_id`
-* internally verifies:
+* function loads the scan by `scan_id`
+* function compares scan `organization_id` to `app_current_org_id()`
+* function verifies `app_current_user_id()` is a member of that organization
+* function writes only for that `scan_id`
+* function inserts only controlled provider/evidence rows
+* function updates scan status/verdict only through allowed transitions
+* function fails closed on malformed input
+* function must not become a generic backdoor for arbitrary result/evidence
+  writes
 
-  * `scan_id` exists
-  * scan belongs to `app_current_org_id()`
-  * current user is a member of that org
-  * scan is in a state where fast result write is allowed
-* writes only for that `scan_id`
-* inserts only controlled provider/evidence rows
-* updates scan status/verdict only through allowed state transitions
-* records audit information where useful
-* refuses cross-tenant or mismatched context
-* fails closed on malformed input
+Because the function is `SECURITY DEFINER`, it must not rely on caller RLS as the
+primary protection. The function must enforce tenant and write-safety checks
+internally.
 
-The function must not become a generic backdoor for arbitrary result/evidence
-writes.
+## 10. Required state-transition model
 
-## 9. Scan state model
+Gate 003D must define and test an enumerated allowed state-transition table.
 
-Gate 003C should use simple, complete user-facing states:
+Required rules:
+
+* refuse already-complete scans
+* refuse already-failed scans unless explicitly designed as retryable
+* refuse illegal status jumps
+* refuse illegal verdict changes
+* allow only explicitly documented transitions, such as:
+
+  * `pending -> processing`
+  * `processing -> complete`
+  * `processing -> failed`
+* never silently move a failed provider path to `safe`
+* never overwrite a final result without an explicit retry/reopen design
+
+The function must check that the scan is in a writable state before writing
+results.
+
+## 11. Required idempotency and double-write behavior
+
+Gate 003D must define and test idempotency.
+
+Required rules:
+
+* refuse double-writes for the same fast-path provider result
+* prevent duplicate evidence rows for the same scan/provider/evidence key
+* handle retry safely without corrupting scan state
+* repeated user submission must not create inconsistent duplicate final results
+* retry must be either idempotent or explicitly refused with a clear state
+
+The behavior must be documented and tested.
+
+## 12. Required bounded and typed payload
+
+The fast-path function must accept only a bounded and typed payload.
+
+Required rules:
+
+* verdict must be constrained to:
+
+  * `safe`
+  * `suspicious`
+  * `unknown`
+* score/confidence must be numeric and bounded
+* provider name must be controlled or validated
+* evidence row count must be capped
+* evidence text/URL/details sizes must be capped
+* raw JSON must not be accepted as an unlimited arbitrary blob
+* malformed payload must fail closed
+
+The function must not accept unlimited arbitrary provider data from the API path.
+
+## 13. Required partial-provider-failure behavior
+
+Gate 003D must define and test partial-provider-failure behavior.
+
+Required rules:
+
+* provider failure must never silently become `safe`
+* timeout or insufficient evidence must resolve to `unknown` or `suspicious`
+* failure reason should be captured in controlled evidence and audit fields
+* user-facing result must explain the limited confidence clearly
+* if safe cannot be earned, safe must not be returned
+
+## 14. Required audit behavior
+
+Every successful fast-path write must create an org-scoped `audit_log` entry.
+
+Audit logging is mandatory, not optional.
+
+The audit entry must include enough controlled metadata to answer:
+
+* which org
+* which user
+* which scan
+* which provider/fast-path source
+* what verdict/status transition happened
+* when it happened
+
+Relevant denied attempts should also be audit logged when safe to do so.
+
+## 15. Required definer-function cross-tenant test
+
+Gate 003D validation must explicitly test the most important definer-function
+case:
+
+```text
+Org A context calls the function with Org B scan_id.
+Expected result: function refuses internally.
+Reason: caller RLS is not sufficient protection inside SECURITY DEFINER code.
+```
+
+This test is mandatory.
+
+The function must prove its own internal tenant check.
+
+## 16. Scan state model
+
+User-facing scan status values:
 
 ```text
 pending
@@ -328,7 +448,7 @@ complete
 failed
 ```
 
-Verdict states:
+User-facing verdict values:
 
 ```text
 safe
@@ -338,12 +458,12 @@ unknown
 
 Rules:
 
-* `safe` must be earned.
-* provider failure must not become `safe`.
-* if evidence is insufficient, verdict should be `unknown`, not falsely safe.
-* result page must explain what is known and what is still being checked.
+* `safe` must be earned
+* provider failure must not become `safe`
+* if evidence is insufficient, verdict must be `unknown`, not falsely safe
+* result page must explain what is known and what is still being checked
 
-## 10. Bold & Beautiful scan UX standard
+## 17. Bold & Beautiful scan UX standard
 
 The scan experience must feel complete and premium.
 
@@ -373,13 +493,15 @@ Result page must show:
 
 The UI must not expose raw provider JSON as the primary experience.
 
-## 11. Staging verification surface
+## 18. Verification surface
 
-Gate 003C is **not** another disposable DB-only gate.
+Gate 003C itself is a planning gate.
 
-It is app-code + DB-function + UI flow alignment.
+Gate 003D must use disposable DB validation for the controlled function.
 
-Verification must be staging-style:
+Later app-code alignment must use staging-style verification.
+
+Required staging-style verification later:
 
 * app runs against staging/Azure-like database
 * runtime role behavior matches `cbc_app`
@@ -393,22 +515,37 @@ Verification must be staging-style:
 * provider failure path is safe and understandable
 * logs do not leak secrets
 
-## 12. Definition of done
+## 19. Definition of done for Gate 003C
 
-Gate 003C is done only when all are true:
+Gate 003C is done when:
 
-* design decision documented and committed
-* no broad `cbc_app` direct grants added
-* current fast-path mismatch resolved by code/function design
-* `app/api/scan/route.ts` no longer performs forbidden raw writes directly
-* fast verdict UX still works or pending UX is explicitly accepted and polished
-* result page has complete user-facing states
-* staging-style test evidence committed
-* rollback path documented
-* Claude/second-eye review completed
-* production untouched unless a later gate explicitly approves it
+* design decision is documented and committed
+* second-eye review confirms Option C
+* second-eye review confirms Gate 003D must happen before app-code changes
+* no broad `cbc_app` direct grants are approved
+* no production role creation is approved
+* no production traffic move is approved
+* no Supabase pause is approved
 
-## 13. Non-goals
+## 20. Definition of done for Gate 003D
+
+Gate 003D will be done only when:
+
+* controlled fast-path function design is documented
+* SQL migration/script exists
+* disposable DB validation script exists
+* function validates internal org ownership
+* wrong-org `scan_id` test passes
+* state-transition tests pass
+* double-write/idempotency tests pass
+* bounded payload tests pass
+* partial-provider-failure tests pass
+* mandatory audit_log tests pass
+* `cbc_app` still has no broad direct table grants
+* results are documented and committed
+* production remains untouched
+
+## 21. Non-goals
 
 Gate 003C does not:
 
@@ -421,16 +558,21 @@ Gate 003C does not:
 * implement billing
 * implement SIEM export
 * implement all future worker/deep-scan capabilities
+* approve app-code changes before Gate 003D
 
-## 14. Current recommendation
+## 22. Current recommendation
 
-Proceed with the hybrid model:
+Proceed with:
 
 ```text
-fast verdict through controlled DB function
-deeper enrichment through worker path
-cbc_app remains narrow
-UI remains complete and premium
+Option C - Hybrid fast verdict + async deep scan
 ```
 
-Before implementation, this plan should receive second-eye review.
+Then proceed to:
+
+```text
+Gate 003D - Controlled fast-path DB function design + disposable-DB validation
+```
+
+Only after Gate 003D passes should app-code changes to `app/api/scan/route.ts`
+be approved.

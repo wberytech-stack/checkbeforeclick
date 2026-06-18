@@ -16,6 +16,8 @@
 > * Gate 003B disposable DB validation
 > * Gate 003C complete scan experience alignment plan
 > * Gate 003D second-eye review
+> * Current baseline schema in `infra/db/migrations/001_initial_schema.sql`
+> * Current tenant isolation migration in `infra/db/migrations/002_tenant_isolation.sql`
 
 ## 1. Purpose
 
@@ -143,32 +145,141 @@ Typed parameters make the database enforce the narrow-write property.
 Open jsonb moves too much validation into handwritten function logic.
 ```
 
-A possible function shape:
+The final input shape must align to the real current schema.
+
+Recommended function shape:
 
 ```text
 p_scan_id uuid
 p_provider text
 p_provider_status text
 p_verdict text
-p_score numeric
-p_summary text
-p_evidence_type text[]
-p_evidence_value text[]
-p_evidence_url text[]
-p_evidence_details text[]
-p_error_code text default null
+p_risk_score integer
+p_confidence_score integer
+p_ai_explanation text
+p_recommended_action text
+p_scan_duration_ms integer default null
+p_evidence_signal_type text[]
+p_evidence_severity text[]
+p_evidence_title text[]
+p_evidence_detail text[]
+p_evidence_score_impact integer[]
 p_error_message text default null
 ```
 
-Implementation may refine the exact shape, but the rule is mandatory:
+Implementation may refine the exact shape, but the rules are mandatory:
 
 ```text
 Use typed, bounded parameters.
 Do not accept open arbitrary jsonb as the API fast-path payload.
+Do not accept caller-supplied organization_id.
 ```
 
 If evidence is modeled as arrays, all arrays must have matching lengths and a
 strict maximum row count.
+
+## 6A. Actual schema alignment
+
+Gate 003D implementation must match the current baseline schema.
+
+Relevant current columns:
+
+```text
+scans:
+  id uuid
+  organization_id uuid
+  user_id uuid
+  status text
+  verdict text
+  risk_score integer 0-100
+  confidence_score integer 0-100
+  ai_explanation text
+  recommended_action text
+  scan_duration_ms integer
+  completed_at timestamptz
+
+vendor_results:
+  id uuid
+  scan_id uuid
+  organization_id uuid
+  vendor_name text
+  verdict text
+  raw_response jsonb
+  error_message text
+  response_time_ms integer
+  checked_at timestamptz
+
+evidence_items:
+  id uuid
+  scan_id uuid
+  organization_id uuid
+  signal_type text
+  severity text
+  title text
+  detail text
+  score_impact integer
+  created_at timestamptz
+
+audit_log:
+  organization_id uuid
+  user_id uuid
+  action text
+  target_type text
+  target_id uuid
+  metadata jsonb
+  created_at timestamptz
+```
+
+Therefore, the fast-path function should use typed parameters aligned to the real
+schema.
+
+Recommended typed shape:
+
+```text
+p_scan_id uuid
+p_provider text
+p_provider_status text
+p_verdict text
+p_risk_score integer
+p_confidence_score integer
+p_ai_explanation text
+p_recommended_action text
+p_scan_duration_ms integer default null
+p_evidence_signal_type text[]
+p_evidence_severity text[]
+p_evidence_title text[]
+p_evidence_detail text[]
+p_evidence_score_impact integer[]
+p_error_message text default null
+```
+
+The function must not accept caller-supplied `organization_id`.
+
+The function must not accept caller-supplied raw provider JSON. If
+`vendor_results.raw_response` is populated, it must be constructed inside the
+function from bounded typed parameters, not passed through as arbitrary open JSON
+from the API path.
+
+Score handling must use the current schema range:
+
+```text
+risk_score: integer 0-100
+confidence_score: integer 0-100
+```
+
+Evidence handling must use the current `evidence_items` shape:
+
+```text
+signal_type
+severity
+title
+detail
+score_impact
+```
+
+There is currently no `evidence_url` or `evidence_value` column, so Gate 003D
+must not design around non-existent evidence columns unless a separate schema
+migration explicitly adds them.
 
 ## 7. Required input constraints
 
@@ -226,18 +337,37 @@ Rules:
 * provider failure must not become `safe`
 * insufficient evidence must become `unknown` or `suspicious`
 
-### score/confidence
+Note: the current `scans.verdict` check constraint also permits `dangerous`.
+Gate 003D fast-path function should not introduce `dangerous` unless explicitly
+approved in this gate or a later gate. For this fast-path function, the approved
+v1 values are `safe`, `suspicious`, and `unknown`.
 
-* numeric
-* bounded
-* recommended range: `0.00` to `1.00`
-* null allowed only if verdict/failure semantics explicitly support it
+### risk_score
 
-### summary
+* integer
+* bounded by current schema: `0` to `100`
+* must align with verdict semantics
+* provider failure must not produce a high-confidence safe score
 
-* controlled plain-English summary
+### confidence_score
+
+* integer
+* bounded by current schema: `0` to `100`
+* must reflect signal confidence
+* partial/timeout/error/skipped states should not produce misleading high
+  confidence
+
+### ai_explanation
+
+* controlled plain-English explanation
 * length-capped
 * must not expose raw provider JSON as the primary user experience
+
+### recommended_action
+
+* controlled plain-English recommendation
+* length-capped
+* should align with verdict and provider status
 
 ### evidence arrays
 
@@ -247,11 +377,20 @@ Required constraints:
 
 * all evidence arrays must have matching length
 * max evidence rows per fast-path write
-* max evidence type length
-* max evidence value length
-* max evidence URL length
-* max evidence details length
+* max evidence signal_type length
+* max evidence title length
+* max evidence detail length
+* score_impact must be bounded
+* severity must match current allowed values:
+
+  * `critical`
+  * `high`
+  * `medium`
+  * `low`
+  * `info`
+  * `good`
 * no unlimited raw JSON blob accepted from API request path
+* no design assumes non-existent evidence URL/value columns
 
 Malformed evidence shape must fail closed.
 
@@ -276,7 +415,7 @@ The function must perform these checks in this order or an equivalent safe order
 12. Insert or return existing controlled provider result.
 13. Insert controlled evidence rows if this is a first write.
 14. Apply allowed scan status/verdict transition if this is a first write.
-15. Insert mandatory org-scoped audit log entry.
+15. Insert mandatory org-scoped audit log entry for successful first write.
 16. Return controlled result metadata.
 
 ## 9. SECURITY DEFINER hardening
@@ -312,7 +451,32 @@ The exact signature must be used in the `REVOKE` and `GRANT` statements.
 This is mandatory because PostgreSQL functions can be executable by `PUBLIC`
 unless explicitly revoked.
 
-## 10. Required scan state and transition model
+## 10. Runtime grant boundary
+
+Current `002_tenant_isolation.sql` contains broad conditional grants to `cbc_app`
+if that role exists.
+
+Gate 003B proved the target narrow runtime model using a validation role. Gate
+003D must continue that narrow model.
+
+Therefore, the future real runtime-role gate must not blindly rely on the broad
+legacy Section 5 grants in `002_tenant_isolation.sql`.
+
+The intended future `cbc_app` model remains:
+
+* same-org read/create of allowed app objects
+* no direct `UPDATE scans`
+* no direct `INSERT vendor_results`
+* no direct `INSERT evidence_items`
+* no direct `SELECT scan_cache`
+* no direct membership mutation
+* controlled fast-path result write only through
+  `app_record_fast_scan_result(...)`
+
+Any real `cbc_app` production role creation/grant step must be handled in a later
+explicit role gate and must preserve this narrow model.
+
+## 11. Required scan state and transition model
 
 Gate 003D must define and test an explicit allowed transition table.
 
@@ -367,7 +531,7 @@ Async enrichment is out of scope for this function.
 
 This keeps the app fast-path secure while preserving future hybrid enrichment.
 
-## 11. Idempotency, duplicate retry, and conflicting retry
+## 12. Idempotency, duplicate retry, and conflicting retry
 
 The function must distinguish duplicate retry from conflicting retry.
 
@@ -387,8 +551,8 @@ record audit only if the design explicitly chooses to audit no-op retries
 ### Conflicting retry
 
 If the same scan/provider is submitted again with a different verdict, different
-score, different provider status, or incompatible evidence for an already-final
-scan, the function must refuse.
+risk score, different confidence score, different provider status, or
+incompatible evidence for an already-final scan, the function must refuse.
 
 Examples:
 
@@ -408,7 +572,7 @@ expected: refused
 
 No final result overwrite is allowed in Gate 003D.
 
-## 12. Row-lock serialization
+## 13. Row-lock serialization
 
 The function must lock the scan row before deciding writability, idempotency, or
 conflict behavior.
@@ -424,7 +588,7 @@ or equivalent row-locking must serialize competing writes for the same scan.
 Gate 003D validation must include a row-lock serialization test or a practical
 proxy test proving duplicate/conflicting writes do not create inconsistent rows.
 
-## 13. Partial-provider-failure behavior
+## 14. Partial-provider-failure behavior
 
 Provider failure must be explicit.
 
@@ -446,7 +610,7 @@ provider_status = success + suspicious signal -> suspicious
 provider_status = partial/timeout/error/skipped -> unknown or suspicious
 ```
 
-## 14. Mandatory audit behavior
+## 15. Mandatory audit behavior
 
 Every successful first-time fast-path write must insert an org-scoped
 `audit_log` row.
@@ -463,6 +627,8 @@ Audit entry must include enough controlled metadata to answer:
 * new scan status
 * previous verdict
 * new verdict
+* previous risk/confidence score
+* new risk/confidence score
 * action
 * timestamp
 
@@ -476,7 +642,7 @@ The chosen behavior must be documented in the implementation script and tested.
 Relevant denied attempts should also be audit logged when safe and practical. If
 audit-on-refusal is adopted, Gate 003D must test it.
 
-## 15. Required disposable DB validation
+## 16. Required disposable DB validation
 
 Gate 003D must include disposable DB validation before app-code changes.
 
@@ -497,7 +663,7 @@ The 003D validation must apply:
 
 The validation must not run against `cbc_prod`.
 
-## 16. Required validation tests
+## 17. Required validation tests
 
 The disposable DB validation matrix must include at least the following tests.
 
@@ -515,13 +681,17 @@ The disposable DB validation matrix must include at least the following tests.
 * `EXECUTE` is granted only to intended runtime role
 * no broad direct table grants added to `cbc_app`
 * function signature has no caller-supplied `organization_id`
+* function signature uses typed parameters and bounded typed evidence arrays
+* function signature does not accept open evidence `jsonb`
+* function input shape aligns to current schema columns
 
 ### Same-org success
 
 * Org A context records fast result for Org A scan
 * provider result inserted
-* evidence inserted
+* evidence inserted using current `evidence_items` columns
 * scan status/verdict updated through allowed transition
+* scan risk/confidence/explanation/action fields updated correctly
 * audit_log row inserted
 
 ### Wrong-org scan_id refusal
@@ -587,13 +757,17 @@ This is the most important `SECURITY DEFINER` test.
 
 * invalid verdict refused
 * invalid provider_status refused
-* score below range refused
-* score above range refused
+* risk_score below range refused
+* risk_score above range refused
+* confidence_score below range refused
+* confidence_score above range refused
 * too many evidence rows refused
 * mismatched evidence array lengths refused
 * oversized evidence fields refused
+* invalid evidence severity refused
 * unapproved provider refused
 * caller-supplied organization_id is impossible because it is not in signature
+* caller-supplied open raw JSON is impossible because it is not in signature
 
 ### Partial-provider failure behavior
 
@@ -616,7 +790,7 @@ This is the most important `SECURITY DEFINER` test.
 
 * validation roles/functions/test data removed or disposable DB dropped
 
-## 17. App-code dependency
+## 18. App-code dependency
 
 No app-code changes to:
 
@@ -633,7 +807,7 @@ cbc_003d_validation
 The route must not be changed to call a function that has not been designed and
 validated.
 
-## 18. Production boundary
+## 19. Production boundary
 
 Gate 003D does not approve:
 
@@ -647,7 +821,7 @@ Gate 003D does not approve:
 
 Any production apply requires a later explicit gate.
 
-## 19. Definition of done
+## 20. Definition of done
 
 Gate 003D is done only when:
 
@@ -658,6 +832,10 @@ Gate 003D is done only when:
 * one atomic function is used for org-check + write + audit
 * function signature has no caller-supplied `organization_id`
 * function uses typed parameters and bounded typed evidence array
+* function input shape is aligned to the actual current schema columns
+* no design assumes non-existent evidence URL/value columns
+* `vendor_results.raw_response`, if written, is constructed internally from
+  bounded typed inputs and not accepted as open caller JSON
 * `REVOKE EXECUTE FROM PUBLIC` is present and validated
 * literal `SET search_path = public, pg_temp` is present and validated
 * wrong-org scan_id test passes
@@ -675,7 +853,7 @@ Gate 003D is done only when:
 * second-eye review completed
 * production remains untouched
 
-## 20. Current recommendation
+## 21. Current recommendation
 
 Proceed to implement Gate 003D in this order:
 

@@ -1,7 +1,12 @@
 ﻿import type { ReactNode } from "react"
 import { createClient } from "@/lib/supabase/server"
 import { redirect, notFound } from "next/navigation"
-import { createServiceClient } from "@/lib/supabase/service"
+import {
+  getUserOrgContext,
+  getScanById,
+  getEvidenceForScan,
+  getVendorResultsForScan,
+} from "@/lib/data"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import {
@@ -129,39 +134,20 @@ export default async function ScanResultPage({
     redirect("/login")
   }
 
-  const supabase = createServiceClient()
+  const ctx = await getUserOrgContext(user.id)
 
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("id, organization_id")
-    .eq("id", user.id)
-    .single()
-
-  if (!userRecord) {
+  if (!ctx) {
     redirect("/login")
   }
 
-  const { data: scan, error: scanError } = await supabase
-    .from("scans")
-    .select("*")
-    .eq("id", id)
-    .eq("organization_id", userRecord.organization_id)
-    .single()
+  const scan = await getScanById(ctx.organizationId, id)
 
-  if (scanError || !scan) {
+  if (!scan) {
     notFound()
   }
 
-  const { data: evidence } = await supabase
-    .from("evidence_items")
-    .select("*")
-    .eq("scan_id", id)
-    .order("score_impact", { ascending: false })
-
-  const { data: vendors } = await supabase
-    .from("vendor_results")
-    .select("*")
-    .eq("scan_id", id)
+  const evidence = await getEvidenceForScan(ctx.organizationId, id)
+  const vendors = await getVendorResultsForScan(ctx.organizationId, id)
 
   const isInProgress = scan.status === "pending" || scan.status === "processing"
   const config = getVerdictConfig(scan.verdict)

@@ -103,6 +103,9 @@ BEGIN
   RAISE NOTICE 'T08_WRONG_ORG_SCANID_REFUSED result: % (msg: %)',
     CASE WHEN v_pass THEN 'PASS' ELSE 'FAIL - not refused by cross-tenant check' END,
     COALESCE(v_msg, '<no exception>');
+  IF NOT v_pass THEN
+    RAISE EXCEPTION 'T08 failed: wrong-org scan_id was not refused by the expected cross-tenant check. Message: %', COALESCE(v_msg, '<no exception>');
+  END IF;
 END $t08$;
 
 DO $t09$
@@ -121,6 +124,9 @@ BEGIN
   RESET ROLE;
   RAISE NOTICE 'T09_SAME_ORG_BOUNDARY_PASS result: %',
     CASE WHEN v_ok THEN 'PASS' ELSE 'FAIL - same-org boundary call did not return stub' END;
+  IF NOT v_ok THEN
+    RAISE EXCEPTION 'T09 failed: same-org boundary call did not return expected stub.';
+  END IF;
 END $t09$;
 
 DO $t10$
@@ -140,6 +146,9 @@ BEGIN
   RAISE NOTICE 'T10_MISSING_CONTEXT_REFUSED result: % (msg: %)',
     CASE WHEN v_pass THEN 'PASS' ELSE 'FAIL - not refused by missing-context check' END,
     COALESCE(v_msg, '<no exception>');
+  IF NOT v_pass THEN
+    RAISE EXCEPTION 'T10 failed: missing context was not refused by the expected missing-context check. Message: %', COALESCE(v_msg, '<no exception>');
+  END IF;
 END $t10$;
 
 SELECT 'GATE_003D_SLICE1_BOUNDARY_VALIDATION_COMPLETE' AS test, 'DONE' AS result;

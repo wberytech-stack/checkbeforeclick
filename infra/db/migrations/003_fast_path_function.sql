@@ -100,7 +100,7 @@ BEGIN
     ELSE
         RAISE NOTICE 'Role cbc_app not present; skipping EXECUTE grant (expected on disposable DB).';
     END IF;
-END
+END;
 $grant$;
 
 COMMIT;

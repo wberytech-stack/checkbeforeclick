@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "validate:pg-helper": "npx --yes tsx@4.23.0 scripts/validate-pg-transaction-helper.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

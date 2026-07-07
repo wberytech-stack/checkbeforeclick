@@ -78,3 +78,4 @@ psql) is planned as a follow-on step before any route wiring. The
 validation will exercise the actual withPgTransaction function against a
 disposable local PostgreSQL database, covering positive, negative, and
 concurrency cases per the plan in Gate 003G section 10.
+

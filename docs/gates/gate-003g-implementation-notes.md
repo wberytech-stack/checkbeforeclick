@@ -17,7 +17,8 @@ wire anything into the scan route.
 - `pg`: direct PostgreSQL client for Node.js.
 - `@types/pg`: TypeScript type definitions for pg.
 - `server-only`: Next.js package that throws a build error if this
-  module is imported in a client component or Edge runtime.
+  module is imported in a client component. The helper is also not
+  suitable for Edge runtime because it uses Node.js PostgreSQL APIs.
 
 ## 4. Helper design
 
@@ -30,8 +31,9 @@ the pool in a finally block.
 
 The file begins with `import "server-only"` as a real import, not just
 a comment. This causes Next.js to throw a build error if the module is
-accidentally imported in a client component or Edge runtime, enforcing
-the server-only boundary at build time.
+accidentally imported in a client component. The helper must run in the
+Node.js server runtime, not Edge runtime, because pg uses Node.js
+networking APIs.
 
 The Pool is cached on `globalThis.__cbcPgPool` rather than as a plain
 module-level variable. This prevents extra pools from being created

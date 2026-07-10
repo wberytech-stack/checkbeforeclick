@@ -57,12 +57,18 @@ try {
   process.exit(1);
 }
 
+if (!process.env.NODE_OPTIONS?.includes("--conditions=react-server")) {
+  console.error("FAIL: NODE_OPTIONS must include --conditions=react-server.");
+  console.error("PowerShell: $env:NODE_OPTIONS=\"--conditions=react-server\"");
+  process.exit(1);
+}
+
 if (!process.env.CBC_DATABASE_SSL) {
   process.env.CBC_DATABASE_SSL = "false";
   console.log("INFO: CBC_DATABASE_SSL not set; defaulting to false for local validation.");
 }
 
-import { withPgTransaction } from "../src/server/db/postgres.js";
+
 
 const TABLE = "pg_helper_validation";
 let passed = 0;
@@ -90,6 +96,7 @@ async function teardown(client: import("pg").PoolClient) {
 }
 
 async function runValidation() {
+  const { withPgTransaction } = await import("../src/server/db/postgres.js");
   console.log("\n=== Gate 003H: pg transaction helper validation ===\n");
 
   // Setup: create disposable table in its own transaction.

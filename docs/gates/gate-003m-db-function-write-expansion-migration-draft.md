@@ -119,6 +119,7 @@ validated as integers before any write statement executes.
   `organization_id = v_scan_org` for tenant anchoring.
 - The database function remains the final tenant-boundary authority.
   App-side checks are defense-in-depth only.
+
 ## 6. Idempotency and one-shot completion rule
 
 This function is one-shot. After locking the scan row with `FOR UPDATE`,
@@ -242,6 +243,7 @@ This gate does not:
 - Remove Supabase or existing Supabase write paths.
 - Use `SUPABASE_SERVICE_ROLE_KEY` for any new function-call path.
 - Touch Azure, Key Vault, deploy, or environment files.
+
 ## 13. Required Gate 003N disposable validation cases
 
 Gate 003N must validate the expanded function against disposable local
@@ -294,6 +296,7 @@ Required cases:
 38. EXECUTE revoked from PUBLIC.
 39. EXECUTE granted to cbc_app_validation role.
 40. search_path locked to public, pg_temp.
+
 ## 14. Acceptance criteria
 
 This gate is accepted when:

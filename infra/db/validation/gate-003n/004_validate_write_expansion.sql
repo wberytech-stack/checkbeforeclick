@@ -835,7 +835,7 @@ BEGIN
   END IF;
 
   -- T33: vendor_results row inserted correctly.
-  SELECT COUNT(*), MAX(vendor_name), MAX(verdict), MAX(organization_id)
+  SELECT COUNT(*), MAX(vendor_name), MAX(verdict), MAX(organization_id::text)::uuid
     INTO v_vcount, v_vendor_name, v_vverdict, v_org_v
     FROM public.vendor_results
    WHERE scan_id = '5ca11111-0000-0000-0000-000000000001';
@@ -854,7 +854,7 @@ BEGIN
   END IF;
 
   -- T34: evidence_items row inserted correctly.
-  SELECT COUNT(*), MAX(signal_type), MAX(severity), MAX(title), MAX(organization_id)
+  SELECT COUNT(*), MAX(signal_type), MAX(severity), MAX(title), MAX(organization_id::text)::uuid
     INTO v_ecount, v_sig_type, v_severity, v_title, v_org_e
     FROM public.evidence_items
    WHERE scan_id = '5ca11111-0000-0000-0000-000000000001';

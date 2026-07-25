@@ -24,8 +24,8 @@
  */
 export interface FastScanVendorResultInput {
   vendorName: string;
-  verdict?: "safe" | "suspicious" | "dangerous" | "unknown" | null;
-  rawResponse?: Record<string, unknown> | null;
+  verdict?: string | null;
+  rawResponse?: unknown | null;
   errorMessage?: string | null;
   responseTimeMs?: number | null;
 }
@@ -48,7 +48,7 @@ export interface FastScanEvidenceItemInput {
 export interface FastScanVendorResultPayload {
   vendor_name: string;
   verdict?: string | null;
-  raw_response?: Record<string, unknown> | null;
+  raw_response?: unknown | null;
   error_message?: string | null;
   response_time_ms?: number | null;
 }

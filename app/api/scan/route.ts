@@ -14,11 +14,12 @@ import {
   getUserOrgContext,
   createScan,
   markScanProcessing,
-  completeScan,
   failScan,
-  insertEvidenceItems,
-  insertVendorResults,
 } from "@/lib/data"
+import {
+  recordFastScanResult,
+  type FastScanVerdict,
+} from "@/src/server/scan/recordFastScanResult"
 
 const VALID_INPUT_TYPES = ["url", "domain", "email", "header", "signature", "batch"]
 const FAST_PATH_TYPES = ["url", "domain"]
@@ -90,6 +91,7 @@ export async function POST(request: NextRequest) {
     if (FAST_PATH_TYPES.includes(input_type)) {
       return await runFastPath({
         scan_id: scanId,
+        user_id: ctx.userId,
         organization_id: ctx.organizationId,
         raw_input: cleanInput,
         input_type,
@@ -130,11 +132,13 @@ export async function POST(request: NextRequest) {
 // Fast synchronous path - runs all enabled fast providers in parallel
 async function runFastPath({
   scan_id,
+  user_id,
   organization_id,
   raw_input,
   input_type,
 }: {
   scan_id: string
+  user_id: string
   organization_id: string
   raw_input: string
   input_type: string
@@ -148,22 +152,27 @@ async function runFastPath({
     const target = normalizeScanTarget(raw_input, input_type)
 
     if (!target.ok) {
-      await insertEvidenceItems(organization_id, [
-        {
-          scan_id,
-          signal_type: "invalid_target",
-          severity: "info",
-          title: "Target could not be safely scanned",
-          detail: target.reason ?? "Input could not be parsed into a safe scan target.",
-          score_impact: 0,
-        },
-      ])
-
-      await completeScan(organization_id, scan_id, {
+      await recordFastScanResult({
+        userId: user_id,
+        organizationId: organization_id,
+        scanId: scan_id,
+        status: "complete",
+        verdict: "unknown",
         riskScore: 0,
         confidenceScore: 10,
-        verdict: "unknown",
-        durationMs: Date.now() - startTime,
+        aiExplanation: null,
+        recommendedAction: null,
+        scanDurationMs: Date.now() - startTime,
+        vendorResults: [],
+        evidenceItems: [
+          {
+            signalType: "invalid_target",
+            severity: "info",
+            title: "Target could not be safely scanned",
+            detail: target.reason ?? "Input could not be parsed into a safe scan target.",
+            scoreImpact: 0,
+          },
+        ],
       })
 
       return NextResponse.json(
@@ -212,28 +221,51 @@ async function runFastPath({
 
     const scanDurationMs = Date.now() - startTime
 
-    // Write evidence_items - one row per provider
     const evidenceRows = results.map(({ providerName, result }) =>
       buildEvidenceItem(scan_id, organization_id, providerName, result)
     )
-    await insertEvidenceItems(organization_id, evidenceRows)
 
-    // Write vendor_results - one row per provider
     const vendorRows = results.map(({ providerName, result }) =>
       buildVendorResultRow(scan_id, organization_id, providerName, result)
     )
-    await insertVendorResults(organization_id, vendorRows)
 
-    // Update scan to complete
-    await completeScan(organization_id, scan_id, {
+    const finalVerdict: FastScanVerdict =
+      verdict === "safe" ||
+      verdict === "suspicious" ||
+      verdict === "dangerous" ||
+      verdict === "unknown"
+        ? verdict
+        : "unknown"
+
+    await recordFastScanResult({
+      userId: user_id,
+      organizationId: organization_id,
+      scanId: scan_id,
+      status: "complete",
+      verdict: finalVerdict,
       riskScore,
       confidenceScore,
-      verdict,
-      durationMs: scanDurationMs,
+      aiExplanation: null,
+      recommendedAction: null,
+      scanDurationMs,
+      vendorResults: vendorRows.map((row) => ({
+        vendorName: row.vendor_name,
+        verdict: row.verdict,
+        rawResponse: row.raw_response,
+        errorMessage: row.error_message,
+        responseTimeMs: row.response_time_ms,
+      })),
+      evidenceItems: evidenceRows.map((row) => ({
+        signalType: row.signal_type,
+        severity: row.severity,
+        title: row.title,
+        detail: row.detail,
+        scoreImpact: row.score_impact,
+      })),
     })
 
     return NextResponse.json(
-      { scan_id, status: "complete", verdict },
+      { scan_id, status: "complete", verdict: finalVerdict },
       { status: 201 }
     )
 

@@ -1,0 +1,115 @@
+# CBC project state - built ONLY from repository evidence (AGENTS.md section 16).
+# Anything not provable from git, docs/ or code is marked "unverified".
+# Snapshot date: 2026-10-15. Re-verify before relying on any entry.
+
+repository:
+  remote: github.com/wberytech-stack/checkbeforeclick
+  integration_base:
+    branch: master
+    commit: 3e24285   # "Merge PR #25: docs: add Gate 003R runtime smoke validation runbook"
+    matches_origin_master: true   # git rev-parse master == origin/master after fetch
+  snapshot_branch: docs/agent-operating-files   # this gate's branch, cut from master 3e24285
+  github_pr_metadata: unverified   # gh CLI unavailable; PR facts below come from merge commits only
+
+merged_prs_on_master:   # from "Merge PR #N" commits in git log
+  - { pr: 23, gate: 003P, merge_commit: 98e3761 }
+  - { pr: 24, gate: 003Q, merge_commit: f82edbd }
+  - { pr: 25, gate: 003R (runbook only), merge_commit: 3e24285 }
+
+local_unpushed_gate_branches:   # local commits not on origin; none merged
+  - branch: gate-003r-runtime-smoke-validation
+    commit: 7ec9019
+    content: Gate 003R disposable validation results and findings (docs)
+    note: origin has only f25a02b (runbook); local is ahead
+  - branch: gate-003s-migration-004-apply-runbook
+    commit: b192977
+    base: gate-003r-runtime-smoke-validation
+    content: Gate 003S migration 004 apply runbook (docs only, not executed)
+  - branch: gate-003t-fast-scan-persistence-fail-safe
+    commit: 291d81f
+    base: master 3e24285
+    content: persistence helper opt-in via CBC_FAST_SCAN_PERSISTENCE_HELPER=enabled
+  - branch: gate-003u-postgres-tls-verification
+    commit: 7973f0e
+    base: master 3e24285
+    content: verified TLS in src/server/db/postgres.ts
+
+gates:   # status from gate docs on master unless noted
+  "002":  { status: applied_to_cbc_prod, evidence: docs/azure/gate-002-production-apply-results.md }
+  "003A": { status: runbook_only, evidence: docs/azure/gate-003-runtime-role-runbook.md, note: cbc_app not created }
+  "003D": { status: design_and_stub_migration_on_master, evidence: "docs/azure/gate-003d-controlled-fast-path-function-design.md, infra/db/migrations/003_fast_path_function.sql" }
+  "003E": { status: docs_on_master, evidence: docs/gates/gate-003e-runtime-integration-plan.md }
+  "003F": { status: docs_on_master, evidence: docs/gates/gate-003f-sql-transaction-path-design.md }
+  "003G": { status: implemented_on_master, evidence: src/server/db/postgres.ts }
+  "003H": { status: validated_disposable, evidence: docs/gates/gate-003h-postgres-helper-disposable-validation.md }
+  "003I": { status: docs_on_master }
+  "003J": { status: docs_on_master }
+  "003K": { status: decision_on_master, note: "Option C" }
+  "003L": { status: docs_on_master }
+  "003M": { status: draft_migration_on_master, evidence: infra/db/migrations/004_fast_path_function_write_expansion.sql }
+  "003N": { status: validated_disposable, evidence: docs/gates/gate-003n-disposable-db-validation-expanded-function.md, tests: T01-T41 }
+  "003O": { status: plan_on_master, note: "section 11 sequencing (apply 004 before route wiring) was not followed by 003Q" }
+  "003P": { status: merged, pr: 23 }
+  "003Q": { status: merged, pr: 24, note: "on master every URL/domain scan returns HTTP 500 (Gate 003R finding 1); fix is local 003T, unmerged" }
+  "003R": { status: runbook_merged_results_local_only, pr: 25, note: "authenticated runtime scenarios 1-4 not exercised; gate NOT passed" }
+  "003S": { status: local_only_not_executed }
+  "003T": { status: local_only_unmerged }
+  "003U": { status: local_only_unmerged }
+  "004A": { status: docs_on_master }
+  "004B": { status: docs_on_master }
+  "004C": { status: docs_on_master }
+  "004D": { status: docs_on_master, note: PostCSS alert deferred }
+
+blockers:
+  - id: tls-unverified-on-master
+    detail: >-
+      On master, src/server/db/postgres.ts uses ssl { rejectUnauthorized: false }
+      whenever CBC_DATABASE_SSL != "false". Verified TLS is required before any
+      Azure connection. Fix exists only on local unmerged branch
+      gate-003u-postgres-tls-verification (7973f0e).
+    evidence: src/server/db/postgres.ts (master)
+  - id: fast-scan-500-on-master
+    detail: >-
+      Gate 003Q route calls recordFastScanResult unconditionally; with
+      CBC_DATABASE_URL unset every URL/domain scan fails. Fix exists only on
+      local unmerged branch gate-003t-fast-scan-persistence-fail-safe (291d81f).
+    evidence: app/api/scan/route.ts (master); Gate 003R results (local 7ec9019)
+    deployed_impact: unverified
+  - id: postcss-alert-deferred
+    detail: Moderate PostCSS advisory via next@16.2.6 -> postcss@8.4.31. Deferred; do not fix.
+    evidence: docs/gates/gate-004d-postcss-blocked-remediation-note.md
+    current_github_alert_state: unverified
+  - id: cbcpgadmin-key-vault-mismatch
+    detail: cbcpgadmin password vs Key Vault secret mismatch on pg-cbc-prod-cc-001. OFF LIMITS.
+    evidence: docs/gates/gate-003e-runtime-integration-plan.md, docs/gates/gate-003f-sql-transaction-path-design.md
+  - id: migration-004-not-applied
+    detail: Migration 004 is not applied to any real database.
+    evidence: docs/gates/gate-003o-runtime-route-wiring-plan.md, docs/gates/gate-003p-scan-result-persistence-helper.md
+    live_database_state: unverified
+  - id: migration-003-on-cbc-prod
+    detail: No repository record of migration 003 being applied to cbc_prod.
+    live_database_state: unverified
+  - id: runtime-env-unset
+    detail: CBC_DATABASE_URL is not set and cbc_app does not exist in any real environment.
+    evidence: docs/gates/gate-003o-runtime-route-wiring-plan.md (sections 9, 12), docs/azure/gate-003-runtime-role-runbook.md
+    live_environment_state: unverified
+  - id: supabase-authenticated-e2e-outstanding
+    detail: >-
+      Real Supabase-authenticated end-to-end validation of /api/scan (Gate 003R
+      scenarios 1-4) has not been run.
+    evidence: Gate 003R results (local 7ec9019)
+  - id: split-database-path
+    detail: >-
+      Scan lifecycle uses Supabase; terminal write helper uses CBC_DATABASE_URL.
+      Must be resolved (Gate 003S D1) before application activation.
+    evidence: lib/data/index.ts, app/api/scan/route.ts, src/server/scan/recordFastScanResult.ts
+  - id: memberships-precondition
+    detail: Migration 004 requires a memberships row; getUserOrgContext reads users.organization_id only (Gate 003S D4).
+    evidence: infra/db/migrations/004_fast_path_function_write_expansion.sql, lib/data/index.ts
+
+unverified:
+  - GitHub PR metadata, review state and open PRs (gh unavailable; only merge commits checked)
+  - Current Dependabot alert state on GitHub
+  - Live state of cbc_prod (migrations applied, roles) beyond docs/azure records
+  - What, if anything, is currently deployed from master
+  - Node version of any deployed runtime (no Dockerfile or engines pin)

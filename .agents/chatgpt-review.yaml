@@ -1,0 +1,15 @@
+# ChatGPT review record. A ChatGPT review decision is not founder approval (AGENTS.md section 3).
+gate: ""
+reviewed_commit: ""
+date: ""
+recommendation: ""     # recommend_approve | recommend_changes | recommend_reject
+findings: []           # each: { severity: "", file: "", summary: "" }
+required_changes: []
+hard_rule_check:
+  production_or_azure_access: ""
+  migrations_applied_to_real_db: ""
+  secrets_exposed: ""
+  dependency_changes: ""
+  tenant_context_invariant: ""
+open_questions_for_founder: []
+founder_decision: ""   # filled in by the founder only

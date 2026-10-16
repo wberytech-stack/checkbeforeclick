@@ -1,0 +1,220 @@
+# Gate 006B - manual, founder-approved deploy of the web container to Azure
+# Container Apps (design: docs/gates/gate-006a-azure-hosting-migration.md section 6).
+#
+# Trigger : workflow_dispatch ONLY. No push, merge, schedule or PR trigger, so a
+#           merge to master never deploys to Azure (AGENTS.md section 20).
+# Inert   : every job is skipped unless the repository variable
+#           CBC_AZURE_DEPLOY_ENABLED is exactly "enabled" (founder-only setting).
+# Fail closed:
+#   - the commit input must be a full 40-hex SHA reachable from origin/master;
+#   - every required variable must be present, or the run fails before any build;
+#   - the deploy job runs in the azure-<env> GitHub Environment, which the founder
+#     configures with themself as required reviewer. Without that environment the
+#     job cannot obtain an Azure token.
+# Secrets : none. Azure sign-in is OIDC (federated credential, no client secret).
+#           NEXT_PUBLIC_* values are public by definition and are the ONLY build
+#           args. Runtime secrets come from Key Vault references in Container Apps.
+#
+# Repository variables (founder sets; none are secrets):
+#   CBC_AZURE_DEPLOY_ENABLED                      "enabled" to arm the workflow
+#   CBC_STG_NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY  staging public build values
+#   CBC_PROD_NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY production public build values
+#   CBC_STG_NEXT_PUBLIC_APP_URL / CBC_PROD_NEXT_PUBLIC_APP_URL  (optional)
+# Environment variables (in azure-staging and azure-production):
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+#   AZURE_RESOURCE_GROUP, AZURE_ACR_NAME, AZURE_CONTAINERAPP_NAME
+name: azure-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      commit:
+        description: "Full 40-character commit SHA on master to deploy"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Validate inputs and public build configuration (fail closed)
+        id: meta
+        shell: bash
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+          COMMIT: ${{ inputs.commit }}
+          STG_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_URL }}
+          STG_ANON: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          PROD_URL: ${{ vars.CBC_PROD_NEXT_PUBLIC_SUPABASE_URL }}
+          PROD_ANON: ${{ vars.CBC_PROD_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          case "$TARGET_ENV" in
+            staging)    url="$STG_URL";  anon="$STG_ANON";  suffix=stg ;;
+            production) url="$PROD_URL"; anon="$PROD_ANON"; suffix=prod ;;
+            *) echo "::error::unknown environment '$TARGET_ENV'"; exit 1 ;;
+          esac
+          if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::commit must be a full lowercase 40-hex SHA"; exit 1
+          fi
+          if [ -z "$url" ] || [ -z "$anon" ]; then
+            echo "::error::NEXT_PUBLIC Supabase variables for $TARGET_ENV are not set; refusing to build"; exit 1
+          fi
+          echo "image_tag=${COMMIT}-${suffix}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the commit to be on origin/master
+        shell: bash
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin '+refs/heads/master:refs/remotes/origin/master'
+          git cat-file -e "${COMMIT}^{commit}"
+          if ! git merge-base --is-ancestor "$COMMIT" origin/master; then
+            echo "::error::$COMMIT is not reachable from origin/master; refusing to deploy"; exit 1
+          fi
+          git checkout --detach "$COMMIT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+
+      - name: Install from lockfile (no lifecycle scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Static deploy-safety tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-hosting-safety.ts
+
+      - name: Build image (public build args only)
+        shell: bash
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+          COMMIT: ${{ inputs.commit }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          STG_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_URL }}
+          STG_ANON: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          STG_APP_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_APP_URL }}
+          PROD_URL: ${{ vars.CBC_PROD_NEXT_PUBLIC_SUPABASE_URL }}
+          PROD_ANON: ${{ vars.CBC_PROD_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          PROD_APP_URL: ${{ vars.CBC_PROD_NEXT_PUBLIC_APP_URL }}
+        run: |
+          set -euo pipefail
+          if [ "$TARGET_ENV" = production ]; then
+            url="$PROD_URL"; anon="$PROD_ANON"; app="$PROD_APP_URL"
+          else
+            url="$STG_URL"; anon="$STG_ANON"; app="$STG_APP_URL"
+          fi
+          docker build \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL="$url" \
+            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="$anon" \
+            --build-arg NEXT_PUBLIC_APP_URL="$app" \
+            --build-arg CBC_BUILD_SHA="$COMMIT" \
+            -t "cbc-web:$IMAGE_TAG" .
+          docker save "cbc-web:$IMAGE_TAG" | gzip > "$RUNNER_TEMP/cbc-web.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cbc-web-image
+          path: ${{ runner.temp }}/cbc-web.tar.gz
+          retention-days: 3
+
+  deploy:
+    needs: build
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: azure-${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Require Azure environment configuration (fail closed)
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+          AZURE_CONTAINERAPP_NAME: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP AZURE_ACR_NAME AZURE_CONTAINERAPP_NAME; do
+            if [ -z "${!v}" ]; then echo "::error::environment variable $v is not set"; missing=1; fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cbc-web-image
+          path: ${{ runner.temp }}
+
+      - name: Azure sign-in (OIDC, no client secret)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Push image and update Container App
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          APP: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+        run: |
+          set -euo pipefail
+          gunzip -c "$RUNNER_TEMP/cbc-web.tar.gz" | docker load
+          server="$(az acr show --name "$ACR" --query loginServer -o tsv)"
+          az acr login --name "$ACR"
+          docker tag "cbc-web:$IMAGE_TAG" "$server/cbc-web:$IMAGE_TAG"
+          docker push "$server/cbc-web:$IMAGE_TAG"
+          if ! az containerapp show --name "$APP" --resource-group "$RG" --query name -o tsv >/dev/null 2>&1; then
+            echo "::error::Container App $APP not found. Image pushed as $server/cbc-web:$IMAGE_TAG; apply Bicep Phase B with this image (Gate 006B runbook), then re-run."
+            exit 1
+          fi
+          az containerapp update --name "$APP" --resource-group "$RG" \
+            --image "$server/cbc-web:$IMAGE_TAG" --output none
+
+      - name: Wait for healthy revision (/api/healthz)
+        shell: bash
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show --name "$APP" --resource-group "$RG" --query properties.configuration.ingress.fqdn -o tsv)"
+          for i in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "https://$fqdn/api/healthz" || true)"
+            if [ "$code" = "200" ]; then echo "healthy: https://$fqdn/api/healthz"; exit 0; fi
+            echo "attempt $i: $code"; sleep 10
+          done
+          echo "::error::/api/healthz did not return 200; roll back to the previous revision (founder runbook)"
+          exit 1

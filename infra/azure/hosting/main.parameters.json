@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "keyVaultName": { "value": "kv-cbc-prod-cc-001" },
+    "registryName": { "value": "crcbcprodcc001" },
+    "logAnalyticsName": { "value": "log-cbc-prod-cc-001" },
+    "environmentName": { "value": "cae-cbc-prod-cc-001" },
+    "identityName": { "value": "id-cbc-web-cc-001" },
+    "stagingAppName": { "value": "ca-cbc-web-stg-cc-001" },
+    "productionAppName": { "value": "ca-cbc-web-prod-cc-001" },
+    "stagingSecretNames": {
+      "value": {
+        "supabaseServiceRoleKey": "cbc-stg-supabase-service-role-key",
+        "googleWebRiskApiKey": "cbc-shared-google-web-risk-api-key",
+        "inngestEventKey": "cbc-stg-inngest-event-key",
+        "inngestSigningKey": "cbc-stg-inngest-signing-key"
+      }
+    },
+    "productionSecretNames": {
+      "value": {
+        "supabaseServiceRoleKey": "cbc-prod-supabase-service-role-key",
+        "googleWebRiskApiKey": "cbc-shared-google-web-risk-api-key",
+        "inngestEventKey": "cbc-prod-inngest-event-key",
+        "inngestSigningKey": "cbc-prod-inngest-signing-key"
+      }
+    },
+    "stagingPlainEnv": {
+      "value": [
+        { "name": "INNGEST_ENV", "value": "REPLACE_WITH_STAGING_INNGEST_BRANCH_ENV_NAME" },
+        { "name": "WEB_RISK_PROVIDER_ENABLED", "value": "REPLACE_WITH_CURRENT_PREVIEW_VALUE" },
+        { "name": "DOMAIN_AGE_PROVIDER_ENABLED", "value": "REPLACE_WITH_CURRENT_PREVIEW_VALUE" }
+      ]
+    },
+    "productionPlainEnv": {
+      "value": [
+        { "name": "WEB_RISK_PROVIDER_ENABLED", "value": "REPLACE_WITH_CURRENT_PRODUCTION_VALUE" },
+        { "name": "DOMAIN_AGE_PROVIDER_ENABLED", "value": "REPLACE_WITH_CURRENT_PRODUCTION_VALUE" }
+      ]
+    }
+  }
+}

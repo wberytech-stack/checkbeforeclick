@@ -1,0 +1,37 @@
+# Gate 006B - keep secrets, local state and build output out of the image context.
+# Environment files: NEVER enter the build context (values come from Key Vault at runtime).
+.env
+.env.*
+**/.env
+**/.env.*
+# VCS, local tooling and agent working files
+.git
+.github
+.claude
+.mcp.json
+.agents/outbox
+.vscode
+.idea
+# Dependencies and build output are produced inside the image
+node_modules
+.next
+out
+coverage
+*.tsbuildinfo
+npm-debug.log*
+# Not needed at runtime or build time
+docs
+scripts
+infra
+tools
+*.md
+!README.md
+Dockerfile
+.dockerignore
+# Keys/certificates must never be copied
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+.npmrc

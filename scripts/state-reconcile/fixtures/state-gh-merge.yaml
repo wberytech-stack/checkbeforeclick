@@ -1,0 +1,13 @@
+# Gate 005E reconcile fixture - synthetic. Double-brace tokens are replaced with real SHAs from a throwaway test repo.
+schema_version: 4
+project: cbc
+repository:
+  integration_base:
+    branch: master
+    commit_source: "derived: git rev-parse origin/master at read time; never stored (Gate 005E)"
+merged_branches_on_master: []
+unmerged_gate_branches:
+  - branch: feature-gh
+    content: merged with a GitHub merge commit after a squash
+gates:
+  "GG": {status: in_progress_this_branch, evidence: [{type: branch, ref: feature-gh}]}

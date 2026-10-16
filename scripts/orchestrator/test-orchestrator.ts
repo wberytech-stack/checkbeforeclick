@@ -3,7 +3,10 @@
  * no git writes, no AI calls. Each case runs the real CLI with
  * --remote-fixture, so `git ls-remote` is never invoked.
  *
- *   npx --yes tsx@4.23.0 scripts/orchestrator/test-orchestrator.ts
+ *   node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/orchestrator/test-orchestrator.ts
+ *
+ * Runs with Node's built-in TypeScript support (Node >= 22.18; CI pins 24.14.0).
+ * No tsx or other runner is fetched: only the Node runtime and lockfile packages.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";

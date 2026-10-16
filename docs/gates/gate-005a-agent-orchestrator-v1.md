@@ -29,9 +29,10 @@ credentials.
 
 ## Protocol accepted
 
-- **Handoff:** `.agents/claude-handoff.yaml`, `schema_version: 4`. This is
-  the v3 template from `docs/agent-operating-files` plus a required `status`
-  field (`in_progress` | `ready_for_review`).
+- **Handoff:** `.agents/claude-handoff.yaml`, `schema_version: 4`. It
+  requires a `status` field whose value is exactly `in_progress` or
+  `ready_for_review`. Any other value, such as `done`, is rejected as
+  `handoff_invalid`.
   - Required: `project: cbc`, `status`, `gate`, `branch`, `base_commit`,
     `head_commit`, `summary`, `validation.build`, `changed_files` (list),
     `founder_only_actions_requested` (list), `delegated_actions` (mapping).
@@ -54,8 +55,8 @@ final state.
 
 ```text
 no handoff file ............................................. no_handoff
-handoff_loaded -> invalid ................................... handoff_invalid
-handoff_valid  -> status != ready_for_review ................ not_ready
+handoff_loaded -> invalid (incl. unknown status) ............ handoff_invalid
+handoff_valid  -> status in_progress ......................... not_ready
 status_ready_for_review -> branch master/main or PR not draft  founder_action_required (safety_violation)
 safety_checked -> branch absent on origin ................... blocked_branch_not_on_origin
 safety_checked -> origin head != head_commit ................ blocked_head_mismatch
@@ -115,7 +116,7 @@ npx --yes tsx@4.23.0 scripts/orchestrator/test-orchestrator.ts
 
 ## Validation (2026-10-16)
 
-- **Fixture tests:** 20 passed, 0 failed. Every case runs the real CLI with
+- **Fixture tests:** 21 passed, 0 failed. Every case runs the real CLI with
   `--remote-fixture`, so no network or git call is made.
 
 ```text
@@ -123,6 +124,7 @@ PASS: O01 no handoff file: no_handoff
 PASS: O02 handoff schema_version 3 rejected: handoff_loaded -> handoff_invalid
 PASS: O03 handoff missing required fields: handoff_loaded -> handoff_invalid
 PASS: O04 branch name that looks like a git option rejected: handoff_loaded -> handoff_invalid
+PASS: O21 status outside in_progress|ready_for_review rejected: handoff_loaded -> handoff_invalid
 PASS: O05 status in_progress: handoff_loaded -> handoff_valid -> not_ready
 PASS: O06 handoff on master -> founder: ... status_ready_for_review -> founder_action_required
 PASS: O07 PR not draft -> founder: ... status_ready_for_review -> founder_action_required
@@ -139,8 +141,12 @@ PASS: O17 recommend_changes, only founder-only items -> founder: ... review_curr
 PASS: O18 recommend_approve -> founder_action_required: ... review_current -> founder_action_required
 PASS: O19 approve with non-pending founder_decision -> noted, not acted on: ... -> founder_action_required
 PASS: O20 recommend_reject -> founder_action_required: ... review_current -> founder_action_required
-=== Gate 005A orchestrator: 20 passed, 0 failed ===
+=== Gate 005A orchestrator: 21 passed, 0 failed ===
 ```
+
+O21 (added in `9ef11d9`) uses `fixtures/handoff-status-done.yaml`. It
+expects exit 1 and the error
+`status must be one of in_progress, ready_for_review`.
 
 In O16, each escalated item was escalated for these reasons:
 
@@ -170,9 +176,8 @@ In O16, each escalated item was escalated for these reasons:
    devDependency is a dependency change, so it needs the founder.
 2. **Protocol files are not on `master`.** The `.agents/` files and
    AGENTS.md section 6 live on the unmerged `docs/agent-operating-files`
-   branch. The handoff template there is v3 and has no `status` field. A
-   follow-up on that branch should bump it to v4 and add `status` to match
-   this orchestrator.
+   branch. That branch's handoff template was bumped to v4 with `status` in
+   `d26331b` to match this orchestrator.
 3. **No AI calls, no automatic loop.** The payloads are prepared for a
    person or a later gate to deliver. Wiring an AI API is a later gate.
 4. **Keyword screening is conservative.** It may escalate a harmless change

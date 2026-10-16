@@ -6,12 +6,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # CBC Project Constitution
 
-> **Status: DRAFT for founder review. Not yet binding as a whole.** It was
-> assembled only from rules the founder has already stated for this project.
-> **The hard safety rules (sections 8-11 and 14) are in force now**, even
-> though this document is still a draft. The draft status never suspends or
-> weakens them. For every other section, until the founder gives final
-> approval, a direct founder instruction prevails over this draft.
+> **Status: BINDING.** The founder adopted this constitution as binding in
+> Gate 005C, effective once it is merged into `master`. Every section
+> applies to every agent working in this repository. Conflicts are resolved
+> by the precedence in section 1, and this document changes only through
+> section 19.
 >
 > This document holds standing rules only. Current project state (gates,
 > blockers, branch status, deployment assumptions, local-only fixes) lives in

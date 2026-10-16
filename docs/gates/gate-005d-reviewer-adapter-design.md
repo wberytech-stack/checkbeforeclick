@@ -18,6 +18,14 @@ founder decisions in section 11 are made.
 - **R4:** provenance, rejection codes, the evidence sequence, the pre-write
   checks, and the flow diagram are updated to match.
 
+**Revision 3.** This revision addresses ChatGPT review round 2
+(`recommend_changes` on `91eedf5`):
+
+- **R5:** reviewer adapter v1 supports only gates reviewed against the
+  merge-base with `policy_commit`. A founder-approved alternate-base gate
+  (AGENTS.md section 6.5) is rejected with `E_BASE_MISMATCH` and must use
+  manual review (section 10a).
+
 ## 1. Goal
 
 Replace the manual step in the review loop proven by Gate 005B, where a
@@ -268,6 +276,12 @@ The adapter gathers evidence only with read-only git operations against
    - The request's `base_commit` **must equal** `merge_base`, otherwise
      `E_BASE_MISMATCH`. A request cannot point at an older ancestor to widen
      or shift the diff under review.
+   - **v1 supports only merge-base gates (R5).** The adapter never infers or
+     accepts an alternate base from the request, the handoff, or any other
+     agent-written field. A founder-approved alternate-base gate is rejected
+     with `E_BASE_MISMATCH` like any other mismatch. Its `adapter-result.json`
+     detail names both values (`base_commit` and `merge_base`) and states
+     that alternate-base gates require manual review (section 10a).
 4. **Classify the existing review file** (section 7.1).
 5. **Get the authoritative changed files:**
    `git diff --name-status <merge_base> <head_commit>`. Any mismatch with
@@ -411,7 +425,7 @@ Only after all four checks pass does the adapter preserve the older review
 | `E_POLICY_UNAVAILABLE` | `origin/master` cannot be verified (fetch, `rev-parse`, and `ls-remote` disagree), or a policy file is missing at `policy_commit` |
 | `E_HEAD_NOT_ON_ORIGIN` | `origin/<branch>` is absent or differs from `head_commit` |
 | `E_BASE_INVALID` | `base_commit` is not a commit in the repository |
-| `E_BASE_MISMATCH` | `base_commit` is not equal to `git merge-base <policy_commit> <head_commit>` (R1) |
+| `E_BASE_MISMATCH` | `base_commit` is not equal to `git merge-base <policy_commit> <head_commit>` (R1). This includes every founder-approved alternate-base gate, which v1 does not support (R5, section 10a) |
 | `E_REVIEW_EXISTS` | The existing review is a valid review for the same `head_commit` (R2) |
 | `E_REVIEW_FILE_MALFORMED` | The existing review file does not parse, fails validation, and is not the pristine template (R2) |
 | `E_REVIEW_HAS_FOUNDER_DECISION` | The existing review's `founder_decision` is not the pristine template (R2) |
@@ -512,6 +526,35 @@ Design properties that a founder amendment could rely on:
   (section 6.3) prevent secret-bearing files and contents from leaving the
   machine.
 
+## 10a. Limitation: alternate-base gates are unsupported in v1 (R5)
+
+AGENTS.md section 6.5 allows the founder to name a base other than
+`master` for a gate. Reviewer adapter v1 does **not** support those gates.
+This is a fail-closed choice:
+
+- **Supported:** a gate whose review base is
+  `git merge-base <policy_commit> <head_commit>`, where `policy_commit` is
+  the verified `origin/master`. This covers every gate branched from
+  `master`, including gates where `master` advanced after branching.
+- **Unsupported:** any other base, including one the founder legitimately
+  approved. The adapter rejects it with `E_BASE_MISMATCH`, changes nothing,
+  and sends nothing.
+- **No inference:** the adapter never trusts a base, an "alternate base
+  approved" flag, or a founder-approval claim that comes from the review
+  request, the handoff, or any agent-written file. Such fields are
+  agent-controlled and cannot prove founder authorization (AGENTS.md
+  sections 3 and 4).
+- **Fallback:** alternate-base gates use the **manual review path proven by
+  Gate 005B**. The founder carries `review-request.json` to ChatGPT and
+  pastes the review back. The Gate 005A orchestrator then processes it as
+  usual.
+
+Supporting alternate bases needs a later gate. That gate would define a
+**repository-verifiable** source of founder authorization for the base,
+for example a founder-signed commit or tag, or a founder-merged record on
+`master` naming the gate, branch, and base SHA. The adapter would verify it
+from `policy_commit`. Until then, v1's behavior is rejection.
+
 ## 11. Founder decisions required before implementation
 
 1. **Amend section 11** (via section 19) to allow exactly one named
@@ -537,6 +580,10 @@ Design properties that a founder amendment could rely on:
    modification that agents must not commit, or move live reviews to an
    untracked path. Changing the `.gitignore` or the protocol path is its own
    gate.
+8. **Accept the v1 alternate-base limitation** (section 10a). Gates on a
+   founder-named non-`master` base are rejected with `E_BASE_MISMATCH` and
+   use manual review. Alternatively, commission a later gate to design a
+   repository-verifiable founder authorization for alternate bases.
 
 ## 12. Proposed implementation gate (after the decisions)
 
@@ -548,7 +595,9 @@ code in section 7.4. The tests would include:
 - a `founder_decision_recorded` file;
 - a malformed review file;
 - a policy-stale race;
-- a secret-suspect fixture for each category.
+- a secret-suspect fixture for each category;
+- an alternate-base request, which must be rejected with `E_BASE_MISMATCH`
+  and send nothing.
 
 A separate, founder-run step would then perform one live call against a
 docs-only smoke branch, for example Gate 005B's branch at `a3971e7`.

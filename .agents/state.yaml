@@ -18,10 +18,10 @@ repository:
   remote: github.com/wberytech-stack/checkbeforeclick
   integration_base:
     branch: master
-    commit: b2df476fe0389b4a0829b713b2c726a3e145b183
+    commit: cbddac265ae2bb1101a51fd30fe1d7683c088b35
     matches_origin_master: true
     evidence:
-      - { type: git_log, ref: "git rev-parse master == origin/master == git ls-remote origin refs/heads/master == b2df476 after fetch" }
+      - { type: git_log, ref: "git rev-parse master == origin/master == git ls-remote origin refs/heads/master == cbddac2 after fetch" }
     verified_at: 2026-10-16
   github_pr_metadata:
     status: unverified
@@ -42,7 +42,7 @@ merged_prs_on_master:
     evidence: [{ type: commit, ref: 3e24285 }]
     verified_at: 2026-10-16
 
-merged_branches_on_master:   # founder-approved local --no-ff merges, pushed as a fast-forward 3e24285..b2df476
+merged_branches_on_master:   # founder-approved local --no-ff merges, each pushed as a fast-forward (3e24285..b2df476, b2df476..cbddac2)
   - branch: docs/agent-operating-files
     branch_head: d26331b
     merge_commit: e1356b0606a772618e60ab0a20485513db23d7c2
@@ -57,8 +57,15 @@ merged_branches_on_master:   # founder-approved local --no-ff merges, pushed as 
     content: Gate 005A orchestrator v1 (scripts/orchestrator, fixtures, gate doc)
     evidence: [{ type: commit, ref: b2df476 }, { type: git_log, ref: "merge-base --is-ancestor 2be772e origin/master" }]
     verified_at: 2026-10-16
+  - branch: gate-005c-agent-framework-final
+    branch_head: c46e1ad
+    merge_commit: cbddac265ae2bb1101a51fd30fe1d7683c088b35
+    parents: [b2df476, c46e1ad]
+    content: AGENTS.md made binding; state.yaml refresh after e1356b0 and b2df476
+    evidence: [{ type: commit, ref: cbddac2 }, { type: git_log, ref: "merge-base --is-ancestor c46e1ad origin/master" }]
+    verified_at: 2026-10-16
 
-unmerged_gate_branches:   # none is an ancestor of origin/master (b2df476); base and push_state per branch
+unmerged_gate_branches:   # none is an ancestor of origin/master (cbddac2); base and push_state per branch
   - branch: gate-003r-runtime-smoke-validation
     commit: 7ec9019
     origin_commit: f25a02b
@@ -94,11 +101,11 @@ unmerged_gate_branches:   # none is an ancestor of origin/master (b2df476); base
     content: Gate 005B agent loop smoke test doc (docs only)
     evidence: [{ type: branch, ref: gate-005b-agent-loop-smoke }]
     verified_at: 2026-10-16
-  - branch: gate-005c-agent-framework-final
-    base: master@b2df476
+  - branch: gate-005d-reviewer-adapter-design
+    base: master@cbddac2
     push_state: pushed by this gate's own delegated push; verify with git ls-remote
-    content: AGENTS.md made binding; this state.yaml refresh (this branch)
-    evidence: [{ type: branch, ref: gate-005c-agent-framework-final }]
+    content: reviewer adapter design doc; this state.yaml refresh (this branch)
+    evidence: [{ type: branch, ref: gate-005d-reviewer-adapter-design }]
     verified_at: 2026-10-16
 
 gates:
@@ -166,14 +173,20 @@ gates:
     loop_outcome: { status: unverified, note: "local evidence only, outside the repository tree (.git/cbc-evidence/gate-005b-agents)" }
     verified_at: 2026-10-16
   "005C":
-    status: in_progress_this_branch
+    status: merged
+    merge_commit: cbddac2
     scope: AGENTS.md binding wording; state.yaml refresh after e1356b0 and b2df476
-    evidence: [{ type: branch, ref: gate-005c-agent-framework-final }]
+    evidence: [{ type: commit, ref: cbddac2 }, { type: commit, ref: c46e1ad }]
+    verified_at: 2026-10-16
+  "005D":
+    status: in_progress_this_branch
+    scope: automatic reviewer adapter design (docs only, no API call); state.yaml refresh after cbddac2
+    evidence: [{ type: branch, ref: gate-005d-reviewer-adapter-design }]
     verified_at: 2026-10-16
   "agent-framework":
-    status: merged
-    note: AGENTS.md is still marked DRAFT on master until Gate 005C merges
-    evidence: [{ type: commit, ref: e1356b0 }, { type: file, ref: "master:AGENTS.md:9" }]
+    status: merged_binding
+    note: 'AGENTS.md on master is marked "Status: BINDING" (merged via cbddac2)'
+    evidence: [{ type: commit, ref: e1356b0 }, { type: commit, ref: cbddac2 }, { type: file, ref: "master@cbddac2:AGENTS.md:9" }]
     verified_at: 2026-10-16
   "004A": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004a-product-wedge-mvp-roadmap.md }], verified_at: 2026-10-15 }
   "004B": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004b-browser-extension-mvp-requirements.md }], verified_at: 2026-10-15 }

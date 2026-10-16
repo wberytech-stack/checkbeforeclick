@@ -22,7 +22,7 @@ This document governs every AI agent working in this repository: Claude Code,
 ChatGPT, and any other agent. When sources conflict, the higher source wins:
 
 1. **Hard security and production-safety rules in this document** (sections
-   8-11 and 14). No instruction overrides them, including a founder
+   8-11, 14 and 20). No instruction overrides them, including a founder
    instruction given during a task. Only the founder can change them, by
    amending this document (section 19).
 2. **Explicit founder instruction** for the current task.
@@ -332,3 +332,51 @@ is reported as "not exercised", never as passed.
 Only the founder can amend this constitution, through a docs-only gate.
 Agents may propose amendments in a checkpoint report but must not apply them
 on their own initiative.
+
+## 20. Azure hosting, deployments and resources (hard rule)
+
+Added in Gate 006A, effective once merged into `master`. This section adds
+to sections 6.3 and 8; it does not replace or weaken them.
+
+- **Azure deployments are founder-approved, every time.**
+  - Each deployment to Azure staging or Azure production needs explicit
+    founder approval naming the environment and the commit or image. That
+    covers a new image, a new revision, a traffic shift, a rollback, a
+    restart, or scaling to zero.
+  - Approval is given in the protected GitHub Environment for that target
+    (`azure-staging` or `azure-production`, with the founder as required
+    reviewer), or by the founder acting as human operator.
+  - Agents never deploy (section 8).
+- **Merging into `master` never deploys to Azure.** The Azure deployment
+  workflow runs only on an explicit, founder-approved dispatch. A merge
+  approval is not an Azure deployment approval.
+- **Azure resources and configuration are founder-only.** Creating,
+  changing, or deleting any Azure resource or setting needs explicit
+  founder approval naming the change, and is performed by the founder or by
+  a founder-approved infrastructure-as-code apply. This includes:
+  - resource groups, Container Apps environments and apps, ingress,
+    scaling, revisions, custom domains and certificates;
+  - container registries;
+  - managed identities, role assignments, and federated credentials;
+  - Key Vault secrets and access;
+  - networking, monitoring, and budgets;
+  - DNS records for project domains.
+- **What agents may do:** author infrastructure-as-code, deployment
+  workflows, and runbooks on a gate branch (section 6.2). Agents never
+  apply, deploy, or execute them against Azure.
+- **Credentials.**
+  - Deployment workflows authenticate to Azure only through OIDC federated
+    credentials. No long-lived Azure secret is stored in GitHub.
+  - Runtime secrets are Key Vault references resolved by the app's managed
+    identity.
+  - Agents never read, print, or request any Azure credential, Key Vault
+    value, or Container Apps secret (section 11).
+- **Transition rule while Vercel remains.** The Vercel rules in sections
+  6.3 and 8, and any added by later amendments, stay in force, unchanged,
+  until the founder records Vercel's retirement in a docs-only gate.
+  - Until then, a merge into `master` is still a Vercel production
+    deployment, and the merge approval must acknowledge it.
+  - Azure deployments always need their separate approval under this
+    section.
+  - Only after the recorded retirement may the founder remove the
+    Vercel-specific rules, by amendment.

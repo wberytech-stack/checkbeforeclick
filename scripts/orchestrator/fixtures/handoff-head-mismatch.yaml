@@ -1,0 +1,33 @@
+# Gate 005A orchestrator fixture - synthetic data only.
+schema_version: 4
+project: cbc
+status: ready_for_review
+gate: "999Z"
+branch: "gate-999z-mismatch"
+base_commit: "1111111111111111111111111111111111111111"
+head_commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+date: "2026-10-16"
+summary: "Fixture gate for orchestrator smoke tests."
+changed_files: ["docs/gates/gate-999z-fixture.md"]
+commands_run: ["npm run build"]
+validation:
+  build: "passed"
+  results: ["PASS: F1 fixture"]
+  not_exercised: []
+git_status_short: ""
+git_diff_stat: " 1 file changed"
+delegated_actions:
+  local_commits: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+  pushed_branch: "gate-999z-mismatch"
+  pushed_head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  draft_pr:
+    number: ""
+    url: ""
+    is_draft: true
+founder_only_actions_requested: []
+review_changes: []
+deferred_review_items: []
+state_yaml_discrepancies: []
+could_not_do: []
+risks_or_findings: []
+decision_needed_from_founder: ""

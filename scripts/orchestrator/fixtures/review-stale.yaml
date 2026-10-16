@@ -1,0 +1,25 @@
+# Gate 005A orchestrator fixture - synthetic ChatGPT review.
+schema_version: 3
+project: cbc
+gate: "999Z"
+reviewed_commit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+date: "2026-10-16"
+recommendation: "recommend_approve"
+findings: []
+required_changes:
+  []
+hard_rule_check:
+  production_or_azure_access: "none"
+  migrations_applied_to_real_db: "none"
+  secrets_exposed: "none"
+  dependency_changes: "none"
+  tenant_context_invariant: "n/a"
+  delegated_actions_within_scope: "yes"
+  founder_only_actions_taken: "none"
+open_questions_for_founder: []
+founder_decision:
+  status: pending
+  recorded_by: founder_only
+  date: ""
+  scope: ""
+  notes: ""

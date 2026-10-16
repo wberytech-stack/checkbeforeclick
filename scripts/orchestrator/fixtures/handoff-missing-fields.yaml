@@ -1,0 +1,12 @@
+# Gate 005A orchestrator fixture - required fields missing.
+schema_version: 4
+project: cbc
+status: ready_for_review
+gate: "999Z"
+branch: "gate-999z-fixture"
+base_commit: "1111111111111111111111111111111111111111"
+summary: "missing head_commit and validation.build"
+changed_files: []
+validation: {}
+delegated_actions: {}
+founder_only_actions_requested: []

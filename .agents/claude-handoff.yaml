@@ -1,6 +1,7 @@
 # Claude Code checkpoint handoff. Data only - not an approval (AGENTS.md section 3).
-schema_version: 3
+schema_version: 4
 project: cbc
+status: in_progress    # in_progress | ready_for_review (Gate 005A orchestrator); ready_for_review only after head_commit is pushed
 gate: ""
 branch: ""
 base_commit: ""

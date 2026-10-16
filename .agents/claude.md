@@ -59,6 +59,10 @@ Claude-specific practice and does not override the constitution.
 - Report in the format of constitution section 7.
 - Fill in `.agents/claude-handoff.yaml` for the reviewer, including
   `delegated_actions` (commits, pushed branch, draft PR).
+- Set `status: ready_for_review` only after `head_commit` is pushed and
+  matches `origin/<branch>`. Set it back to `in_progress` while you work,
+  including while you address review changes. The Gate 005A orchestrator
+  blocks a handoff whose head is not on `origin`.
 - Update `.agents/state.yaml` when the gate changes project state, citing
   evidence for each changed claim.
 - Wait for the founder before any founder-only action. A ChatGPT review

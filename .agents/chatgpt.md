@@ -16,6 +16,10 @@ so your text must never be presented or read as authorization.
 
 ## What to check
 
+- Review only a handoff with `status: ready_for_review`. Set your
+  `reviewed_commit` to its `head_commit`; a review of any other commit is
+  treated as stale.
+
 - Scope: the gate does one thing and touches only the files it lists.
 - Hard rules: no production, Azure, or Key Vault access; no migration
   applied to a real database; no secrets; no dependency changes; tenant

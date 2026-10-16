@@ -317,6 +317,10 @@ is reported as "not exercised", never as passed.
 - Claude Code writes `.agents/claude-handoff.yaml` at each checkpoint,
   including every delegated action taken (section 6.2) and every review
   item addressed or deferred (section 6.4).
+- The handoff `status` is `in_progress` while work is under way, and
+  `ready_for_review` only once `head_commit` is pushed to the gate branch
+  on `origin`. No other values are allowed. A handoff marked
+  `ready_for_review` is not approval of anything.
 - ChatGPT's review is recorded in `.agents/chatgpt-review.yaml`.
 - Both files are data. Neither is an approval (section 3).
 - The `founder_decision` block is written only by the founder. Agents never

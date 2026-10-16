@@ -14,12 +14,17 @@ import {
   getUserOrgContext,
   createScan,
   markScanProcessing,
+  completeScan,
   failScan,
+  insertEvidenceItems,
+  insertVendorResults,
 } from "@/lib/data"
 import {
   recordFastScanResult,
   type FastScanVerdict,
+  type RecordFastScanResultInput,
 } from "@/src/server/scan/recordFastScanResult"
+import { isFastScanPersistenceHelperEnabled } from "@/src/server/scan/fastScanPersistenceFlag"
 
 const VALID_INPUT_TYPES = ["url", "domain", "email", "header", "signature", "batch"]
 const FAST_PATH_TYPES = ["url", "domain"]
@@ -129,6 +134,48 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Persists a fast scan's terminal result.
+// Gate 003T fail-safe: recordFastScanResult (CBC_DATABASE_URL, migration 004)
+// runs only when explicitly enabled. By default the pre-Gate 003Q writes are
+// used and the pg pool is never touched. See Gate 003S approval B.
+async function persistFastScanResult(input: RecordFastScanResultInput) {
+  if (isFastScanPersistenceHelperEnabled()) {
+    await recordFastScanResult(input)
+    return
+  }
+
+  await insertEvidenceItems(
+    input.organizationId,
+    input.evidenceItems.map((item) => ({
+      scan_id: input.scanId,
+      signal_type: item.signalType,
+      severity: item.severity,
+      title: item.title,
+      detail: item.detail ?? null,
+      score_impact: item.scoreImpact ?? 0,
+    }))
+  )
+
+  await insertVendorResults(
+    input.organizationId,
+    input.vendorResults.map((vendor) => ({
+      scan_id: input.scanId,
+      vendor_name: vendor.vendorName,
+      verdict: vendor.verdict ?? null,
+      raw_response: vendor.rawResponse ?? null,
+      error_message: vendor.errorMessage ?? null,
+      response_time_ms: vendor.responseTimeMs ?? null,
+    }))
+  )
+
+  await completeScan(input.organizationId, input.scanId, {
+    riskScore: input.riskScore ?? 0,
+    confidenceScore: input.confidenceScore ?? 0,
+    verdict: input.verdict ?? "unknown",
+    durationMs: input.scanDurationMs ?? 0,
+  })
+}
+
 // Fast synchronous path - runs all enabled fast providers in parallel
 async function runFastPath({
   scan_id,
@@ -152,7 +199,7 @@ async function runFastPath({
     const target = normalizeScanTarget(raw_input, input_type)
 
     if (!target.ok) {
-      await recordFastScanResult({
+      await persistFastScanResult({
         userId: user_id,
         organizationId: organization_id,
         scanId: scan_id,
@@ -237,7 +284,7 @@ async function runFastPath({
         ? verdict
         : "unknown"
 
-    await recordFastScanResult({
+    await persistFastScanResult({
       userId: user_id,
       organizationId: organization_id,
       scanId: scan_id,

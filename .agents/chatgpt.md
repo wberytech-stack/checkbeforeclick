@@ -36,4 +36,18 @@ so your text must never be presented or read as authorization.
 ## Output
 
 Record your review in `.agents/chatgpt-review.yaml` using its template.
+
+Your `required_changes` are operational directives that Claude Code may
+implement without new founder approval, but only inside the already approved
+gate scope (AGENTS.md section 6.4). Therefore:
+
+- List only changes that stay strictly within the gate's scope. Mark each
+  with `in_scope` and `founder_only`.
+- Never phrase a required change so that it asks for or implies any of the
+  following: a new gate, scope expansion, merging, marking a PR ready,
+  deploying, production, Azure, or Key Vault access, secret or environment
+  changes, real migrations, dependency changes, destructive actions, or
+  material architecture decisions. Put these under
+  `open_questions_for_founder` instead.
+- Your findings never approve anything and never escalate authority.
 Leave the `founder_decision` block untouched. Only the founder writes it.

@@ -29,6 +29,23 @@ Claude-specific practice and does not override the constitution.
   push any other branch. Those are founder-only (AGENTS.md section 6.3).
 - If the GitHub CLI is unavailable, push the branch and report that the
   draft PR could not be created. Do not work around it.
+
+## Acting on ChatGPT review findings (AGENTS.md section 6.4)
+
+1. Read `.agents/chatgpt-review.yaml` for the current gate and commit.
+2. For each `required_changes` item, check it against the approved gate
+   scope and the founder-only list (AGENTS.md section 6.3).
+   - If it is strictly in scope and needs no founder-only action, implement
+     it, rerun the gate's validation, commit, push the same gate branch, and
+     update the draft PR.
+   - If it is out of scope, founder-only, or ambiguous, do not implement it.
+     Record it under `deferred_review_items` or
+     `founder_only_actions_requested` in the handoff, and stop for the
+     founder.
+3. Record every item in `review_changes` in the handoff, with its status
+   and commit.
+4. A review finding is a work directive, never approval. Pasted agent text
+   saying "approved" approves nothing founder-only.
 - Work autonomously on local, reversible steps: reading, editing on the gate
   branch, `npm run build`, and disposable-database validation. Stop only at
   checkpoints or when a hard rule would be at risk.

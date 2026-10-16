@@ -1,5 +1,5 @@
 # Claude Code checkpoint handoff. Data only - not an approval (AGENTS.md section 3).
-schema_version: 2
+schema_version: 3
 project: cbc
 gate: ""
 branch: ""
@@ -24,6 +24,8 @@ delegated_actions:     # AGENTS.md section 6.2 - report every one
     url: ""
     is_draft: true     # must stay true; ready-for-review is founder-only
 founder_only_actions_requested: []   # AGENTS.md section 6.3 - asked, not taken
+review_changes: []        # AGENTS.md section 6.4 - each: { id: "", status: addressed | deferred, commit: "", note: "" }
+deferred_review_items: [] # out of scope, founder-only, or ambiguous - not implemented
 state_yaml_discrepancies: []   # conflicts with repository evidence (AGENTS.md section 1)
 could_not_do: []
 risks_or_findings: []

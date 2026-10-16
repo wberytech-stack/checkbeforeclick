@@ -1,12 +1,15 @@
 # ChatGPT review record. A ChatGPT review decision is not founder approval (AGENTS.md section 3).
-schema_version: 2
+# required_changes are in-gate work directives for Claude Code (AGENTS.md section 6.4),
+# never approval or authority escalation.
+schema_version: 3
 project: cbc
 gate: ""
 reviewed_commit: ""
 date: ""
 recommendation: ""     # recommend_approve | recommend_changes | recommend_reject
 findings: []           # each: { severity: "", file: "", summary: "" }
-required_changes: []
+required_changes: []   # each: { id: "", file: "", change: "", in_scope: true, founder_only: false }
+                       # in_scope must be true and founder_only false, or Claude Code will not act on it
 hard_rule_check:
   production_or_azure_access: ""
   migrations_applied_to_real_db: ""

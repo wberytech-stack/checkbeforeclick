@@ -10,7 +10,7 @@
 #   status: verified | unverified
 # "unverified" = not provable from the repository; never fabricate evidence.
 
-schema_version: 2
+schema_version: 3
 project: cbc
 snapshot_date: 2026-10-16
 
@@ -18,10 +18,10 @@ repository:
   remote: github.com/wberytech-stack/checkbeforeclick
   integration_base:
     branch: master
-    commit: 3e24285
+    commit: b2df476fe0389b4a0829b713b2c726a3e145b183
     matches_origin_master: true
     evidence:
-      - { type: git_log, ref: "git rev-parse master == origin/master == 3e24285 after fetch" }
+      - { type: git_log, ref: "git rev-parse master == origin/master == git ls-remote origin refs/heads/master == b2df476 after fetch" }
     verified_at: 2026-10-16
   github_pr_metadata:
     status: unverified
@@ -42,7 +42,23 @@ merged_prs_on_master:
     evidence: [{ type: commit, ref: 3e24285 }]
     verified_at: 2026-10-16
 
-unmerged_gate_branches:   # none is an ancestor of master; push_state per branch
+merged_branches_on_master:   # founder-approved local --no-ff merges, pushed as a fast-forward 3e24285..b2df476
+  - branch: docs/agent-operating-files
+    branch_head: d26331b
+    merge_commit: e1356b0606a772618e60ab0a20485513db23d7c2
+    parents: [3e24285, d26331b]
+    content: AGENTS.md constitution, .agents/ protocol templates, state.yaml
+    evidence: [{ type: commit, ref: e1356b0 }, { type: git_log, ref: "merge-base --is-ancestor d26331b origin/master" }]
+    verified_at: 2026-10-16
+  - branch: gate-005a-agent-orchestrator-v1
+    branch_head: 2be772e
+    merge_commit: b2df476fe0389b4a0829b713b2c726a3e145b183
+    parents: [e1356b0, 2be772e]
+    content: Gate 005A orchestrator v1 (scripts/orchestrator, fixtures, gate doc)
+    evidence: [{ type: commit, ref: b2df476 }, { type: git_log, ref: "merge-base --is-ancestor 2be772e origin/master" }]
+    verified_at: 2026-10-16
+
+unmerged_gate_branches:   # none is an ancestor of origin/master (b2df476); base and push_state per branch
   - branch: gate-003r-runtime-smoke-validation
     commit: 7ec9019
     origin_commit: f25a02b
@@ -71,11 +87,18 @@ unmerged_gate_branches:   # none is an ancestor of master; push_state per branch
     content: verified TLS in src/server/db/postgres.ts
     evidence: [{ type: branch, ref: gate-003u-postgres-tls-verification }]
     verified_at: 2026-10-16
-  - branch: docs/agent-operating-files
+  - branch: gate-005b-agent-loop-smoke
+    commit: a3971e7
     base: master@3e24285
-    push_state: pushed by this branch's own gate on founder instruction; verify with git ls-remote
-    content: AGENTS.md constitution draft and .agents/ files (this branch)
-    evidence: [{ type: branch, ref: docs/agent-operating-files }]
+    push_state: pushed (origin == local)
+    content: Gate 005B agent loop smoke test doc (docs only)
+    evidence: [{ type: branch, ref: gate-005b-agent-loop-smoke }]
+    verified_at: 2026-10-16
+  - branch: gate-005c-agent-framework-final
+    base: master@b2df476
+    push_state: pushed by this gate's own delegated push; verify with git ls-remote
+    content: AGENTS.md made binding; this state.yaml refresh (this branch)
+    evidence: [{ type: branch, ref: gate-005c-agent-framework-final }]
     verified_at: 2026-10-16
 
 gates:
@@ -126,6 +149,32 @@ gates:
   "003S": { status: local_only_not_executed, evidence: [{ type: commit, ref: b192977 }], verified_at: 2026-10-16 }
   "003T": { status: local_only_unmerged, evidence: [{ type: commit, ref: 291d81f }], verified_at: 2026-10-16 }
   "003U": { status: local_only_unmerged, evidence: [{ type: commit, ref: 7973f0e }], verified_at: 2026-10-16 }
+  "005A":
+    status: merged
+    merge_commit: b2df476
+    tests: "21 passed, 0 failed (scripts/orchestrator/test-orchestrator.ts, re-run on merged master)"
+    evidence: [{ type: commit, ref: b2df476 }, { type: gate_doc, ref: docs/gates/gate-005a-agent-orchestrator-v1.md }]
+    verified_at: 2026-10-16
+  "005B":
+    status: pushed_unmerged_smoke_complete
+    note: >-
+      Branch holds only docs/gates/gate-005b-agent-loop-smoke.md. The loop run
+      (handoff, review request, ChatGPT review, founder_action_required) was
+      performed with uncommitted local files; that outcome is not recorded in
+      any commit.
+    evidence: [{ type: commit, ref: a3971e7 }]
+    loop_outcome: { status: unverified, note: "local evidence only, outside the repository tree (.git/cbc-evidence/gate-005b-agents)" }
+    verified_at: 2026-10-16
+  "005C":
+    status: in_progress_this_branch
+    scope: AGENTS.md binding wording; state.yaml refresh after e1356b0 and b2df476
+    evidence: [{ type: branch, ref: gate-005c-agent-framework-final }]
+    verified_at: 2026-10-16
+  "agent-framework":
+    status: merged
+    note: AGENTS.md is still marked DRAFT on master until Gate 005C merges
+    evidence: [{ type: commit, ref: e1356b0 }, { type: file, ref: "master:AGENTS.md:9" }]
+    verified_at: 2026-10-16
   "004A": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004a-product-wedge-mvp-roadmap.md }], verified_at: 2026-10-15 }
   "004B": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004b-browser-extension-mvp-requirements.md }], verified_at: 2026-10-15 }
   "004C": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004c-dependency-vulnerability-audit-plan.md }], verified_at: 2026-10-15 }
@@ -139,7 +188,7 @@ blockers:
       cloud database connection. Fix exists only on local unmerged branch
       gate-003u-postgres-tls-verification.
     evidence:
-      - { type: file, ref: "master:src/server/db/postgres.ts:29" }
+      - { type: file, ref: "master@b2df476:src/server/db/postgres.ts:29" }
       - { type: commit, ref: 7973f0e }
     verified_at: 2026-10-16
   - id: fast-scan-500-on-master
@@ -148,8 +197,8 @@ blockers:
       unconditionally; with CBC_DATABASE_URL unset every URL/domain scan fails.
       Fix exists only on local unmerged branch gate-003t-fast-scan-persistence-fail-safe.
     evidence:
-      - { type: file, ref: "master:app/api/scan/route.ts:155" }
-      - { type: file, ref: "master:app/api/scan/route.ts:240" }
+      - { type: file, ref: "master@b2df476:app/api/scan/route.ts:155" }
+      - { type: file, ref: "master@b2df476:app/api/scan/route.ts:240" }
       - { type: commit, ref: 7ec9019 }
       - { type: commit, ref: 291d81f }
     verified_at: 2026-10-16
@@ -199,7 +248,13 @@ deferrals:   # do not remediate (AGENTS.md section 13)
     detail: Moderate PostCSS advisory via next@16.2.6 -> postcss@8.4.31. Deferred; do not fix.
     evidence: [{ type: gate_doc, ref: docs/gates/gate-004d-postcss-blocked-remediation-note.md }]
     verified_at: 2026-10-15
-    current_github_alert_state: { status: unverified }
+    current_github_alert_state:
+      status: unverified
+      note: >-
+        A git push on 2026-10-16 printed a GitHub notice of 90 Dependabot alerts
+        on the default branch (6 critical, 42 high, 39 moderate, 3 low), which
+        conflicts with Gate 004D's single deferred alert. Not investigated;
+        not repository evidence.
 
 off_limits:   # do not investigate or touch (AGENTS.md section 17)
   - id: cbcpgadmin-key-vault-mismatch

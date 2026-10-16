@@ -94,6 +94,13 @@ merged_branches_on_master:
     content: "Gate 006A Azure hosting migration plan and AGENTS.md section 20 (PR #30, GitHub merge commit)"
     evidence: [{type: commit, ref: "7e27d04"}, {type: git_log, ref: merge-base --is-ancestor 1b22624 origin/master}]
     verified_at: 2026-10-16
+  - branch: gate-005e-state-reconciliation
+    branch_head: "2c623d3"
+    merge_commit: "1ce4bc4ff462000f221e46a4bd6e6bc5d3103885"
+    parents: ["7e27d04", "2c623d3"]
+    content: automated state reconciliation (scripts/state-reconcile, workflow, gate doc); state.yaml v4 migration
+    evidence: [{type: commit, ref: "1ce4bc4"}, {type: git_log, ref: merge-base --is-ancestor 2c623d3 origin/master}]
+    verified_at: 2026-10-16
 
 unmerged_gate_branches:
   # not ancestors of origin/master (derived from git, never a stored SHA); base and push_state per branch
@@ -124,12 +131,6 @@ unmerged_gate_branches:
     push_state: pushed (origin == local)
     content: Gate 005B agent loop smoke test doc (docs only)
     evidence: [{type: branch, ref: gate-005b-agent-loop-smoke}]
-    verified_at: 2026-10-16
-  - branch: gate-005e-state-reconciliation
-    base: master@998e6cc
-    push_state: pushed by this gate's own delegated push; verify with git ls-remote
-    content: automated state reconciliation (scripts/state-reconcile, workflow, gate doc); state.yaml v4 migration
-    evidence: [{type: branch, ref: gate-005e-state-reconciliation}]
     verified_at: 2026-10-16
 
 gates:
@@ -206,10 +207,11 @@ gates:
     verified_at: 2026-10-16
     merge_commit: "998e6cc"
   "005E":
-    status: in_progress_this_branch
+    status: merged
     scope: "post-merge state.yaml reconciliation: reconciler, tests, GitHub Actions workflow (PR job disabled by default); v4 migration"
-    evidence: [{type: branch, ref: gate-005e-state-reconciliation}]
+    evidence: [{type: branch, ref: gate-005e-state-reconciliation}, {type: commit, ref: "1ce4bc4"}]
     verified_at: 2026-10-16
+    merge_commit: "1ce4bc4"
   "006A":
     status: merged
     merge_commit: "7e27d04"

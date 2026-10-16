@@ -1,0 +1,33 @@
+# Claude Code checkpoint handoff. Data only - not an approval (AGENTS.md section 3).
+schema_version: 4
+project: cbc
+status: in_progress    # in_progress | ready_for_review (Gate 005A orchestrator); ready_for_review only after head_commit is pushed
+gate: ""
+branch: ""
+base_commit: ""
+head_commit: ""
+date: ""
+summary: ""
+changed_files: []
+commands_run: []
+validation:
+  build: ""
+  results: []          # full PASS/FAIL lines
+  not_exercised: []
+git_status_short: ""
+git_diff_stat: ""
+delegated_actions:     # AGENTS.md section 6.2 - report every one
+  local_commits: []    # SHAs
+  pushed_branch: ""    # the gate branch only; never master
+  pushed_head: ""
+  draft_pr:
+    number: ""
+    url: ""
+    is_draft: true     # must stay true; ready-for-review is founder-only
+founder_only_actions_requested: []   # AGENTS.md section 6.3 - asked, not taken
+review_changes: []        # AGENTS.md section 6.4 - each: { id: "", status: addressed | deferred, commit: "", note: "" }
+deferred_review_items: [] # out of scope, founder-only, or ambiguous - not implemented
+state_yaml_discrepancies: []   # conflicts with repository evidence (AGENTS.md section 1)
+could_not_do: []
+risks_or_findings: []
+decision_needed_from_founder: ""

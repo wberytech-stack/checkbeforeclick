@@ -1,0 +1,218 @@
+# CBC project state - built ONLY from repository evidence (AGENTS.md section 16).
+# Precedence: this file ranks below verified repository evidence. If it
+# conflicts with git, source or migrations, the repository wins and the
+# discrepancy must be REPORTED, not silently corrected (AGENTS.md section 1).
+#
+# Evidence convention for important claims:
+#   evidence:
+#     - { type: commit | branch | file | gate_doc | git_log, ref: "<sha | path[:line] | branch>" }
+#   verified_at: YYYY-MM-DD   # date the evidence was last inspected in a session
+#   status: verified | unverified
+# "unverified" = not provable from the repository; never fabricate evidence.
+
+schema_version: 2
+project: cbc
+snapshot_date: 2026-10-16
+
+repository:
+  remote: github.com/wberytech-stack/checkbeforeclick
+  integration_base:
+    branch: master
+    commit: 3e24285
+    matches_origin_master: true
+    evidence:
+      - { type: git_log, ref: "git rev-parse master == origin/master == 3e24285 after fetch" }
+    verified_at: 2026-10-16
+  github_pr_metadata:
+    status: unverified
+    note: gh CLI unavailable; PR facts below come from merge commits only
+
+merged_prs_on_master:
+  - pr: 23
+    gate: 003P
+    evidence: [{ type: commit, ref: 98e3761 }]
+    verified_at: 2026-10-16
+  - pr: 24
+    gate: 003Q
+    evidence: [{ type: commit, ref: f82edbd }]
+    verified_at: 2026-10-16
+  - pr: 25
+    gate: 003R
+    scope: runbook only
+    evidence: [{ type: commit, ref: 3e24285 }]
+    verified_at: 2026-10-16
+
+unmerged_gate_branches:   # none is an ancestor of master; push_state per branch
+  - branch: gate-003r-runtime-smoke-validation
+    commit: 7ec9019
+    origin_commit: f25a02b
+    push_state: origin behind local
+    content: Gate 003R disposable validation results and findings (docs)
+    evidence: [{ type: branch, ref: gate-003r-runtime-smoke-validation }]
+    verified_at: 2026-10-16
+  - branch: gate-003s-migration-004-apply-runbook
+    commit: b192977
+    base: gate-003r-runtime-smoke-validation
+    push_state: local only
+    content: Gate 003S migration 004 apply runbook (docs only, not executed)
+    evidence: [{ type: branch, ref: gate-003s-migration-004-apply-runbook }]
+    verified_at: 2026-10-16
+  - branch: gate-003t-fast-scan-persistence-fail-safe
+    commit: 291d81f
+    base: master@3e24285
+    push_state: local only
+    content: persistence helper opt-in via CBC_FAST_SCAN_PERSISTENCE_HELPER=enabled
+    evidence: [{ type: branch, ref: gate-003t-fast-scan-persistence-fail-safe }]
+    verified_at: 2026-10-16
+  - branch: gate-003u-postgres-tls-verification
+    commit: 7973f0e
+    base: master@3e24285
+    push_state: local only
+    content: verified TLS in src/server/db/postgres.ts
+    evidence: [{ type: branch, ref: gate-003u-postgres-tls-verification }]
+    verified_at: 2026-10-16
+  - branch: docs/agent-operating-files
+    base: master@3e24285
+    push_state: pushed by this branch's own gate on founder instruction; verify with git ls-remote
+    content: AGENTS.md constitution draft and .agents/ files (this branch)
+    evidence: [{ type: branch, ref: docs/agent-operating-files }]
+    verified_at: 2026-10-16
+
+gates:
+  "002":
+    status: applied_to_cbc_prod
+    evidence: [{ type: file, ref: docs/azure/gate-002-production-apply-results.md }]
+    verified_at: 2026-10-15
+  "003A":
+    status: runbook_only
+    note: cbc_app not created
+    evidence: [{ type: file, ref: docs/azure/gate-003-runtime-role-runbook.md }]
+    verified_at: 2026-10-15
+  "003D":
+    status: design_and_stub_migration_on_master
+    evidence:
+      - { type: file, ref: docs/azure/gate-003d-controlled-fast-path-function-design.md }
+      - { type: file, ref: infra/db/migrations/003_fast_path_function.sql }
+    verified_at: 2026-10-15
+  "003E": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-003e-runtime-integration-plan.md }], verified_at: 2026-10-15 }
+  "003F": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-003f-sql-transaction-path-design.md }], verified_at: 2026-10-15 }
+  "003G": { status: implemented_on_master, evidence: [{ type: file, ref: src/server/db/postgres.ts }, { type: commit, ref: 6740a4b }], verified_at: 2026-10-15 }
+  "003H": { status: validated_disposable, evidence: [{ type: gate_doc, ref: docs/gates/gate-003h-postgres-helper-disposable-validation.md }], verified_at: 2026-10-15 }
+  "003I": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-003i-runtime-scan-write-integration-plan.md }], verified_at: 2026-10-15 }
+  "003J": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-003j-runtime-scan-write-discovery.md }], verified_at: 2026-10-15 }
+  "003K": { status: decision_on_master, note: Option C, evidence: [{ type: gate_doc, ref: "docs/gates/gate-003k-fast-scan-persistence-scope-decision.md:74" }], verified_at: 2026-10-16 }
+  "003L": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-003l-db-function-write-expansion-plan.md }], verified_at: 2026-10-15 }
+  "003M":
+    status: draft_migration_on_master
+    evidence: [{ type: file, ref: infra/db/migrations/004_fast_path_function_write_expansion.sql }]
+    verified_at: 2026-10-15
+  "003N":
+    status: validated_disposable
+    tests: T01-T41
+    evidence: [{ type: gate_doc, ref: "docs/gates/gate-003n-disposable-db-validation-expanded-function.md:44" }]
+    verified_at: 2026-10-16
+  "003O":
+    status: plan_on_master
+    note: section 11 sequencing (apply 004 before route wiring) was not followed by 003Q
+    evidence: [{ type: gate_doc, ref: docs/gates/gate-003o-runtime-route-wiring-plan.md }]
+    verified_at: 2026-10-15
+  "003P": { status: merged, pr: 23, evidence: [{ type: commit, ref: 98e3761 }], verified_at: 2026-10-16 }
+  "003Q": { status: merged, pr: 24, evidence: [{ type: commit, ref: f82edbd }], verified_at: 2026-10-16 }
+  "003R":
+    status: runbook_merged_results_local_only
+    note: authenticated runtime scenarios 1-4 not exercised; gate NOT passed
+    evidence: [{ type: commit, ref: 3e24285 }, { type: commit, ref: 7ec9019 }]
+    verified_at: 2026-10-16
+  "003S": { status: local_only_not_executed, evidence: [{ type: commit, ref: b192977 }], verified_at: 2026-10-16 }
+  "003T": { status: local_only_unmerged, evidence: [{ type: commit, ref: 291d81f }], verified_at: 2026-10-16 }
+  "003U": { status: local_only_unmerged, evidence: [{ type: commit, ref: 7973f0e }], verified_at: 2026-10-16 }
+  "004A": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004a-product-wedge-mvp-roadmap.md }], verified_at: 2026-10-15 }
+  "004B": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004b-browser-extension-mvp-requirements.md }], verified_at: 2026-10-15 }
+  "004C": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004c-dependency-vulnerability-audit-plan.md }], verified_at: 2026-10-15 }
+  "004D": { status: docs_on_master, evidence: [{ type: gate_doc, ref: docs/gates/gate-004d-postcss-blocked-remediation-note.md }], verified_at: 2026-10-15 }
+
+blockers:
+  - id: tls-unverified-on-master
+    detail: >-
+      On master, src/server/db/postgres.ts uses ssl { rejectUnauthorized: false }
+      whenever CBC_DATABASE_SSL != "false". Verified TLS is required before any
+      cloud database connection. Fix exists only on local unmerged branch
+      gate-003u-postgres-tls-verification.
+    evidence:
+      - { type: file, ref: "master:src/server/db/postgres.ts:29" }
+      - { type: commit, ref: 7973f0e }
+    verified_at: 2026-10-16
+  - id: fast-scan-500-on-master
+    detail: >-
+      On master, the /api/scan fast path calls recordFastScanResult
+      unconditionally; with CBC_DATABASE_URL unset every URL/domain scan fails.
+      Fix exists only on local unmerged branch gate-003t-fast-scan-persistence-fail-safe.
+    evidence:
+      - { type: file, ref: "master:app/api/scan/route.ts:155" }
+      - { type: file, ref: "master:app/api/scan/route.ts:240" }
+      - { type: commit, ref: 7ec9019 }
+      - { type: commit, ref: 291d81f }
+    verified_at: 2026-10-16
+    deployed_impact: { status: unverified }
+  - id: migration-004-not-applied
+    detail: Migration 004 is not applied to any real database.
+    evidence:
+      - { type: gate_doc, ref: docs/gates/gate-003o-runtime-route-wiring-plan.md }
+      - { type: gate_doc, ref: docs/gates/gate-003p-scan-result-persistence-helper.md }
+    verified_at: 2026-10-15
+    live_database_state: { status: unverified }
+  - id: migration-003-on-cbc-prod
+    detail: No repository record of migration 003 being applied to cbc_prod.
+    evidence: []
+    live_database_state: { status: unverified }
+  - id: runtime-env-unset
+    detail: CBC_DATABASE_URL is not set and cbc_app does not exist in any real environment.
+    evidence:
+      - { type: gate_doc, ref: docs/gates/gate-003o-runtime-route-wiring-plan.md }
+      - { type: file, ref: docs/azure/gate-003-runtime-role-runbook.md }
+    verified_at: 2026-10-15
+    live_environment_state: { status: unverified }
+  - id: supabase-authenticated-e2e-outstanding
+    detail: Real Supabase-authenticated end-to-end validation of /api/scan (Gate 003R scenarios 1-4) has not been run.
+    evidence: [{ type: commit, ref: 7ec9019 }]
+    verified_at: 2026-10-16
+  - id: split-database-path
+    detail: >-
+      Scan lifecycle uses Supabase; the terminal write helper uses
+      CBC_DATABASE_URL. Must be resolved (Gate 003S decision D1) before
+      application activation.
+    evidence:
+      - { type: file, ref: lib/data/index.ts }
+      - { type: file, ref: app/api/scan/route.ts }
+      - { type: file, ref: src/server/scan/recordFastScanResult.ts }
+      - { type: commit, ref: b192977 }
+    verified_at: 2026-10-15
+  - id: memberships-precondition
+    detail: Migration 004 requires a memberships row; getUserOrgContext reads users.organization_id only (Gate 003S decision D4).
+    evidence:
+      - { type: file, ref: infra/db/migrations/004_fast_path_function_write_expansion.sql }
+      - { type: file, ref: lib/data/index.ts }
+    verified_at: 2026-10-15
+
+deferrals:   # do not remediate (AGENTS.md section 13)
+  - id: postcss-alert
+    detail: Moderate PostCSS advisory via next@16.2.6 -> postcss@8.4.31. Deferred; do not fix.
+    evidence: [{ type: gate_doc, ref: docs/gates/gate-004d-postcss-blocked-remediation-note.md }]
+    verified_at: 2026-10-15
+    current_github_alert_state: { status: unverified }
+
+off_limits:   # do not investigate or touch (AGENTS.md section 17)
+  - id: cbcpgadmin-key-vault-mismatch
+    detail: cbcpgadmin password vs Key Vault secret mismatch on pg-cbc-prod-cc-001.
+    source: founder instruction
+    evidence:
+      - { type: gate_doc, ref: docs/gates/gate-003e-runtime-integration-plan.md }
+      - { type: gate_doc, ref: docs/gates/gate-003f-sql-transaction-path-design.md }
+    verified_at: 2026-10-15
+
+unverified:
+  - GitHub PR metadata, review state and open PRs (gh unavailable; only merge commits checked)
+  - Current Dependabot alert state on GitHub
+  - Live state of cbc_prod (migrations applied, roles) beyond docs/azure records
+  - What, if anything, is currently deployed from master
+  - Node version of any deployed runtime (no Dockerfile or engines pin in the repository)

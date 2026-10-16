@@ -1,0 +1,153 @@
+# Gate 005E - post-merge reconciliation of .agents/state.yaml.
+#
+# check   : read-only. Runs on every push to master (i.e. after every merge) and
+#           on manual dispatch. Runs the reconciler and orchestrator test suites,
+#           then `cli.ts --check` against origin refs. Fails on ambiguous or
+#           invalid state; warns when state is stale. Never writes anything.
+#
+# propose : opens a DRAFT housekeeping PR with the reconciled state.yaml.
+#           DISABLED unless the repository variable CBC_STATE_RECONCILE_PR is
+#           exactly "enabled" (a founder-only setting; see Gate 005E doc).
+#           Pushes only automation/state-reconcile/<content-hash>, never master.
+#           Never merges, approves, marks ready, force-pushes or deletes.
+#
+# Loop safety: the reconciled state.yaml never stores master's SHA, and the
+# housekeeping branch is not tracked in state.yaml, so merging a housekeeping
+# PR yields a consistent state and the next run proposes nothing.
+name: state-reconcile
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: state-reconcile
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      result: ${{ steps.reconcile.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all branch refs (read-only)
+        run: git fetch --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install from lockfile (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Reconciler tests
+        run: npx --yes tsx@4.23.0 scripts/state-reconcile/test-reconcile.ts
+
+      - name: Orchestrator tests
+        run: npx --yes tsx@4.23.0 scripts/orchestrator/test-orchestrator.ts
+
+      - name: Check .agents/state.yaml against git
+        id: reconcile
+        shell: bash
+        run: |
+          set +e
+          npx --yes tsx@4.23.0 scripts/state-reconcile/cli.ts --check --report "$RUNNER_TEMP/reconcile-report.json"
+          code=$?
+          set -e
+          case "$code" in
+            0) echo "result=consistent" >> "$GITHUB_OUTPUT" ;;
+            1) echo "result=stale" >> "$GITHUB_OUTPUT"
+               echo "::warning title=state.yaml stale::.agents/state.yaml does not match git; see the reconcile-report artifact" ;;
+            *) echo "result=error" >> "$GITHUB_OUTPUT"
+               echo "::error title=state.yaml reconciliation failed::ambiguous or invalid state; no PR will be proposed"
+               exit 1 ;;
+          esac
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reconcile-report
+          path: ${{ runner.temp }}/reconcile-report.json
+          if-no-files-found: ignore
+
+  propose:
+    needs: check
+    if: >-
+      needs.check.outputs.result == 'stale' &&
+      vars.CBC_STATE_RECONCILE_PR == 'enabled' &&
+      github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Fetch all branch refs
+        run: git fetch --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install from lockfile (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Write reconciled state.yaml
+        run: npx --yes tsx@4.23.0 scripts/state-reconcile/cli.ts --write --report "$RUNNER_TEMP/reconcile-report.json"
+
+      - name: Open draft housekeeping PR (idempotent)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- .agents/state.yaml; then
+            echo "Nothing to change."; exit 0
+          fi
+          changed="$(git status --porcelain | awk '{print $2}' | sort -u)"
+          if [ "$changed" != ".agents/state.yaml" ]; then
+            echo "::error::unexpected changes besides .agents/state.yaml: $changed"; exit 1
+          fi
+          key="$(git hash-object .agents/state.yaml | cut -c1-12)"
+          branch="automation/state-reconcile/${key}"
+          if git ls-remote --exit-code --heads origin "refs/heads/${branch}" >/dev/null; then
+            echo "Already proposed on ${branch}; nothing to do."; exit 0
+          fi
+          node -e '
+            const r = require(process.argv[1]);
+            const lines = [
+              "Automated housekeeping from the Gate 005E state-reconcile workflow.",
+              "",
+              "This is a DRAFT. It is not approval of anything. Only the founder may mark it ready or merge it (AGENTS.md section 6.3).",
+              "",
+              "Triggered by master at `" + process.env.GITHUB_SHA + "`.",
+              "",
+              "Changes:",
+              ...r.changes.map((c) => "- " + c),
+            ];
+            require("fs").writeFileSync(process.argv[2], lines.join("\n") + "\n");
+          ' "$RUNNER_TEMP/reconcile-report.json" "$RUNNER_TEMP/pr-body.md"
+          git switch -c "${branch}"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore(state): reconcile .agents/state.yaml after ${GITHUB_SHA::7}" -- .agents/state.yaml
+          git push origin "refs/heads/${branch}:refs/heads/${branch}"
+          gh pr create --draft --base master --head "${branch}" \
+            --title "chore(state): reconcile .agents/state.yaml after ${GITHUB_SHA::7}" \
+            --body-file "$RUNNER_TEMP/pr-body.md"

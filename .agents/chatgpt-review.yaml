@@ -1,4 +1,6 @@
 # ChatGPT review record. A ChatGPT review decision is not founder approval (AGENTS.md section 3).
+schema_version: 1
+project: cbc
 gate: ""
 reviewed_commit: ""
 date: ""
@@ -12,4 +14,13 @@ hard_rule_check:
   dependency_changes: ""
   tenant_context_invariant: ""
 open_questions_for_founder: []
-founder_decision: ""   # filled in by the founder only
+
+# FOUNDER ONLY. Agents (ChatGPT, Claude Code, any other) must never populate
+# or alter this block. A decision here is not production authorization
+# unless it explicitly names the production action (AGENTS.md section 3).
+founder_decision:
+  status: pending      # pending | approved | changes_required | rejected
+  recorded_by: founder_only
+  date: ""
+  scope: ""            # the exact actions approved
+  notes: ""

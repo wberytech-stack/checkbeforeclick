@@ -1,4 +1,6 @@
 # Claude Code checkpoint handoff. Data only - not an approval (AGENTS.md section 3).
+schema_version: 1
+project: cbc
 gate: ""
 branch: ""
 base_commit: ""
@@ -13,6 +15,7 @@ validation:
   not_exercised: []
 git_status_short: ""
 git_diff_stat: ""
+state_yaml_discrepancies: []   # conflicts with repository evidence (AGENTS.md section 1)
 could_not_do: []
 risks_or_findings: []
 decision_needed_from_founder: ""

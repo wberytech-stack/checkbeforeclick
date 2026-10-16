@@ -26,13 +26,13 @@ implementation gate (005G) lands the code.
 | D1 | Reviewer credential | Exactly one key, `CBC_REVIEWER_API_KEY`, stored as a GitHub Actions secret in an Environment restricted to `master`. It is consumed only by the reviewer step and never exists on a developer machine (`AGENTS.md` section 11) |
 | D2 | Execution environment | **GitHub Actions**, using workflows defined on `master` only (section 5) |
 | D3 | Review transport | **The Gate 005D review-file contract**, delivered on an append-only orphan branch, `automation/reviews`, and mirrored as an Actions artifact for audit. **No git notes.** See section 2 |
-| D4 | Reviewer identity | An **explicitly approved OpenAI API model** operating under the ChatGPT reviewer policy (`.agents/chatgpt.md`). It is not an interactive ChatGPT session. Its exact model ID is recorded before live activation (section 3) |
+| D4 | Reviewer identity | An **explicitly approved OpenAI API model** operating under the ChatGPT reviewer policy (`.agents/chatgpt.md`). It is not an interactive ChatGPT session. A validated automated review may only issue section 6.4 in-gate work directives inside an already founder-approved gate, and has no authority outside that scope. Its exact model ID is recorded before live activation (section 3) |
 | D5 | Cost and rounds | A **$20 monthly spending target**, not a guaranteed cap. At most **3 review rounds per gate**, **1 model call per commit**, and bounded input and output tokens. A workflow-level stop fails closed whenever the allowance cannot be verified (section 4) |
 | D6 | Data egress | Only the Gate 005D evidence (request, policy text, diff, changed text files), after the forbidden-path and secret-suspect checks pass. Before activation, the founder confirms the OpenAI project's data-retention terms |
 | D7 | Automation actor | `github-actions[bot]` under `AGENTS.md` section 6.6. It may write only `automation/reviews` and `automation/state-reconcile/*`, and open draft PRs. It never merges, marks ready, approves, deletes, force-pushes, or deploys |
 | D8 | Draft PRs | Opened by the automation actor from a **scheduled** workflow on `master`, not from a branch-triggered workflow (section 5) |
 | D9 | Vercel | A safe deployment policy is **designed here and tested before** any automated correction loop is enabled. No Vercel setting is changed by this gate, and no preview is assumed harmless (section 6) |
-| D10 | Merge method | `--no-ff` merge commits into `master` only. Every merge is a production deployment (section 6.1) |
+| D10 | Merge method | `--no-ff` merge commits into `master` only. Approving a merge also approves the automatic Vercel production deployment it causes, and nothing else (section 6.1) |
 | D11 | Review-file tracking | Consistent with D3: `.agents/chatgpt-review.yaml` stays a tracked **template** on `master`, never modified by agents or the bot. Delivered reviews are read from `automation/reviews` into local, uncommitted `.agents/outbox/` files |
 | D12 | Alternate-base gates | Manual review only (Gate 005D section 10a) |
 | D13 | `yaml` package | Becomes a direct devDependency in Gate 005G, as a founder-approved dependency change in that gate |
@@ -105,8 +105,12 @@ its session, works like this:
   It operates under `.agents/chatgpt.md` and the `AGENTS.md` hard rules
   read at `policy_commit` (Gate 005D R1).
 - It is **not** an interactive ChatGPT session. Its output is accepted only
-  through Gate 005D validation, and it has exactly the standing and limits
-  of a ChatGPT review under section 6.4.
+  through Gate 005D validation.
+- A validated automated review may only issue section 6.4 in-gate work
+  directives (`required_changes`), strictly inside a gate the founder has
+  already approved. It has no authority outside that scope: it cannot
+  approve, authorize, start, or expand anything, and its recommendation
+  always ends at `founder_action_required`.
 - **The exact model ID** must be recorded before live activation. That
   happens in a docs-only gate, in the committed automation config
   (section 7.3, field `reviewer.model_id`).
@@ -196,9 +200,14 @@ Supabase project, the staging service-role key, an Inngest branch
 environment, and the shared production-quota Anthropic and Google keys.
 Therefore:
 
-- **Every founder-approved merge into `master` deploys production,**
-  including docs-only and script-only merges. `AGENTS.md` sections 6.3 and 8
-  now require merge approvals to acknowledge this.
+- **Every founder-approved merge into `master` causes an automatic Vercel
+  production deployment,** including docs-only and script-only merges.
+- Under `AGENTS.md` sections 3, 6.3, and 8, approving a merge into
+  `master` **also approves that automatic deployment**, and the approval
+  must acknowledge it.
+- It approves **nothing else**. Manual deploys, redeploys, promotions,
+  rollbacks, production configuration changes, and any production, Azure,
+  or Key Vault access each still need separate founder approval.
 - **Unverified:** agents have no Vercel access, so it is unverified whether
   the earlier merges (`e1356b0`, `b2df476`, `cbddac2`, `998e6cc`) produced
   production deployments. If they did, each redeployed `master`'s

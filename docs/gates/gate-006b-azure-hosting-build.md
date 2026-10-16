@@ -67,6 +67,23 @@ Branch `gate-006b-azure-hosting-build`, cut from master `c23d2c5`.
   an explicit `NEXT_PUBLIC_APP_URL`. The workflow now **requires** it as an
   https origin for both environments and refuses to build otherwise. The proxy
   and page redirects are relative and unaffected. App code was not changed.
+- **Open finding, needs a founder decision: sign-out redirects to the bind
+  address.** `app/auth/signout/route.ts` returns
+  `NextResponse.redirect(new URL("/login", request.url))`. In the container,
+  `request.url` is `http(s)://0.0.0.0:3000/…`, so sign-out (smoke S11) would
+  send users to `https://0.0.0.0:3000/login`. Reproduced on the 0176270 image
+  with proxy headers. `NEXT_PUBLIC_APP_URL` does not affect this route, and the
+  only Next override is a private, undocumented variable
+  (`__NEXT_PRIVATE_ORIGIN`), so there is no supported hosting-level fix. The fix
+  is a one-line **app-code** change (redirect relative to
+  `NEXT_PUBLIC_APP_URL ?? request.url`, which keeps Vercel's behavior). That is
+  outside 006B's approved scope, so it is **not** implemented here.
+- **Inngest serve origin pinned.** `inngest/next` 4.4.0 builds the URL it
+  registers from the `Host` header and the request protocol, with
+  `INNGEST_SERVE_ORIGIN` as an override. Both environments now set it
+  (staging: the `stagingPublicOrigin` output; production:
+  `https://checkbeforeclick.com`, matching Gate 006A section 8.5), so a sync
+  can never register an internal or `http` URL.
 - **The workflow cannot read GitHub Environment variables in the
   secret-free build job.** Build-time public values are therefore
   **repository** variables with `CBC_STG_` / `CBC_PROD_` prefixes. Azure IDs
@@ -145,6 +162,15 @@ PR #32 review fixes (rerun):
 | ESLint, `tsc --strict` on scripts, `npm run build`, `git diff --check` | Pass |
 | Local containers and images | All removed |
 
+Checkpoint 3 (read-only probe of the 0176270 image, `APP_URL=https://stg.example.test`, `Host`/`X-Forwarded-Host`/`X-Forwarded-Proto: https` headers):
+
+| Check | Result |
+| --- | --- |
+| `GET /auth/callback` | 307 to `https://stg.example.test/login` (correct) |
+| `GET /auth/signout` | 307 to **`https://0.0.0.0:3000/login`** (open finding above) |
+| `GET /api/inngest` without Inngest keys | `{"code":"internal_server_error"}`; expected with no signing key in a production build, to be exercised on staging (S8) |
+| Probe container and image | Removed |
+
 ### Still requires Azure or founder validation (not done by Claude)
 
 | Item | Why it is unverified |
@@ -214,6 +240,9 @@ group. Do not create a client secret.
   `CBC_PROD_NEXT_PUBLIC_SUPABASE_ANON_KEY`, and the **required**
   `CBC_STG_NEXT_PUBLIC_APP_URL` (the `stagingPublicOrigin` output) and
   `CBC_PROD_NEXT_PUBLIC_APP_URL` (`https://checkbeforeclick.com`).
+- Replace `REPLACE_WITH_STAGING_PUBLIC_ORIGIN_FROM_PHASE_A_OUTPUT`
+  (`INNGEST_SERVE_ORIGIN`) in `main.parameters.json` with the same origin
+  before Phase B.
 - In the **staging** Supabase project, add `<stagingPublicOrigin>/auth/callback`
   to the allowed redirect URLs.
 - **Decision for you:** with `https://checkbeforeclick.com` baked into the

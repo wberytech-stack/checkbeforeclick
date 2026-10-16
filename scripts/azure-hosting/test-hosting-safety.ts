@@ -160,6 +160,10 @@ for (const k of ["stagingSecretNames", "productionSecretNames"]) {
     names.length === 4 && names.every((n) => /^[a-z0-9-]{3,127}$/.test(n)), names.join(","));
 }
 for (const k of ["stagingPlainEnv", "productionPlainEnv"]) {
+  // Inngest derives its registered URL from the Host header and request protocol;
+  // pin it so a sync from inside the container can never register an internal URL.
+  const serveOrigin = ((pv(k) ?? []) as Array<{ name: string; value: string }>).find((e) => e.name === "INNGEST_SERVE_ORIGIN");
+  check(`bicep params: ${k} pins INNGEST_SERVE_ORIGIN`, !!serveOrigin && /^(https:\/\/|REPLACE_WITH_)/.test(serveOrigin.value));
   const names = ((pv(k) ?? []) as Array<{ name: string }>).map((e) => e.name);
   check(`bicep params: ${k} holds no secret-named variables`,
     names.every((n: string) => !/(KEY|SECRET|PASSWORD|TOKEN)/.test(n)), names.join(","));

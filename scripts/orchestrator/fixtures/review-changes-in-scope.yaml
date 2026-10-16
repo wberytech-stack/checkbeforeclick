@@ -1,0 +1,26 @@
+# Gate 005A orchestrator fixture - synthetic ChatGPT review.
+schema_version: 3
+project: cbc
+gate: "999Z"
+reviewed_commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+date: "2026-10-16"
+recommendation: "recommend_changes"
+findings: []
+required_changes:
+  - { id: "R1", file: "docs/gates/gate-999z-fixture.md", change: "Fix the typo in section 2.", in_scope: true, founder_only: false }
+  - { id: "R2", file: "scripts/example.ts", change: "Add a null check before reading the field.", in_scope: true, founder_only: false }
+hard_rule_check:
+  production_or_azure_access: "none"
+  migrations_applied_to_real_db: "none"
+  secrets_exposed: "none"
+  dependency_changes: "none"
+  tenant_context_invariant: "n/a"
+  delegated_actions_within_scope: "yes"
+  founder_only_actions_taken: "none"
+open_questions_for_founder: []
+founder_decision:
+  status: pending
+  recorded_by: founder_only
+  date: ""
+  scope: ""
+  notes: ""

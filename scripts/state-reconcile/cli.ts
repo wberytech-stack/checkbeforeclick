@@ -2,8 +2,11 @@
  * Gate 005E - state.yaml reconciliation CLI (read-only git; writes only the
  * state file in --write mode; never commits, pushes, or calls any API).
  *
- *   npx --yes tsx@4.23.0 scripts/state-reconcile/cli.ts --check
- *   npx --yes tsx@4.23.0 scripts/state-reconcile/cli.ts --write
+ *   node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/state-reconcile/cli.ts --check
+ *   node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/state-reconcile/cli.ts --write
+ *
+ * Runs with Node's built-in TypeScript support (Node >= 22.18; CI pins 24.14.0).
+ * No tsx or other runner is fetched: only the Node runtime and lockfile packages.
  *
  * Options:
  *   --state <file>        default .agents/state.yaml
@@ -21,7 +24,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
-import { apply, plan, render, type GitView } from "./reconcile";
+import { apply, plan, render, type GitView } from "./reconcile.ts";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);

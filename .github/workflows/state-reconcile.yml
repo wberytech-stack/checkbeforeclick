@@ -11,6 +11,10 @@
 #           Pushes only automation/state-reconcile/<content-hash>, never master.
 #           Never merges, approves, marks ready, force-pushes or deletes.
 #
+# Execution: scripts run with Node's built-in TypeScript support on a pinned
+# Node (24.14.0). Nothing executable is fetched outside package-lock.json:
+# no `npx <package>`; `npm ci --ignore-scripts` installs the lockfile only.
+#
 # Loop safety: the reconciled state.yaml never stores master's SHA, and the
 # housekeeping branch is not tracked in state.yaml, so merging a housekeeping
 # PR yields a consistent state and the next run proposes nothing.
@@ -45,23 +49,23 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "24.14.0"
 
       - name: Install from lockfile (no lifecycle scripts)
         run: npm ci --ignore-scripts
 
       - name: Reconciler tests
-        run: npx --yes tsx@4.23.0 scripts/state-reconcile/test-reconcile.ts
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/state-reconcile/test-reconcile.ts
 
       - name: Orchestrator tests
-        run: npx --yes tsx@4.23.0 scripts/orchestrator/test-orchestrator.ts
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/orchestrator/test-orchestrator.ts
 
       - name: Check .agents/state.yaml against git
         id: reconcile
         shell: bash
         run: |
           set +e
-          npx --yes tsx@4.23.0 scripts/state-reconcile/cli.ts --check --report "$RUNNER_TEMP/reconcile-report.json"
+          node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/state-reconcile/cli.ts --check --report "$RUNNER_TEMP/reconcile-report.json"
           code=$?
           set -e
           case "$code" in
@@ -103,13 +107,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "24.14.0"
 
       - name: Install from lockfile (no lifecycle scripts)
         run: npm ci --ignore-scripts
 
       - name: Write reconciled state.yaml
-        run: npx --yes tsx@4.23.0 scripts/state-reconcile/cli.ts --write --report "$RUNNER_TEMP/reconcile-report.json"
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/state-reconcile/cli.ts --write --report "$RUNNER_TEMP/reconcile-report.json"
 
       - name: Open draft housekeeping PR (idempotent)
         shell: bash

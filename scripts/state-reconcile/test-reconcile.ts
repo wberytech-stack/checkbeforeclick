@@ -4,7 +4,10 @@
  * OS temp dir, fills fixture YAML templates with its SHAs, and drives the
  * real CLI. No network, no remote, no writes outside the temp dir.
  *
- *   npx --yes tsx@4.23.0 scripts/state-reconcile/test-reconcile.ts
+ *   node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/state-reconcile/test-reconcile.ts
+ *
+ * Runs with Node's built-in TypeScript support (Node >= 22.18; CI pins 24.14.0).
+ * No tsx or other runner is fetched: only the Node runtime and lockfile packages.
  *
  * The temp repo uses an isolated, empty git config (GIT_CONFIG_GLOBAL /
  * GIT_CONFIG_NOSYSTEM) so results do not depend on the developer's settings.

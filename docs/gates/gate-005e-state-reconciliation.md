@@ -127,6 +127,42 @@ Exit codes:
 - `1`: `--check` found stale state;
 - `2`: invalid, ambiguous, or an environment error.
 
+## Execution model (review fix: lockfile-backed, no fetched runner)
+
+The first version of this gate ran the scripts with
+`npx --yes tsx@4.23.0`. `tsx` is **not** in `package-lock.json`, so every CI
+run would have downloaded and executed a package from the npm registry
+without the lockfile's integrity check. This is now replaced:
+
+- **Runner:** `node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON <script>.ts`,
+  using Node's built-in TypeScript type stripping.
+  - The scripts already use only erasable TypeScript syntax.
+  - Relative imports now name the `.ts` file (`./reconcile.ts`,
+    `./orchestrator.ts`). Those are the only code changes, one line in
+    each CLI.
+- **Pinned runtime:** CI uses `actions/setup-node` with
+  `node-version: "24.14.0"`, the same version used for local validation.
+  Locally, Node 22.18 or later is required.
+- **Packages:** `npm ci --ignore-scripts` installs exactly the lockfile. The
+  `yaml` parser comes from there; it is still a transitive dependency, as
+  before.
+- **No `package.json` or `package-lock.json` change.** The flag only
+  silences Node's notice that the root `package.json` has no `"type"`
+  field. Adding `"type": "module"` would be a `package.json` change, so it
+  was not made.
+- **Rejected alternative:** compiling with the lockfile's `typescript`
+  (`tsc`). It works, but adds a build step and changes test paths, for no
+  security gain over the built-in runner.
+- **Validation after the change** (Node v24.14.0, no `tsx`):
+  - reconciler tests: 16 passed, 0 failed;
+  - orchestrator tests: 21 passed, 0 failed;
+  - real `cli.ts --check` against `origin`: `consistent`, with empty
+    stderr;
+  - no warnings;
+  - strict `tsc --erasableSyntaxOnly --allowImportingTsExtensions`
+    (nodenext) passes on all six scripts, which confirms they stay within
+    what Node can run natively.
+
 ## Workflow (`.github/workflows/state-reconcile.yml`)
 
 - **Triggers:** `push` to `master` (every completed merge) and
@@ -136,7 +172,8 @@ Exit codes:
   - Fetches all branch refs.
   - Runs `npm ci --ignore-scripts` (the lockfile; no dependency change).
   - Runs the reconciler tests and the orchestrator tests, then
-    `cli.ts --check`.
+    `cli.ts --check`, all with `node` on the pinned runtime (see
+    "Execution model").
   - Results: `consistent` is OK. `stale` is a warning annotation.
     Ambiguous or invalid **fails the job**, and nothing is proposed.
   - The JSON report is uploaded as an artifact.

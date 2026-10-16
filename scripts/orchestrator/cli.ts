@@ -1,8 +1,9 @@
 /**
  * Gate 005A - Orchestrator v1 CLI (local only, no AI calls, no writes to git).
  *
- * Usage (from repo root):
- *   npx --yes tsx@4.23.0 scripts/orchestrator/cli.ts \
+ * Usage (from repo root). Runs with Node's built-in TypeScript support
+ * (Node >= 22.18; CI pins 24.14.0); no tsx or other runner is fetched.
+ *   node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/orchestrator/cli.ts \
  *     [--handoff .agents/claude-handoff.yaml] [--review .agents/chatgpt-review.yaml] \
  *     [--out <dir>] [--remote-fixture <file.json>]
  *
@@ -20,7 +21,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
-import { evaluate, type RemoteView } from "./orchestrator";
+import { evaluate, type RemoteView } from "./orchestrator.ts";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);

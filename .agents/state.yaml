@@ -38,9 +38,19 @@ merged_prs_on_master:
     scope: runbook only
     evidence: [{type: commit, ref: "3e24285"}]
     verified_at: 2026-10-16
+  - pr: 29
+    gate: 003T
+    merge_method: squash
+    evidence: [{type: commit, ref: "03ace4a"}]
+    verified_at: 2026-10-16
+  - pr: 30
+    gate: 006A
+    evidence: [{type: commit, ref: "7e27d04"}]
+    verified_at: 2026-10-16
 
 merged_branches_on_master:
-  # founder-approved local --no-ff merges, each pushed as a fast-forward (3e24285..b2df476, b2df476..cbddac2)
+  # founder-approved merges. merge_method absent = merge commit (first-parent + second parent == branch_head);
+  # merge_method: squash = single-parent commit whose patch-id equals the branch's own changes (never auto-attributed)
   - branch: docs/agent-operating-files
     branch_head: "d26331b"
     merge_commit: "e1356b0606a772618e60ab0a20485513db23d7c2"
@@ -69,6 +79,21 @@ merged_branches_on_master:
     content: reviewer adapter design doc; this state.yaml refresh (this branch)
     evidence: [{type: commit, ref: "998e6cc"}, {type: git_log, ref: merge-base --is-ancestor 8946c2b origin/master}]
     verified_at: 2026-10-16
+  - branch: gate-003t-fast-scan-persistence-fail-safe
+    merge_method: squash
+    branch_head: "291d81f"
+    merge_commit: "03ace4a1e2a2e326be7baa6871b38898d0ead0bc"
+    parents: ["998e6cc"]
+    content: "Gate 003T fast-scan fail-safe (PR #29, GitHub squash merge; contents identical to the reviewed 291d81f)"
+    evidence: [{type: commit, ref: "03ace4a"}, {type: git_log, ref: patch-id(998e6cc..03ace4a) == patch-id(3e24285..291d81f); 291d81f = refs/pull/29/head}]
+    verified_at: 2026-10-16
+  - branch: gate-006a-azure-hosting-migration
+    branch_head: "1b22624"
+    merge_commit: "7e27d04198975cb79801158191bd97e222dac7bb"
+    parents: ["03ace4a", "1b22624"]
+    content: "Gate 006A Azure hosting migration plan and AGENTS.md section 20 (PR #30, GitHub merge commit)"
+    evidence: [{type: commit, ref: "7e27d04"}, {type: git_log, ref: merge-base --is-ancestor 1b22624 origin/master}]
+    verified_at: 2026-10-16
 
 unmerged_gate_branches:
   # not ancestors of origin/master (derived from git, never a stored SHA); base and push_state per branch
@@ -85,13 +110,6 @@ unmerged_gate_branches:
     push_state: local only
     content: Gate 003S migration 004 apply runbook (docs only, not executed)
     evidence: [{type: branch, ref: gate-003s-migration-004-apply-runbook}]
-    verified_at: 2026-10-16
-  - branch: gate-003t-fast-scan-persistence-fail-safe
-    commit: "291d81f"
-    base: master@3e24285
-    push_state: local only
-    content: persistence helper opt-in via CBC_FAST_SCAN_PERSISTENCE_HELPER=enabled
-    evidence: [{type: branch, ref: gate-003t-fast-scan-persistence-fail-safe}]
     verified_at: 2026-10-16
   - branch: gate-003u-postgres-tls-verification
     commit: "7973f0e"
@@ -160,7 +178,7 @@ gates:
     evidence: [{type: commit, ref: "3e24285"}, {type: commit, ref: "7ec9019"}]
     verified_at: 2026-10-16
   "003S": {status: local_only_not_executed, evidence: [{type: commit, ref: "b192977"}], verified_at: 2026-10-16}
-  "003T": {status: local_only_unmerged, evidence: [{type: commit, ref: "291d81f"}], verified_at: 2026-10-16}
+  "003T": {status: merged, merge_method: squash, merge_commit: "03ace4a", pr: 29, evidence: [{type: commit, ref: "03ace4a"}, {type: commit, ref: "291d81f"}], verified_at: 2026-10-16}
   "003U": {status: local_only_unmerged, evidence: [{type: commit, ref: "7973f0e"}], verified_at: 2026-10-16}
   "005A":
     status: merged
@@ -192,10 +210,17 @@ gates:
     scope: "post-merge state.yaml reconciliation: reconciler, tests, GitHub Actions workflow (PR job disabled by default); v4 migration"
     evidence: [{type: branch, ref: gate-005e-state-reconciliation}]
     verified_at: 2026-10-16
+  "006A":
+    status: merged
+    merge_commit: "7e27d04"
+    pr: 30
+    scope: Azure hosting migration plan (Phase 1) and AGENTS.md hard-rule section 20
+    evidence: [{type: branch, ref: gate-006a-azure-hosting-migration}, {type: commit, ref: "7e27d04"}]
+    verified_at: 2026-10-16
   "agent-framework":
     status: merged_binding
-    note: 'AGENTS.md on master is marked "Status: BINDING" (merged via cbddac2)'
-    evidence: [{type: commit, ref: "e1356b0"}, {type: commit, ref: "cbddac2"}, {type: file, ref: "master@cbddac2:AGENTS.md:9"}]
+    note: 'AGENTS.md on master is marked "Status: BINDING" (merged via cbddac2); section 20 (Azure deployments/resources, hard rule) added by Gate 006A via 7e27d04'
+    evidence: [{type: commit, ref: "e1356b0"}, {type: commit, ref: "cbddac2"}, {type: file, ref: "master@cbddac2:AGENTS.md:9"}, {type: commit, ref: "7e27d04"}]
     verified_at: 2026-10-16
   "004A": {status: docs_on_master, evidence: [{type: gate_doc, ref: docs/gates/gate-004a-product-wedge-mvp-roadmap.md}], verified_at: 2026-10-15}
   "004B": {status: docs_on_master, evidence: [{type: gate_doc, ref: docs/gates/gate-004b-browser-extension-mvp-requirements.md}], verified_at: 2026-10-15}
@@ -207,19 +232,18 @@ blockers:
     detail: >-
       On master, src/server/db/postgres.ts uses ssl { rejectUnauthorized: false } whenever CBC_DATABASE_SSL != "false". Verified TLS is required before any cloud database connection. Fix exists only on local unmerged branch gate-003u-postgres-tls-verification.
     evidence:
-      - {type: file, ref: "master@b2df476:src/server/db/postgres.ts:29"}
+      - {type: file, ref: master@7e27d04:src/server/db/postgres.ts:29}
       - {type: commit, ref: "7973f0e"}
     verified_at: 2026-10-16
   - id: fast-scan-500-on-master
     detail: >-
-      On master, the /api/scan fast path calls recordFastScanResult unconditionally; with CBC_DATABASE_URL unset every URL/domain scan fails. Fix exists only on local unmerged branch gate-003t-fast-scan-persistence-fail-safe.
+      Historical: from 003Q (f82edbd) until 03ace4a, the /api/scan fast path called recordFastScanResult unconditionally; with CBC_DATABASE_URL unset every URL/domain scan returned HTTP 500. Resolved on master at 03ace4a (Gate 003T, PR #29): the helper is opt-in and Supabase writes are the default.
     evidence:
-      - {type: file, ref: "master@b2df476:app/api/scan/route.ts:155"}
-      - {type: file, ref: "master@b2df476:app/api/scan/route.ts:240"}
-      - {type: commit, ref: "7ec9019"}
-      - {type: commit, ref: "291d81f"}
+      - {type: file, ref: master@7e27d04:app/api/scan/route.ts:142}
+      - {type: commit, ref: "03ace4a"}
     verified_at: 2026-10-16
-    deployed_impact: {status: unverified}
+    deployed_impact: {status: unverified, note: "founder confirms with production URL, domain and localhost scans after the 03ace4a Vercel deployment"}
+    status: resolved
   - id: migration-004-not-applied
     detail: Migration 004 is not applied to any real database.
     evidence:

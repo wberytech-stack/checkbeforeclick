@@ -52,6 +52,12 @@ git("switch", "-q", "-c", "feature-ff"); S.F1 = commit("f1.txt"); git("switch", 
 git("switch", "-q", "-c", "feature-d"); S.D1 = commit("d1.txt"); git("switch", "-q", "master"); S.MD1 = mergeNoFf("feature-d");
 S.MD2 = git("commit-tree", `${S.MD1}^{tree}`, "-p", S.MD1, "-p", S.D1, "-m", "second merge of feature-d");
 git("update-ref", "refs/heads/master", S.MD2);
+// GitHub "Squash and merge" (like PR #29): one single-parent commit; the branch commit is not in master.
+git("switch", "-q", "-c", "feature-sq"); S.S1 = commit("s1.txt"); git("switch", "-q", "master");
+git("merge", "-q", "--squash", "feature-sq"); git("commit", "-q", "-m", "squash feature-sq (#29)"); S.MSQ = git("rev-parse", "HEAD");
+// GitHub "Create a merge commit" (like PR #30), landing after the squash.
+git("switch", "-q", "-c", "feature-gh"); S.G1 = commit("g1.txt"); git("switch", "-q", "master");
+git("merge", "-q", "--no-ff", "-m", "Merge pull request #30 from owner/feature-gh", "feature-gh"); S.MG = git("rev-parse", "HEAD");
 for (const k of Object.keys(S)) S[`${k}_7`] = S[k].slice(0, 7);
 
 // ---- helpers ----
@@ -188,6 +194,35 @@ test("R16 verified_at defaults to the merge commit date, so output is determinis
   const want = git("show", "-s", "--format=%cs", S.MA);
   if (d.merged_branches_on_master[0].verified_at !== want || d.gates.GA.verified_at !== want) return `dates ${d.merged_branches_on_master[0].verified_at} ${d.gates.GA.verified_at} != ${want}`;
   return readFileSync(f1, "utf8") === readFileSync(f2, "utf8") ? null : "two runs differ";
+});
+
+test("R17 squash-merged branch (no recorded commit) -> detected, NOT attributed, exit 2, nothing written", () =>
+  expectReject("state-squash-unrecorded.yaml", `appears squash-merged into master as ${S.MSQ_7}`));
+
+test("R18 squash-merged branch (recorded commit) -> detected, NOT attributed, exit 2, nothing written", () =>
+  expectReject("state-squash-unrecorded-commit.yaml", `appears squash-merged into master as ${S.MSQ_7}`));
+
+test("R19 explicit merge_method: squash record verified by patch-id -> consistent", () => {
+  const r = run(stateFile("state-squash-recorded.yaml"), "--check");
+  return r.code === 0 && r.report.state === "consistent" ? null : `exit ${r.code} ${JSON.stringify(r.report)}`;
+});
+
+test("R20 squash record pointing at an unrelated single-parent commit -> patch-id mismatch, exit 2", () =>
+  expectReject("state-squash-bad-record.yaml", "patch-id mismatch"));
+
+test("R21 unknown merge_method -> exit 2", () =>
+  expectReject("state-squash-unknown-method.yaml", "unknown merge_method"));
+
+test("R22 GitHub-style merge commit after a squash -> attributed, gate updated, repeat is a no-op", () => {
+  const f = stateFile("state-gh-merge.yaml");
+  const c = run(f, "--check");
+  if (c.code !== 1 || !c.report.changes!.some((x) => x.includes(`"feature-gh": merged via ${S.MG_7} (head ${S.G1_7})`))) return `check ${c.code} ${JSON.stringify(c.report)}`;
+  if (run(f, "--write").code !== 0) return "write failed";
+  const d = YAML.parse(readFileSync(f, "utf8"));
+  const m = d.merged_branches_on_master.find((x: { branch: string }) => x.branch === "feature-gh");
+  if (!m || m.merge_commit !== S.MG || d.gates.GG.status !== "merged") return JSON.stringify({ m, gg: d.gates.GG });
+  const b = readFileSync(f, "utf8");
+  return run(f, "--check").code === 0 && run(f, "--write").report.state === "consistent" && readFileSync(f, "utf8") === b ? null : "not idempotent";
 });
 
 test("R15 CRLF line endings preserved on write", () => {

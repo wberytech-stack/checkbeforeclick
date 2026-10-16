@@ -30,6 +30,10 @@ export interface GitView {
   firstParentChain(): Array<{ sha: string; parents: string[] }>;
   /** Committer date of a commit as YYYY-MM-DD (deterministic, from git). */
   commitDate(sha: string): string;
+  /** Best common ancestor, or null. */
+  mergeBase(a: string, b: string): string | null;
+  /** `git patch-id --stable` of `git diff from to`, or null when the diff is empty. */
+  patchId(from: string, to: string): string | null;
 }
 
 export interface Plan {
@@ -114,13 +118,26 @@ export function plan(doc: Document, git: GitView): Plan {
 
   // Existing merged records must be consistent with git.
   for (const e of mergedList) {
+    const method = e.merge_method ?? "merge";
+    if (method !== "merge" && method !== "squash") { errors.push(`merged "${e.branch}": unknown merge_method ${JSON.stringify(e.merge_method)}`); continue; }
     const m = typeof e.merge_commit === "string" ? git.resolve(e.merge_commit) : null;
     const head = typeof e.branch_head === "string" ? git.resolve(e.branch_head) : null;
     if (!m) { errors.push(`merged "${e.branch}": merge_commit ${JSON.stringify(e.merge_commit)} not found`); continue; }
-    if (!head) { errors.push(`merged "${e.branch}": branch_head ${JSON.stringify(e.branch_head)} not found`); continue; }
+    if (!head) { errors.push(`merged "${e.branch}": branch_head ${JSON.stringify(e.branch_head)} not found (fetch refs/pull/*/head if the branch was deleted)`); continue; }
     const c = onChain.get(m);
     if (!c) { errors.push(`merged "${e.branch}": ${short(m)} is not on master's first-parent history`); continue; }
-    if (!c.parents.slice(1).includes(head)) errors.push(`merged "${e.branch}": ${short(m)} does not merge branch_head ${short(head)}`);
+    if (method === "merge") {
+      if (!c.parents.slice(1).includes(head)) errors.push(`merged "${e.branch}": ${short(m)} does not merge branch_head ${short(head)}`);
+      continue;
+    }
+    // Squash record: a single-parent commit whose patch equals the branch's own changes.
+    if (c.parents.length !== 1) { errors.push(`merged "${e.branch}": squash merge_commit ${short(m)} is not a single-parent commit`); continue; }
+    if (git.isAncestor(head, master)) { errors.push(`merged "${e.branch}": recorded as squash but ${short(head)} is in master's history`); continue; }
+    const mb = git.mergeBase(head, c.parents[0]);
+    const branchPid = mb ? git.patchId(mb, head) : null;
+    const squashPid = git.patchId(c.parents[0], m);
+    if (!branchPid || !squashPid || branchPid !== squashPid)
+      errors.push(`merged "${e.branch}": squash ${short(m)} does not match the patch of ${short(head)} (patch-id mismatch); not verified`);
   }
 
   // Unmerged entries: detect completed merges.
@@ -136,7 +153,27 @@ export function plan(doc: Document, git: GitView): Plan {
       target = git.branchHead(branch);
       if (target === null) return errors.push(`unmerged "${branch}": no recorded commit and branch not found; cannot decide`);
     }
-    if (!git.isAncestor(target, master)) return; // still unmerged
+    if (!git.isAncestor(target, master)) {
+      // Not in master's history. A squash merge would look exactly like this, so check
+      // for a single-parent commit on master's first-parent history whose patch equals
+      // the branch's changes. A match is NEVER recorded automatically: fail closed and
+      // ask for an explicit `merge_method: squash` record (verified on the next run).
+      const mb = git.mergeBase(target, master);
+      const branchPid = mb ? git.patchId(mb, target) : null;
+      if (!mb || !branchPid) return; // no common history or empty change: still unmerged
+      const matches: string[] = [];
+      for (const c of chain) {
+        if (c.sha === mb || git.isAncestor(c.sha, mb)) break;
+        if (c.parents.length === 1 && git.patchId(c.parents[0], c.sha) === branchPid) matches.push(c.sha);
+      }
+      if (matches.length > 0) {
+        errors.push(
+          `unmerged "${branch}": ${short(target)} appears squash-merged into master as ${matches.map(short).join(", ")} (identical patch-id); ` +
+          `not attributed automatically - record it in merged_branches_on_master with merge_method: squash`
+        );
+      }
+      return;
+    }
     const merges = chain.filter((c) => c.parents.slice(1).includes(target!));
     if (merges.length !== 1) {
       return errors.push(

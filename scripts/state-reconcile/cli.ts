@@ -84,6 +84,17 @@ const gitView: GitView = {
     return chainCache;
   },
   commitDate: (sha) => git(["show", "-s", "--format=%cs", sha]),
+  mergeBase(a, b) {
+    try { return git(["merge-base", a, b]) || null; } catch { return null; }
+  },
+  patchId(from, to) {
+    const diff = execFileSync("git", ["diff", "--no-color", "--no-ext-diff", "--full-index", from, to],
+      { cwd: repo, stdio: ["ignore", "pipe", "pipe"], timeout: 60000, maxBuffer: 64 * 1024 * 1024 });
+    if (diff.length === 0) return null;
+    const out = execFileSync("git", ["patch-id", "--stable"],
+      { cwd: repo, input: diff, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 60000 }).trim();
+    return out.split(/\s+/)[0] || null;
+  },
 };
 
 if (!existsSync(statePath)) finish(2, "invalid", [], [`${statePath} not found`]);

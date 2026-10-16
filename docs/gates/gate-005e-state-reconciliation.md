@@ -243,12 +243,95 @@ Not exercised:
 - `gh pr create` from Actions has not run.
 - Whether the repository allows Actions to create PRs has not been checked.
 
+## Squash-merge compatibility (review fix after PRs #29 and #30)
+
+### What the review found
+
+`master` now contains two kinds of GitHub merge:
+
+- PR #29: `03ace4a`, a **squash** commit with a single parent.
+- PR #30: `7e27d04`, a **merge commit** with parents `03ace4a` and `1b22624`.
+
+The first version of this gate was replayed against that real history in a
+throwaway clone:
+
+- **Merge commits:** handled correctly.
+- **Squash merges:** missed silently. Gate 003T stayed "unmerged, local only"
+  while the check reported `consistent`. A squash merge of PR #26 itself would
+  also have stayed "in progress" forever.
+- **Squash, then branch deleted:** failed closed with "cannot decide".
+
+The tool never wrongly marked a branch as merged. The failure was a silent
+false negative.
+
+### The fix (fail-closed; never automatic attribution)
+
+1. **Squash detection.** For an unmerged entry whose commit exists but is not
+   an ancestor of `master`:
+   - the reconciler computes `git patch-id --stable` of the branch's own
+     changes (`merge-base..target`);
+   - it compares that with every single-parent commit on `master`'s
+     first-parent history since the merge-base.
+
+   A match is reported as an **error**, with exit 2 and nothing written: "…
+   appears squash-merged into master as `<sha>` … record it with
+   `merge_method: squash`". It is **never** recorded automatically, because
+   identical patches are evidence, not proof of which PR landed.
+2. **Explicit squash records.** A `merged_branches_on_master` entry with
+   `merge_method: "squash"` is accepted as consistent only when all of these
+   hold:
+   - `merge_commit` is on `master`'s first-parent history;
+   - it has exactly one parent;
+   - `branch_head` is **not** in `master`'s history;
+   - the patch-id of `merge_commit^..merge_commit` equals the patch-id of
+     `merge-base(branch_head, merge_commit^)..branch_head`.
+
+   Anything else, including an unknown `merge_method`, is exit 2.
+3. **PR heads stay fetchable.** Both workflow jobs also fetch
+   `refs/pull/*/head` (read-only), so a squash record can still be verified
+   after its branch is deleted.
+4. **`state.yaml` brought up to date** (explicit, verified records):
+   - 003T is recorded as a squash merge: `merge_commit` `03ace4a`,
+     `branch_head` `291d81f` (`refs/pull/29/head`);
+   - 006A is recorded as merged via `7e27d04`;
+   - PRs #29 and #30 are added to `merged_prs_on_master`;
+   - gates `003T` and `006A` are set to merged;
+   - the agent-framework note records `AGENTS.md` section 20;
+   - the fast-scan HTTP 500 blocker is marked **resolved** (kept as
+     history);
+   - the TLS blocker evidence is re-pointed at `master@7e27d04`.
+5. **Tests:**
+   - **R17 and R18:** squash detected, through both the branch-head and
+     recorded-commit paths. Exit 2, and the file is unchanged.
+   - **R19:** a verified squash record is consistent.
+   - **R20:** a squash record pointing at an unrelated commit gives a
+     patch-id mismatch, exit 2.
+   - **R21:** an unknown `merge_method` gives exit 2.
+   - **R22:** a GitHub-style merge commit landing after a squash is
+     attributed, its gate is updated, and a repeat run is a no-op.
+
+### Remaining limits
+
+- A squash that needed conflict resolution, or that was combined with other
+  changes, will not match by patch-id. It stays "unmerged" silently, which is
+  the same safe direction as before. Recording it is a manual, founder-reviewed
+  `state.yaml` change.
+- A rebase merge (a linear replay) also does not match. It is treated the
+  same way.
+
 ## Limitations
 
-- **Merge style:** only `--no-ff` merge commits on `master`'s first-parent
-  history can be attributed. Squash, rebase and fast-forward merges are
-  reported as ambiguous and fail the job. The current practice is
-  `--no-ff`.
+- **Merge style:** merges attribute automatically in two cases:
+  - merge commits (local `--no-ff` or GitHub "Create a merge commit");
+  - **explicitly recorded** squash merges (`merge_method: squash`), verified
+    by patch-id.
+
+  Other cases:
+  - **Unrecorded squash merges:** detected, and they fail closed until
+    recorded.
+  - **Fast-forwards:** ambiguous, and they fail closed.
+  - **Squash merges with changed content, and rebase merges:** not detected;
+    they stay "unmerged" (see "Remaining limits" above).
 - **Deleted branches:** a branch deleted before reconciliation, with no
   recorded `commit`, is ambiguous.
 - **Several open PRs:** if `state.yaml` becomes stale in a new way while an
@@ -283,8 +366,10 @@ The constitution does not authorize the automated **write** path, so
    job-scoped `GITHUB_TOKEN` inside GitHub's runner. No agent reads it and
    no secret is created. Please confirm that section 11 is not engaged, or
    cover it in the amendment.
-5. **Merge-method policy.** Keep `--no-ff` merges as the rule, or
-   commission support for squash and rebase merges.
+5. **Merge-method policy.** PR #29 was squash-merged, and PR #30 used a merge
+   commit. Merge commits reconcile automatically. Squash merges now need an
+   explicit, verified `state.yaml` record. Restricting the repository to
+   merge commits only is a founder-only settings change.
 6. **Housekeeping cleanup.** Closing superseded PRs and deleting
    `automation/*` branches is founder-only.
 7. **Optional:** pin actions to commit SHAs, and make `yaml` a direct

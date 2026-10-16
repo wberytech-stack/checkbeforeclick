@@ -15,12 +15,18 @@ Nothing is provisioned, deployed, configured, or changed:
 
 Every execution step below is founder-only.
 
-- **Base:** `master@998e6cc`.
+- **Base:** `master@998e6cc`. `master` has since advanced to `03ace4a`
+  (Gate 003T). This branch still merges cleanly into it.
 - **Pending and independent:** draft PRs #26 (005E), #27 (005F), and #28
   (005G).
-- **Prerequisite:** the Gate 003T fast-scan fix (branch
-  `gate-003t-fast-scan-persistence-fail-safe`, `291d81f`, pushed for review
-  under this approval).
+- **Prerequisite (met):** the Gate 003T fast-scan fix is merged into
+  `master` at `03ace4a`, through PR #29 on 2026-10-16.
+  - It was a squash merge of the reviewed commit `291d81f`, and the file
+    contents are identical.
+  - Note for the founder: a squash merge is not the `--no-ff` merge commit
+    that draft PR #27 (005F) and the PR #26 reconciler (005E) assume. Under
+    the reconciler's rules, 003T's branch commit stays unattributed to a
+    merge.
 
 ## 1. Decision: two phases
 
@@ -56,7 +62,7 @@ Inngest are reachable from any host.
 | Auth | Supabase Auth: `signInWithPassword`, `signUp`, `exchangeCodeForSession`, `proxy.ts` session refresh | Supabase Auth (unchanged) | Entra External ID |
 | Data | Supabase PostgreSQL through `lib/data` (service role) | Unchanged | Azure PostgreSQL `pg-cbc-prod-cc-001` |
 | Slow path | Inngest `processScan`, served at `/api/inngest` | Inngest (URL now on Azure) | Service Bus and a worker |
-| Fast scan | **HTTP 500 on `master`.** The route always calls `recordFastScanResult`, and `CBC_DATABASE_URL` is unset | Fixed by Gate 003T (helper opt-in; Supabase writes by default) | Postgres data layer |
+| Fast scan | **Fixed on `master` at `03ace4a`** (Gate 003T, PR #29): the persistence helper is opt-in, and Supabase writes are the default. Previously (003Q until `03ace4a`), the route always called `recordFastScanResult` with `CBC_DATABASE_URL` unset, which returned HTTP 500 | Unchanged: Supabase writes, with the flag unset | Postgres data layer |
 | Secrets | Vercel environment variables | **Key Vault** references through managed identity | Key Vault |
 
 Existing Azure resources, per the 2026-06-19 audit and **unverified now**:
@@ -187,7 +193,7 @@ see, print, or handle any value (`AGENTS.md` sections 11 and 20).
 | S2 | `GET /` and the login and register pages | 200 and render |
 | S3 | Protected route while signed out (`/dashboard`) | Redirect to login (`proxy.ts`) |
 | S4 | Register and confirm (if confirmation is enabled), then log in | Session established; dashboard loads |
-| S5 | Fast URL scan | 201, `complete`, normalized verdict (**requires 003T**) |
+| S5 | Fast URL scan | 201, `complete`, normalized verdict (relies on the Gate 003T fix, merged at `03ace4a`) |
 | S6 | Fast domain scan | 201, `complete` |
 | S7 | Invalid target (for example `localhost`) | 201, `unknown`, one evidence item |
 | S8 | Slow-path scan (email) | 201, then Inngest runs `processScan` against `/api/inngest` on Azure and the scan completes |
@@ -278,7 +284,7 @@ The DNS provider, the current records, and apex versus `www` usage are
 | Window | Gate | Owner |
 | --- | --- | --- |
 | Oct 16–18 | **006A** (this gate): plan and section 20 | Claude drafts; founder approves and merges (**a merge is a Vercel production deployment**) |
-| Oct 17–20 | **003T**: fast-scan fix review and merge | Founder merges (**a Vercel production deployment, which fixes the current HTTP 500**) |
+| Oct 16 (done) | **003T**: fast-scan fix merged at `03ace4a` (PR #29) | Founder merged it. That merge was a Vercel production deployment of the fix |
 | Oct 19–23 | **006B**: container, Bicep, deploy workflow, health route, local container validation | Claude |
 | Oct 23–26 | Provisioning (section 12) | Founder |
 | Oct 26–29 | **006C**: first staging deployment and smoke tests S1–S12 | Founder approves the deployment; Claude analyzes the results |
@@ -289,8 +295,8 @@ The DNS provider, the current records, and apex versus `www` usage are
 
 ## 12. Founder-only actions (none performed here)
 
-1. Approve and merge 006A and 003T, acknowledging that each merge is a
-   Vercel production deployment.
+1. Approve and merge 006A, acknowledging that the merge is a Vercel
+   production deployment. 003T is already merged at `03ace4a`.
 2. **Azure access:** confirm the subscription, the resource group, and that
    the founder holds Owner or User Access Administrator rights.
 3. **Provision:** review the Bicep `what-if` output, then apply it (from
@@ -329,7 +335,7 @@ The DNS provider, the current records, and apex versus `www` usage are
 | Item | Status |
 | --- | --- |
 | The current state of Azure resources and the founder's access rights | Unverified. The last evidence is the 2026-06-19 audit |
-| Whether `CBC_DATABASE_URL` is unset in Vercel Production, so live fast scans return 500 | Unverified live. It follows from the code and `docs/ENVIRONMENTS.md` |
+| Whether the Gate 003T fix is live in Vercel Production, so fast scans return 201 | Unverified live. It depends on the `03ace4a` deployment succeeding and `CBC_FAST_SCAN_PERSISTENCE_HELPER` not being set to `enabled`. The founder confirms with a production URL scan, a domain scan, and a `localhost` scan. Before `03ace4a`, fast scans returned 500 whenever `CBC_DATABASE_URL` was unset |
 | The DNS provider, current records, apex vs `www`, and DNSSEC | Unverified |
 | Vercel plan price, billing date, other projects, and any extra Vercel features (such as Analytics) | Unverified. No Vercel SDK appears in the code |
 | Supabase Auth settings (email confirmation, providers) and redirect lists | Unverified. The code uses email and password only |

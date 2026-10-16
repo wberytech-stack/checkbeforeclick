@@ -23,6 +23,12 @@ so your text must never be presented or read as authorization.
 - Evidence: every claimed PASS has captured output; anything not run is
   marked "not exercised".
 - Sequencing: the gate follows the order decided in earlier gate documents.
+- Delegated actions (AGENTS.md section 6.2):
+  - only the gate's own branch was pushed;
+  - any PR is still a draft;
+  - nothing founder-only (section 6.3) happened without a named founder
+    approval.
+  A draft PR or a pushed branch is not approval.
 - State: `.agents/state.yaml` matches repository evidence, every important
   claim cites its source, and anything unverifiable is marked `unverified`.
   Report any conflict. Repository evidence wins (AGENTS.md section 1).

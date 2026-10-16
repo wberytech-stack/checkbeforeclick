@@ -1,5 +1,5 @@
 # ChatGPT review record. A ChatGPT review decision is not founder approval (AGENTS.md section 3).
-schema_version: 1
+schema_version: 2
 project: cbc
 gate: ""
 reviewed_commit: ""
@@ -13,6 +13,8 @@ hard_rule_check:
   secrets_exposed: ""
   dependency_changes: ""
   tenant_context_invariant: ""
+  delegated_actions_within_scope: ""   # only gate branch pushed, PR still draft
+  founder_only_actions_taken: ""       # must be "none" unless founder-approved
 open_questions_for_founder: []
 
 # FOUNDER ONLY. Agents (ChatGPT, Claude Code, any other) must never populate
@@ -22,5 +24,5 @@ founder_decision:
   status: pending      # pending | approved | changes_required | rejected
   recorded_by: founder_only
   date: ""
-  scope: ""            # the exact actions approved
+  scope: ""            # the exact actions approved, e.g. merge PR #N, mark ready
   notes: ""

@@ -10,7 +10,7 @@
 #   status: verified | unverified
 # "unverified" = not provable from the repository; never fabricate evidence.
 
-schema_version: 1
+schema_version: 2
 project: cbc
 snapshot_date: 2026-10-16
 
@@ -42,33 +42,38 @@ merged_prs_on_master:
     evidence: [{ type: commit, ref: 3e24285 }]
     verified_at: 2026-10-16
 
-local_unpushed_branches:   # none is an ancestor of master; none merged
+unmerged_gate_branches:   # none is an ancestor of master; push_state per branch
   - branch: gate-003r-runtime-smoke-validation
     commit: 7ec9019
     origin_commit: f25a02b
+    push_state: origin behind local
     content: Gate 003R disposable validation results and findings (docs)
     evidence: [{ type: branch, ref: gate-003r-runtime-smoke-validation }]
     verified_at: 2026-10-16
   - branch: gate-003s-migration-004-apply-runbook
     commit: b192977
     base: gate-003r-runtime-smoke-validation
+    push_state: local only
     content: Gate 003S migration 004 apply runbook (docs only, not executed)
     evidence: [{ type: branch, ref: gate-003s-migration-004-apply-runbook }]
     verified_at: 2026-10-16
   - branch: gate-003t-fast-scan-persistence-fail-safe
     commit: 291d81f
     base: master@3e24285
+    push_state: local only
     content: persistence helper opt-in via CBC_FAST_SCAN_PERSISTENCE_HELPER=enabled
     evidence: [{ type: branch, ref: gate-003t-fast-scan-persistence-fail-safe }]
     verified_at: 2026-10-16
   - branch: gate-003u-postgres-tls-verification
     commit: 7973f0e
     base: master@3e24285
+    push_state: local only
     content: verified TLS in src/server/db/postgres.ts
     evidence: [{ type: branch, ref: gate-003u-postgres-tls-verification }]
     verified_at: 2026-10-16
   - branch: docs/agent-operating-files
     base: master@3e24285
+    push_state: pushed by this branch's own gate on founder instruction; verify with git ls-remote
     content: AGENTS.md constitution draft and .agents/ files (this branch)
     evidence: [{ type: branch, ref: docs/agent-operating-files }]
     verified_at: 2026-10-16

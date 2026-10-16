@@ -27,16 +27,19 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ARG NEXT_PUBLIC_APP_URL=""
+# NEXT_PUBLIC_APP_URL is optional and deliberately NOT an ENV: when it is empty it
+# must be truly unset at build time, or Next inlines "" and the `?? request origin`
+# fallback in app/auth/callback/route.ts never fires (new URL(path, "") throws).
+ARG NEXT_PUBLIC_APP_URL
 ARG CBC_BUILD_SHA="unknown"
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
-    NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
-    NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" && test -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
     || (echo "NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY build args are required" >&2; exit 1)
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN if [ -n "${NEXT_PUBLIC_APP_URL:-}" ]; then export NEXT_PUBLIC_APP_URL; else unset NEXT_PUBLIC_APP_URL; fi \
+    && npm run build
 
 # ---- runtime: minimal, non-root ----
 FROM ${NODE_IMAGE} AS runtime

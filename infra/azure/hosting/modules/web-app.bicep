@@ -17,7 +17,6 @@ param identityId string
 param registryServer string
 
 @description('Image ref <registry>/cbc-web:<sha>-<env>. Later deploys change it via azure-deploy.yml.')
-@minLength(1)
 param image string
 
 @description('Key Vault URI, e.g. https://kv-cbc-prod-cc-001.vault.azure.net/')
@@ -85,11 +84,17 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
+          // PORT/HOSTNAME repeat the image defaults explicitly so a platform-injected
+          // HOSTNAME (the replica name) can never make Next bind to one interface.
           env: concat(
             [for s in secretMap: {
               name: s.envName
               secretRef: s.name
             }],
+            [
+              { name: 'PORT', value: '3000' }
+              { name: 'HOSTNAME', value: '0.0.0.0' }
+            ],
             plainEnv
           )
           probes: [

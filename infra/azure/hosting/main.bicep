@@ -177,5 +177,7 @@ module production 'modules/web-app.bicep' = if (deployApps) {
 
 output registryLoginServer string = registry.properties.loginServer
 output identityClientId string = identity.properties.clientId
+// Known after Phase A; set CBC_STG_NEXT_PUBLIC_APP_URL to this before the first staging build.
+output stagingPublicOrigin string = 'https://${stagingAppName}.${env.properties.defaultDomain}'
 output stagingFqdn string = deployApps ? staging!.outputs.fqdn : ''
 output productionFqdn string = deployApps ? production!.outputs.fqdn : ''

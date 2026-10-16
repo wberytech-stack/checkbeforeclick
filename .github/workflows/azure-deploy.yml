@@ -4,7 +4,10 @@
 # Trigger : workflow_dispatch ONLY. No push, merge, schedule or PR trigger, so a
 #           merge to master never deploys to Azure (AGENTS.md section 20).
 # Inert   : every job is skipped unless the repository variable
-#           CBC_AZURE_DEPLOY_ENABLED is exactly "enabled" (founder-only setting).
+#           CBC_AZURE_DEPLOY_ENABLED is exactly "enabled" (founder-only setting)
+#           AND the run was dispatched from master, so the workflow definition
+#           itself is the reviewed one (a dispatch from another branch could
+#           otherwise run an edited copy of this file).
 # Fail closed:
 #   - the commit input must be a full 40-hex SHA reachable from origin/master;
 #   - every required variable must be present, or the run fails before any build;
@@ -19,7 +22,10 @@
 #   CBC_AZURE_DEPLOY_ENABLED                      "enabled" to arm the workflow
 #   CBC_STG_NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY  staging public build values
 #   CBC_PROD_NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY production public build values
-#   CBC_STG_NEXT_PUBLIC_APP_URL / CBC_PROD_NEXT_PUBLIC_APP_URL  (optional)
+#   CBC_STG_NEXT_PUBLIC_APP_URL / CBC_PROD_NEXT_PUBLIC_APP_URL  REQUIRED https origin
+#     (staging: https://<staging app FQDN>; production: https://checkbeforeclick.com).
+#     Unlike Vercel previews, the container's request origin is its bind address
+#     (0.0.0.0:3000), so app/auth/callback/route.ts must not fall back to it.
 # Environment variables (in azure-staging and azure-production):
 #   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
 #   AZURE_RESOURCE_GROUP, AZURE_ACR_NAME, AZURE_CONTAINERAPP_NAME
@@ -49,7 +55,7 @@ concurrency:
 
 jobs:
   build:
-    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled'
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -67,11 +73,13 @@ jobs:
           STG_ANON: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           PROD_URL: ${{ vars.CBC_PROD_NEXT_PUBLIC_SUPABASE_URL }}
           PROD_ANON: ${{ vars.CBC_PROD_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          STG_APP_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_APP_URL }}
+          PROD_APP_URL: ${{ vars.CBC_PROD_NEXT_PUBLIC_APP_URL }}
         run: |
           set -euo pipefail
           case "$TARGET_ENV" in
-            staging)    url="$STG_URL";  anon="$STG_ANON";  suffix=stg ;;
-            production) url="$PROD_URL"; anon="$PROD_ANON"; suffix=prod ;;
+            staging)    url="$STG_URL";  anon="$STG_ANON";  app="$STG_APP_URL";  suffix=stg ;;
+            production) url="$PROD_URL"; anon="$PROD_ANON"; app="$PROD_APP_URL"; suffix=prod ;;
             *) echo "::error::unknown environment '$TARGET_ENV'"; exit 1 ;;
           esac
           if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
@@ -79,6 +87,9 @@ jobs:
           fi
           if [ -z "$url" ] || [ -z "$anon" ]; then
             echo "::error::NEXT_PUBLIC Supabase variables for $TARGET_ENV are not set; refusing to build"; exit 1
+          fi
+          if ! [[ "$app" =~ ^https://[a-z0-9.-]+$ ]]; then
+            echo "::error::NEXT_PUBLIC_APP_URL for $TARGET_ENV must be set to an https origin without a path; refusing to build"; exit 1
           fi
           echo "image_tag=${COMMIT}-${suffix}" >> "$GITHUB_OUTPUT"
 
@@ -145,7 +156,7 @@ jobs:
 
   deploy:
     needs: build
-    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled'
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: azure-${{ inputs.environment }}
@@ -203,18 +214,33 @@ jobs:
           az containerapp update --name "$APP" --resource-group "$RG" \
             --image "$server/cbc-web:$IMAGE_TAG" --output none
 
-      - name: Wait for healthy revision (/api/healthz)
+      - name: Wait for the NEW revision to be ready and healthy
         shell: bash
         env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
           RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          ACR: ${{ vars.AZURE_ACR_NAME }}
           APP: ${{ vars.AZURE_CONTAINERAPP_NAME }}
         run: |
           set -euo pipefail
-          fqdn="$(az containerapp show --name "$APP" --resource-group "$RG" --query properties.configuration.ingress.fqdn -o tsv)"
-          for i in $(seq 1 30); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' "https://$fqdn/api/healthz" || true)"
-            if [ "$code" = "200" ]; then echo "healthy: https://$fqdn/api/healthz"; exit 0; fi
-            echo "attempt $i: $code"; sleep 10
+          server="$(az acr show --name "$ACR" --query loginServer -o tsv)"
+          want="$server/cbc-web:$IMAGE_TAG"
+          # A 200 from the FQDN alone could come from the OLD revision while the new
+          # one is still provisioning or has failed; require the latest revision to
+          # run this image and to be the latest READY revision before probing.
+          for i in $(seq 1 40); do
+            latest="$(az containerapp show --name "$APP" --resource-group "$RG" --query properties.latestRevisionName -o tsv)"
+            ready="$(az containerapp show --name "$APP" --resource-group "$RG" --query properties.latestReadyRevisionName -o tsv)"
+            image="$(az containerapp show --name "$APP" --resource-group "$RG" --query 'properties.template.containers[0].image' -o tsv)"
+            if [ "$image" = "$want" ] && [ -n "$latest" ] && [ "$latest" = "$ready" ]; then
+              fqdn="$(az containerapp show --name "$APP" --resource-group "$RG" --query properties.configuration.ingress.fqdn -o tsv)"
+              code="$(curl -s -o /dev/null -w '%{http_code}' "https://$fqdn/api/healthz" || true)"
+              if [ "$code" = "200" ]; then echo "revision $latest ready with $want; https://$fqdn/api/healthz 200"; exit 0; fi
+              echo "attempt $i: revision $latest ready, healthz $code"
+            else
+              echo "attempt $i: latest=$latest ready=$ready image=$image"
+            fi
+            sleep 10
           done
-          echo "::error::/api/healthz did not return 200; roll back to the previous revision (founder runbook)"
+          echo "::error::new revision with $want did not become ready and healthy; previous revision keeps serving. Investigate or roll back (founder runbook step R)"
           exit 1

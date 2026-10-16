@@ -2,7 +2,10 @@
  * Gate 006B - signed-out smoke checks against a running CheckBeforeClick web
  * container (Gate 006A smoke matrix S1-S3 plus signed-out API guards).
  *
- *   node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/smoke.ts http://127.0.0.1:3000
+ *   node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/smoke.ts http://127.0.0.1:3000 [public-origin]
+ *
+ * public-origin (optional, e.g. the staging https://<fqdn>): also assert that the
+ * auth callback redirects to that origin, i.e. NEXT_PUBLIC_APP_URL was built in.
  *
  * Read-only: GET requests plus one unauthenticated POST that the API rejects
  * before touching any data. Sends no cookies or credentials. Signed-in checks
@@ -11,9 +14,15 @@
 export {};
 const base = (process.argv[2] ?? "").replace(/\/$/, "");
 if (!/^https?:\/\/[^/]+$/.test(base)) {
-  console.error("usage: smoke.ts <base-url, e.g. http://127.0.0.1:3000>");
+  console.error("usage: smoke.ts <base-url, e.g. http://127.0.0.1:3000> [public-origin]");
   process.exit(2);
 }
+const publicOrigin = (process.argv[3] ?? "").replace(/\/$/, "");
+if (publicOrigin && !/^https:\/\/[^/]+$/.test(publicOrigin)) {
+  console.error("public-origin must be an https origin without a path");
+  process.exit(2);
+}
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 type Expect = { status: number | number[]; location?: RegExp; body?: RegExp };
 const cases: Array<[string, string, RequestInit, Expect]> = [
@@ -28,6 +37,12 @@ const cases: Array<[string, string, RequestInit, Expect]> = [
   }, { status: 401 }],
   ["API GET /api/scan -> 405", "/api/scan", {}, { status: 405 }],
   ["API scan status signed-out -> 401", "/api/scan/00000000-0000-0000-0000-000000000000/status", {}, { status: 401 }],
+  // No code: redirects to login without calling Supabase. A 500 here means an empty
+  // NEXT_PUBLIC_APP_URL was inlined (PR #32 review regression).
+  ["Auth callback without code -> login", "/auth/callback", {}, {
+    status: 307,
+    location: publicOrigin ? new RegExp(`^${escapeRe(publicOrigin)}/login$`) : /\/login$/,
+  }],
 ];
 
 let failed = 0;

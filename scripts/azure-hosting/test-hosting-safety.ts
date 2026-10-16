@@ -71,6 +71,8 @@ const jobs: Record<string, Job> = wf.jobs ?? {};
 for (const [id, job] of Object.entries(jobs)) {
   check(`workflow: job ${id} is gated on CBC_AZURE_DEPLOY_ENABLED == 'enabled'`,
     typeof job.if === "string" && job.if.includes("vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled'"));
+  check(`workflow: job ${id} only runs when dispatched from master`,
+    typeof job.if === "string" && job.if.includes("github.ref == 'refs/heads/master'"));
   const perms: Record<string, string> = job.permissions ?? {};
   const writes = Object.entries(perms).filter(([, v]) => v === "write").map(([k]) => k);
   check(`workflow: job ${id} writes at most id-token`, writes.every((k) => k === "id-token"), writes.join(","));
@@ -97,6 +99,12 @@ check("workflow: only NEXT_PUBLIC_* and CBC_BUILD_SHA build args",
 check("workflow: no merge/approve/ready/force-push commands",
   !/gh pr (merge|ready|review)|push --force|git push/.test(wfText));
 check("workflow: health check on /api/healthz", wfText.includes("/api/healthz"));
+check("workflow: waits for the new revision (latest == latestReady, image matches)",
+  wfText.includes("properties.latestReadyRevisionName") && wfText.includes('[ "$image" = "$want" ]'));
+// PR #32 review: in the container the request origin is the bind address, so the
+// auth callback needs an explicit public origin for every Azure environment.
+check("workflow: NEXT_PUBLIC_APP_URL required as an https origin",
+  wfText.includes('[[ "$app" =~ ^https://[a-z0-9.-]+$ ]]'));
 noSecrets("workflow", wfText);
 
 // ---------------------------------------------------------------- Dockerfile
@@ -112,6 +120,11 @@ const args = [...df.matchAll(/^ARG\s+([A-Z0-9_]+)/gm)].map((m) => m[1]);
 check("Dockerfile: ARGs are public or non-secret only",
   args.every((a) => a === "NODE_IMAGE" || a === "CBC_BUILD_SHA" || a.startsWith("NEXT_PUBLIC_")), args.join(","));
 check("Dockerfile: never copies .env files", !/COPY[^\n]*\.env/.test(df));
+// PR #32 review: an empty NEXT_PUBLIC_APP_URL must stay unset at build time, or Next
+// inlines "" and `new URL(path, "")` in app/auth/callback/route.ts throws.
+check("Dockerfile: NEXT_PUBLIC_APP_URL is never an ENV and is unset when empty",
+  !/^\s*(ENV\s+)?NEXT_PUBLIC_APP_URL=/m.test(df.replace(/^#.*$/gm, "")) &&
+  /else unset NEXT_PUBLIC_APP_URL; fi/.test(df));
 check("Dockerfile: no secret env names", !/(SERVICE_ROLE|SIGNING_KEY|EVENT_KEY|WEB_RISK_API_KEY|SECRET|PASSWORD)/.test(df.replace(/^#.*$/gm, "")));
 noSecrets("Dockerfile", df);
 

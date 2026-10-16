@@ -120,6 +120,7 @@ const SHA_RE = /^[0-9a-f]{7,40}$/;
 const BRANCH_RE = /^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const PROTECTED_BRANCHES = new Set(["master", "main"]);
 const RECOMMENDATIONS = new Set(["recommend_approve", "recommend_changes", "recommend_reject"]);
+const HANDOFF_STATUSES = new Set(["in_progress", "ready_for_review"]);
 
 type Doc = Record<string, unknown>;
 
@@ -143,6 +144,8 @@ export function validateHandoff(doc: unknown): string[] {
   for (const f of ["status", "gate", "branch", "base_commit", "head_commit", "summary"]) {
     if (!nonEmptyStr(doc[f])) errors.push(`missing required field: ${f}`);
   }
+  if (nonEmptyStr(doc.status) && !HANDOFF_STATUSES.has(doc.status))
+    errors.push(`status must be one of ${[...HANDOFF_STATUSES].join(", ")}`);
   if (nonEmptyStr(doc.branch) && !BRANCH_RE.test(doc.branch)) errors.push("branch has invalid characters");
   for (const f of ["head_commit", "base_commit"]) {
     if (nonEmptyStr(doc[f]) && !SHA_RE.test(doc[f] as string)) errors.push(`${f} is not a hex commit SHA`);

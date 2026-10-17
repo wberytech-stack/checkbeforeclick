@@ -77,6 +77,10 @@ nothing, B5 and B7 create resources.
 Resource counts below were checked against `infra/azure/hosting/main.bicep`
 and `modules/web-app.bicep` at `master@754b945`.
 
+Offline validation (`docs/gates/gate-006c-offline-validation.md`) found a
+compile error in the merged module (BCP138, a for-expression inside `concat()`).
+Run B2 only after that fix is merged.
+
 | Step | Command (founder) | Touches Azure? | Pass condition |
 | --- | --- | --- | --- |
 | B1 | `az bicep version` | No (offline) | Bicep 0.23 or later (the template uses the `!` non-null assertion on conditional module outputs) |

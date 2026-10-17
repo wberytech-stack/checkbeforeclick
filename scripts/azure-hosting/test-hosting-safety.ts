@@ -198,6 +198,76 @@ check("bicep: apps are Phase B only (deployApps, default false)",
   /module production '[^']+' = if \(deployApps\)/.test(bicep));
 check("bicep: no placeholder/bootstrap image that would fail the 3000 probe", !/quickstart/.test(bicep));
 
+// ---------------------------------------------------------------- Bicep structure (Gate 006C offline validation)
+// No Bicep compiler is available offline, so these checks catch the error classes a
+// compile or deployment would: BCP138, parameter mismatches, and broken nesting.
+// Single pass, so "//" inside a string (e.g. an https:// URL) is not taken as a comment.
+// String contents become '' (interpolations are not inspected); comments are dropped.
+function stripBicep(src: string): string {
+  let out = "";
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      out += "\n";
+    } else if (ch === "/" && src[i + 1] === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i++;
+    } else if (ch === "'") {
+      i++;
+      while (i < src.length && src[i] !== "'") { if (src[i] === "\\") i++; i++; }
+      out += "''";
+    } else out += ch;
+  }
+  return out;
+}
+type BicepParam = { name: string; required: boolean };
+const bicepParams = (src: string): BicepParam[] =>
+  [...src.matchAll(/^param\s+(\w+)\s+\w+(\s*=)?/gm)].map((m) => ({ name: m[1], required: !m[2] }));
+const mainSrc = read(path.join(bicepDir, "main.bicep"));
+const modSrc = read(path.join(bicepDir, "modules", "web-app.bicep"));
+for (const f of bicepFiles) {
+  const code = stripBicep(read(f));
+  // BCP138: a for-expression may not be a function argument, e.g. concat([for ...]).
+  check(`${f}: no for-expression used as a function argument (BCP138)`, !/\w\(\s*\[\s*for\b/.test(code) && !/,\s*\[\s*for\b/.test(code));
+  const depth = { "{": 0, "[": 0, "(": 0 } as Record<string, number>;
+  const close: Record<string, string> = { "}": "{", "]": "[", ")": "(" };
+  let negative = false;
+  for (const ch of code) {
+    if (ch in depth) depth[ch]++;
+    else if (ch in close) { depth[close[ch]]--; if (depth[close[ch]] < 0) negative = true; }
+  }
+  check(`${f}: balanced braces, brackets and parentheses`, !negative && Object.values(depth).every((d) => d === 0), JSON.stringify(depth));
+}
+const mainParams = bicepParams(mainSrc);
+const fileKeys = Object.keys(params.parameters);
+check("bicep params file: every required main.bicep param is provided",
+  mainParams.filter((p) => p.required).every((p) => fileKeys.includes(p.name)),
+  mainParams.filter((p) => p.required && !fileKeys.includes(p.name)).map((p) => p.name).join(","));
+check("bicep params file: no key that main.bicep does not declare (ARM rejects unknown parameters)",
+  fileKeys.every((k) => mainParams.some((p) => p.name === k)),
+  fileKeys.filter((k) => !mainParams.some((p) => p.name === k)).join(","));
+const modParams = bicepParams(modSrc);
+for (const m of mainSrc.matchAll(/^module\s+(\w+)\s+'modules\/web-app\.bicep'[\s\S]*?\n  params: \{\n([\s\S]*?)\n  \}\n\}/gm)) {
+  const passed = [...m[2].matchAll(/^\s{4}(\w+):/gm)].map((x) => x[1]);
+  check(`bicep module ${m[1]}: passes every required web-app.bicep param and no unknown one`,
+    modParams.filter((p) => p.required).every((p) => passed.includes(p.name)) &&
+    passed.every((p) => modParams.some((q) => q.name === p)),
+    `passed=${passed.join(",")}`);
+}
+check("bicep: both web-app modules are invoked", (mainSrc.match(/^module\s+\w+\s+'modules\/web-app\.bicep'/gm) ?? []).length === 2);
+const vaultKeys = [...modSrc.matchAll(/vaultKey:\s*'(\w+)'/g)].map((m) => m[1]).sort();
+for (const k of ["stagingSecretNames", "productionSecretNames"]) {
+  check(`bicep params: ${k} keys match web-app.bicep secretMap vaultKeys`,
+    JSON.stringify(Object.keys(pv(k) ?? {}).sort()) === JSON.stringify(vaultKeys), Object.keys(pv(k) ?? {}).join(","));
+}
+const usedSymbols = new Set([...stripBicep(mainSrc).matchAll(/\b(\w+)\.(?:id|properties|name|outputs|listKeys)\b/g)].map((m) => m[1]));
+const declared = new Set([...mainSrc.matchAll(/^(?:resource|module)\s+(\w+)\s/gm)].map((m) => m[1]));
+check("bicep main: every symbol used with .id/.properties/.outputs is a declared resource or module",
+  [...usedSymbols].filter((s) => s !== "s").every((s) => declared.has(s)),
+  [...usedSymbols].filter((s) => !declared.has(s)).join(","));
+
 // ---------------------------------------------------------------- no stray workflows deploy
 for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
   if (f === "azure-deploy.yml") continue;

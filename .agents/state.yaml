@@ -95,6 +95,11 @@ merged_prs_on_master:
     scope: B4 what-if pass and B5 Phase A creation evidence; PR #37 state record (docs and state only)
     evidence: [{type: commit, ref: "e0e8cde"}]
     verified_at: 2026-10-17
+  - pr: 39
+    gate: 006C
+    scope: P6 Phase B plain values in main.parameters.json; 7 P6 safety checks; PR #38 state record
+    evidence: [{type: commit, ref: "80e9ad6"}]
+    verified_at: 2026-10-17
 
 merged_branches_on_master:
   # founder-approved merges. merge_method absent = merge commit (first-parent + second parent == branch_head);
@@ -204,6 +209,13 @@ merged_branches_on_master:
     parents: ["c220dda", "3cfd6ae"]
     content: "Gate 006C B4/B5 results and PR #37 state record (PR #38, GitHub merge commit; tree identical to 3cfd6ae)"
     evidence: [{type: commit, ref: "e0e8cde"}, {type: git_log, ref: "merge-base --is-ancestor 3cfd6ae origin/master; 3cfd6ae = refs/pull/38/head; git diff 3cfd6ae e0e8cde empty"}]
+    verified_at: 2026-10-17
+  - branch: gate-006c-phase-b-params
+    branch_head: "365be90"
+    merge_commit: "80e9ad6933c835f11231954e2692b8c81c731132"
+    parents: ["e0e8cde", "365be90"]
+    content: "Gate 006C P6 Phase B plain values and PR #38 state record (PR #39, GitHub merge commit; tree identical to 365be90)"
+    evidence: [{type: commit, ref: "80e9ad6"}, {type: git_log, ref: "merge-base --is-ancestor 365be90 origin/master; 365be90 = refs/pull/39/head; git diff 365be90 80e9ad6 empty"}]
     verified_at: 2026-10-17
 
 unmerged_gate_branches:
@@ -330,8 +342,13 @@ gates:
     scope: >-
       Azure hosting build artifacts, local only: standalone output, /api/healthz, non-root Node 24.14.0 Dockerfile, two-phase Bicep (authored, never compiled or applied), manual-only OIDC azure-deploy.yml (inert until CBC_AZURE_DEPLOY_ENABLED=enabled), safety and smoke scripts, founder-authorized one-line sign-out redirect fix
     tests: "80 passed, 0 failed (scripts/azure-hosting/test-hosting-safety.ts, re-run on merged master); container smoke 11/11 at ee92bf7 (local)"
-    azure_state: {status: unverified, note: "nothing provisioned or deployed by agents; Bicep what-if, OIDC and Key Vault resolution not exercised"}
-    evidence: [{type: commit, ref: "754b945"}, {type: gate_doc, ref: docs/gates/gate-006b-azure-hosting-build.md}]
+    azure_state:
+      status: superseded_by_006C
+      as_of_006b_merge: "2026-10-16: nothing provisioned or deployed by agents; Bicep what-if, OIDC and Key Vault resolution not exercised (historical, unchanged)"
+      offline_since: "Gate 006C (repository evidence): Bicep compiled and linted with Bicep CLI 0.48.1; the 006B module's BCP138 compile error fixed (PR #35, 3fad5db)"
+      founder_reported_since: "Gate 006C, 2026-10-17 (founder-run CLI output, not repository evidence): B4 Phase A what-if passed; B5 Phase A create succeeded with 5 read-only post-checks (see the 006C entry and docs/gates/gate-006c-b4-b5-results.md)"
+      not_exercised: "OIDC deploy identity; Key Vault reference resolution by the apps; Container Apps (Phase B) deployment; azure-deploy.yml runs; runtime smoke"
+    evidence: [{type: commit, ref: "754b945"}, {type: gate_doc, ref: docs/gates/gate-006b-azure-hosting-build.md}, {type: commit, ref: "3fad5db"}, {type: gate_doc, ref: docs/gates/gate-006c-b4-b5-results.md}]
     verified_at: 2026-10-16
   "006C":
     status: in_progress_phase_a_created
@@ -341,7 +358,7 @@ gates:
       - {id: P5a, status: confirmed, date: 2026-10-17, note: "founder confirmed the 7 Key Vault secret names in the merged plan"}
       - {id: P5b, status: not_approved, note: "creating secret values is a separate founder-only action"}
       - {id: P8, status: decided, date: 2026-10-17, note: "option 2: productionMinReplicas 0 until cutover, 1 at an explicit cutover change; implemented in PR #37 (docs/gates/gate-006c-p8-production-min-replicas.md)"}
-      - {id: P6, status: prepared, date: 2026-10-17, note: "founder-verified: staging INNGEST_ENV audit/azure-current-state (shared with Vercel Preview, temporary, documented risk); provider flags unset in Vercel and omitted; staging INNGEST_SERVE_ORIGIN = stagingPublicOrigin; in main.parameters.json, effective only at B6/B7 (docs/gates/gate-006c-p6-plain-values.md)"}
+      - {id: P6, status: merged, merge_commit: "80e9ad6", pr: 39, date: 2026-10-17, note: "parameters-file preparation merged; NOT deployed and NOT runtime-validated (effective only at founder-authorized B6/B7 and the first staging deploy). Founder-verified values: staging INNGEST_ENV audit/azure-current-state (shared with Vercel Preview, temporary, documented risk); provider flags unset in Vercel and omitted; staging INNGEST_SERVE_ORIGIN = stagingPublicOrigin (docs/gates/gate-006c-p6-plain-values.md)"}
     tests: "92 passed, 0 failed (scripts/azure-hosting/test-hosting-safety.ts on master@3fad5db); 103 passed, 0 failed on the PR #37 branch; bicep build/lint exit 0 (CLI 0.48.1)"
     azure_state: {status: founder_reported, date: 2026-10-17, note: "Phase A created by the founder (deployment cbc-hosting-phase-a Succeeded): id-cbc-web-cc-001, crcbcprodcc001 (Basic), log-cbc-prod-cc-001, cae-cbc-prod-cc-001, AcrPull and Key Vault Secrets User assignments (ServicePrincipal). Evidence is founder-run CLI output recorded in the gate doc, not repository evidence; agents have no Azure access"}
     phase_b_inputs: {stagingPublicOrigin: "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io", registryLoginServer: crcbcprodcc001.azurecr.io}

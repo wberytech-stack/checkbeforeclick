@@ -43,6 +43,12 @@ const cases: Array<[string, string, RequestInit, Expect]> = [
     status: 307,
     location: publicOrigin ? new RegExp(`^${escapeRe(publicOrigin)}/login$`) : /\/login$/,
   }],
+  // Sends no cookies, so there is no session to end. With public-origin, the redirect
+  // must not use the container bind address (PR #32 review, S11).
+  ["Sign-out (no session) -> login", "/auth/signout", {}, {
+    status: 307,
+    location: publicOrigin ? new RegExp(`^${escapeRe(publicOrigin)}/login$`) : /\/login$/,
+  }],
 ];
 
 let failed = 0;

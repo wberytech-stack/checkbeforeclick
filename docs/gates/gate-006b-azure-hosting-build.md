@@ -28,6 +28,7 @@ Branch `gate-006b-azure-hosting-build`, cut from master `c23d2c5`.
 | --- | --- |
 | `next.config.ts` | `output: "standalone"` |
 | `app/api/healthz/route.ts` | New. `GET` returns `{"status":"ok"}` with status 200 and `no-store`. No auth, no database, no environment reads |
+| `app/auth/signout/route.ts` | One line (founder-authorized, checkpoint 4): redirect base `process.env.NEXT_PUBLIC_APP_URL ?? request.url` |
 | `proxy.ts` | Matcher excludes exactly `/api/healthz`, so probes never call Supabase auth. All other routes are unchanged (regex checked) |
 | `Dockerfile` | New. Three stages (deps, build, runtime) on `node:24.14.0-bookworm-slim`. `npm ci --ignore-scripts`; only `NEXT_PUBLIC_*` and `CBC_BUILD_SHA` build args; runtime runs as `USER node` on port 3000 with a `HEALTHCHECK` |
 | `.dockerignore` | New. Excludes `.env*`, `.git`, `.github`, `.claude`, key and certificate files, `.npmrc`, `docs`, `scripts`, `infra`, build output |
@@ -67,17 +68,21 @@ Branch `gate-006b-azure-hosting-build`, cut from master `c23d2c5`.
   an explicit `NEXT_PUBLIC_APP_URL`. The workflow now **requires** it as an
   https origin for both environments and refuses to build otherwise. The proxy
   and page redirects are relative and unaffected. App code was not changed.
-- **Open finding, needs a founder decision: sign-out redirects to the bind
-  address.** `app/auth/signout/route.ts` returns
+- **Sign-out redirected to the bind address (fixed with founder
+  authorization).** `app/auth/signout/route.ts` returned
   `NextResponse.redirect(new URL("/login", request.url))`. In the container,
-  `request.url` is `http(s)://0.0.0.0:3000/…`, so sign-out (smoke S11) would
-  send users to `https://0.0.0.0:3000/login`. Reproduced on the 0176270 image
-  with proxy headers. `NEXT_PUBLIC_APP_URL` does not affect this route, and the
-  only Next override is a private, undocumented variable
-  (`__NEXT_PRIVATE_ORIGIN`), so there is no supported hosting-level fix. The fix
-  is a one-line **app-code** change (redirect relative to
-  `NEXT_PUBLIC_APP_URL ?? request.url`, which keeps Vercel's behavior). That is
-  outside 006B's approved scope, so it is **not** implemented here.
+  `request.url` is `http(s)://0.0.0.0:3000/…`, so sign-out (smoke S11) sent users
+  to `https://0.0.0.0:3000/login` (reproduced on the 0176270 image). Next has no
+  supported hosting-level override (only the private `__NEXT_PRIVATE_ORIGIN`).
+  The founder authorized a one-line app-code fix inside this gate on 2026-10-16:
+  the redirect base is now `process.env.NEXT_PUBLIC_APP_URL ?? request.url`, the
+  same pattern as `app/auth/callback/route.ts`.
+  - **Vercel Preview:** unchanged. `NEXT_PUBLIC_APP_URL` is unset there
+    (`docs/ENVIRONMENTS.md` section 9), so it falls back to `request.url` as before.
+  - **Vercel Production:** `NEXT_PUBLIC_APP_URL=https://checkbeforeclick.com`, so
+    sign-out now always lands on `https://checkbeforeclick.com/login`. That is
+    identical for users on the domain; only a visit through a `*.vercel.app`
+    production alias would now end on the domain instead.
 - **Inngest serve origin pinned.** `inngest/next` 4.4.0 builds the URL it
   registers from the `Host` header and the request protocol, with
   `INNGEST_SERVE_ORIGIN` as an override. Both environments now set it
@@ -167,9 +172,21 @@ Checkpoint 3 (read-only probe of the 0176270 image, `APP_URL=https://stg.example
 | Check | Result |
 | --- | --- |
 | `GET /auth/callback` | 307 to `https://stg.example.test/login` (correct) |
-| `GET /auth/signout` | 307 to **`https://0.0.0.0:3000/login`** (open finding above) |
+| `GET /auth/signout` | 307 to **`https://0.0.0.0:3000/login`** (bug; fixed in checkpoint 4) |
 | `GET /api/inngest` without Inngest keys | `{"code":"internal_server_error"}`; expected with no signing key in a production build, to be exercised on staging (S8) |
 | Probe container and image | Removed |
+
+Checkpoint 4 (sign-out fix, founder-authorized):
+
+| Check | Result |
+| --- | --- |
+| Image with `NEXT_PUBLIC_APP_URL=https://stg.example.test`, proxy headers, `GET /auth/signout` | 307 to `https://stg.example.test/login` |
+| Same image, `smoke.ts <base> https://stg.example.test` | 11/11 pass (new check: sign-out lands on the public origin) |
+| Image without `NEXT_PUBLIC_APP_URL` (Vercel Preview case) | `GET /auth/signout` 307 to `http://0.0.0.0:3000/login` (falls back to `request.url`, as before); `smoke.ts` 11/11 |
+| Container user, error logs | `uid=1000(node)` in both; 0 error lines |
+| `test-hosting-safety.ts` | 80/80 (new: both auth routes prefer `NEXT_PUBLIC_APP_URL` for absolute redirects); the pre-fix route fails the check (mutation) |
+| ESLint, `tsc --strict` (scripts), `npm run build` (route type-checked), `git diff --check` | Pass |
+| Containers and images | Removed |
 
 ### Still requires Azure or founder validation (not done by Claude)
 
@@ -192,6 +209,9 @@ Checkpoint 3 (read-only probe of the 0176270 image, `APP_URL=https://stg.example
   table is unchanged.
 - The proxy matcher change removes only `/api/healthz` from the proxy. That
   route is new, so no existing route changes behavior.
+- The sign-out fix leaves Preview unchanged (falls back to `request.url`) and
+  sends Production sign-outs to `https://checkbeforeclick.com/login`, the
+  domain users are already on.
 - The new workflow never runs on push or merge. `Dockerfile`,
   `.dockerignore` and `infra/` are not used by Vercel.
 - **Merging this PR still deploys to Vercel production** (`AGENTS.md`

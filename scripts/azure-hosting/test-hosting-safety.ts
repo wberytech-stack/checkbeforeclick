@@ -140,6 +140,16 @@ check("next.config: output standalone", /output:\s*"standalone"/.test(read("next
 const health = read("app/api/healthz/route.ts");
 check("healthz: no supabase / db / env access", !/supabase|from "pg"|process\.env/.test(health));
 check("proxy: matcher excludes exactly api/healthz", read("proxy.ts").includes("api/healthz$|"));
+// PR #32 review: in the container request.url is the bind address (0.0.0.0:3000), so
+// absolute redirects must prefer NEXT_PUBLIC_APP_URL (Vercel previews leave it unset).
+for (const f of ["app/auth/signout/route.ts", "app/auth/callback/route.ts"]) {
+  const src = read(f);
+  const redirects = [...src.matchAll(/new URL\(\s*[^,()]+,\s*([^)]+)\)/g)].map((m) => m[1].trim());
+  check(`${f}: absolute redirects prefer NEXT_PUBLIC_APP_URL`,
+    redirects.length > 0 && redirects.every((b) => b === "appUrl" || b.startsWith("process.env.NEXT_PUBLIC_APP_URL ??")) &&
+    (!redirects.includes("appUrl") || /const appUrl = process\.env\.NEXT_PUBLIC_APP_URL \?\?/.test(src)),
+    redirects.join(" | "));
+}
 
 // ---------------------------------------------------------------- Bicep
 const bicepDir = "infra/azure/hosting";

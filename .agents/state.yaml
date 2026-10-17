@@ -47,6 +47,19 @@ merged_prs_on_master:
     gate: 006A
     evidence: [{type: commit, ref: "7e27d04"}]
     verified_at: 2026-10-16
+  - pr: 26
+    gate: 005E
+    evidence: [{type: commit, ref: "1ce4bc4"}]
+    verified_at: 2026-10-16
+  - pr: 31
+    gate: 005E
+    scope: post-merge state.yaml reconciliation (housekeeping)
+    evidence: [{type: commit, ref: "c23d2c5"}]
+    verified_at: 2026-10-16
+  - pr: 32
+    gate: 006B
+    evidence: [{type: commit, ref: "754b945"}]
+    verified_at: 2026-10-16
 
 merged_branches_on_master:
   # founder-approved merges. merge_method absent = merge commit (first-parent + second parent == branch_head);
@@ -100,6 +113,20 @@ merged_branches_on_master:
     parents: ["7e27d04", "2c623d3"]
     content: automated state reconciliation (scripts/state-reconcile, workflow, gate doc); state.yaml v4 migration
     evidence: [{type: commit, ref: "1ce4bc4"}, {type: git_log, ref: merge-base --is-ancestor 2c623d3 origin/master}]
+    verified_at: 2026-10-16
+  - branch: gate-005e-post-merge-state-reconciliation
+    branch_head: "a047e20"
+    merge_commit: "c23d2c55bf95317c47271dc9533f737b42fd8255"
+    parents: ["1ce4bc4", "a047e20"]
+    content: "state.yaml reconciled after the Gate 005E merge (PR #31, GitHub merge commit); branch since deleted on origin, head preserved as refs/pull/31/head"
+    evidence: [{type: commit, ref: "c23d2c5"}, {type: git_log, ref: "merge-base --is-ancestor a047e20 origin/master; a047e20 = refs/pull/31/head"}]
+    verified_at: 2026-10-16
+  - branch: gate-006b-azure-hosting-build
+    branch_head: "3cfe6af"
+    merge_commit: "754b945afa7ce005f5eb013d11601cadd353d1af"
+    parents: ["c23d2c5", "3cfe6af"]
+    content: "Gate 006B Azure Container Apps build artifacts, local only (PR #32, GitHub merge commit; tree identical to the reviewed 3cfe6af)"
+    evidence: [{type: commit, ref: "754b945"}, {type: git_log, ref: "merge-base --is-ancestor 3cfe6af origin/master; 3cfe6af = refs/pull/32/head; git diff 3cfe6af 754b945 empty"}]
     verified_at: 2026-10-16
 
 unmerged_gate_branches:
@@ -219,6 +246,16 @@ gates:
     scope: Azure hosting migration plan (Phase 1) and AGENTS.md hard-rule section 20
     evidence: [{type: branch, ref: gate-006a-azure-hosting-migration}, {type: commit, ref: "7e27d04"}]
     verified_at: 2026-10-16
+  "006B":
+    status: merged
+    merge_commit: "754b945"
+    pr: 32
+    scope: >-
+      Azure hosting build artifacts, local only: standalone output, /api/healthz, non-root Node 24.14.0 Dockerfile, two-phase Bicep (authored, never compiled or applied), manual-only OIDC azure-deploy.yml (inert until CBC_AZURE_DEPLOY_ENABLED=enabled), safety and smoke scripts, founder-authorized one-line sign-out redirect fix
+    tests: "80 passed, 0 failed (scripts/azure-hosting/test-hosting-safety.ts, re-run on merged master); container smoke 11/11 at ee92bf7 (local)"
+    azure_state: {status: unverified, note: "nothing provisioned or deployed by agents; Bicep what-if, OIDC and Key Vault resolution not exercised"}
+    evidence: [{type: commit, ref: "754b945"}, {type: gate_doc, ref: docs/gates/gate-006b-azure-hosting-build.md}]
+    verified_at: 2026-10-16
   "agent-framework":
     status: merged_binding
     note: 'AGENTS.md on master is marked "Status: BINDING" (merged via cbddac2); section 20 (Azure deployments/resources, hard rule) added by Gate 006A via 7e27d04'
@@ -309,5 +346,5 @@ unverified:
   - GitHub PR metadata, review state and open PRs (gh unavailable; only merge commits checked)
   - Current Dependabot alert state on GitHub
   - Live state of cbc_prod (migrations applied, roles) beyond docs/azure records
-  - What, if anything, is currently deployed from master
-  - Node version of any deployed runtime (no Dockerfile or engines pin in the repository)
+  - "What, if anything, is currently deployed from master. Not repository evidence: on 2026-10-17T03:50Z GitHub showed a Vercel Production deployment with status success for 754b945, and anonymous GETs of checkbeforeclick.com returned /api/healthz 200 (route added in 754b945)"
+  - "Node version of the Vercel runtime (the repository now pins node:24.14.0 only for the Azure image in Dockerfile, which is not deployed anywhere)"

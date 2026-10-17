@@ -1,0 +1,15 @@
+# CBC automation config (Gate 005F section 7.3; created in Gate 005G).
+# Changed only through docs-only, founder-approved gates. Read by the reviewer
+# adapter at policy_commit (verified origin/master), never from a gate branch.
+schema_version: 1
+project: cbc
+reviewer:
+  model_id: ""                 # MUST be an exact, dated, founder-approved ID before activation; "" => E_MODEL_NOT_APPROVED
+  max_input_tokens: 60000
+  max_output_tokens: 8000
+  max_rounds_per_gate: 3
+budget:
+  monthly_allowance_usd: 20    # spending TARGET enforced by the workflow ledger, not a provider hard cap
+  prices_usd_per_million_tokens: {}   # { "<model_id>": { input: <usd>, output: <usd> } }; missing entry => E_BUDGET_STOP
+transport:
+  review_branch: automation/reviews

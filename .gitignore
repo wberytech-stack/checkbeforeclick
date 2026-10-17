@@ -45,3 +45,6 @@ next-env.d.ts
 # Local audit outputs and Supabase link metadata (never commit)
 /audit/
 supabase/.temp/
+
+# CBC automation: local review deliveries and runner output (Gate 005G)
+.agents/outbox/

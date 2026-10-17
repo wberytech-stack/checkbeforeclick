@@ -7,8 +7,9 @@
 #   evidence:
 #     - { type: commit | branch | file | gate_doc | git_log, ref: "<sha | path[:line] | branch>" }
 #   verified_at: YYYY-MM-DD   # date the evidence was last inspected in a session
-#   Dates are repository-local calendar dates (the founder's timezone, UTC-04:00 in
-#   October 2026). Merge records written by the Gate 005E reconciler use the merge
+#   Dates are calendar dates in the local execution environment's timezone
+#   (UTC-04:00 for the recorded checks; the merge commits' committer dates carry
+#   the same offset). Merge records written by the Gate 005E reconciler use the merge
 #   commit's committer date (scripts/state-reconcile/reconcile.ts apply()), so they
 #   stay deterministic; snapshot_date is the date the whole file was last re-verified.
 #   status: verified | unverified

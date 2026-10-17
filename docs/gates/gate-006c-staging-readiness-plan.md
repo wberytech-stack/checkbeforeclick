@@ -60,7 +60,7 @@ Gate 006C passes only when all of these hold:
 | P5b | Creating the 7 secrets with **values** copied from Vercel | **Not approved.** A separate founder-only action (secrets; AGENTS.md sections 6.3 and 20) | Names listed in the portal, never values |
 | P6 | Plain values decided: `INNGEST_ENV` (staging branch environment name), `WEB_RISK_PROVIDER_ENABLED`, `DOMAIN_AGE_PROVIDER_ENABLED` (copy current Vercel Preview values) | Vercel dashboard (names and non-secret values) | Values, since they are not secrets |
 | P7 | Budget alert ($300) still active; optional alert scoped to the new resources | Cost Management | Screenshot |
-| P8 | Phase B production cost decision (section 4), taken **before** any provisioning step | Founder | Recorded decision (option 1 or 2); no default is assumed |
+| P8 | Phase B production cost decision (section 4), taken **before** any provisioning step | Founder | **Decided 2026-10-17: option 2** (`productionMinReplicas`, 0 until cutover); implemented in PR #37 |
 
 Off limits and unchanged: the `cbcpgadmin` item and `pg-cbc-prod-cc-001`
 (`.agents/state.yaml` `off_limits`). Gate 006C does not touch the Azure
@@ -135,6 +135,14 @@ Either way, from B7 on, the production app runs the production configuration
 (production Supabase project and Inngest keys) on its default Azure FQDN,
 although no DNS points at it until Gate 006D.
 
+**P8 decided (2026-10-17): option 2.** The founder approved preparing the
+offline, separately reviewed Bicep change: `productionMinReplicas` is 0 until
+cutover, and set to 1 when production is activated. Scale to zero removes the
+always-on replica charge, not all Azure cost. The change, cost notes,
+Phase B smoke implications, and the explicit cutover step are in
+`docs/gates/gate-006c-p8-production-min-replicas.md`. Once it is merged, the
+B6 expectation for production is `minReplicas: 0`.
+
 Cost evidence for 006C: Cost Management for the resource group after 24–48
 hours, compared with the estimate.
 
@@ -158,9 +166,9 @@ hours, compared with the estimate.
 ## 6. Execution sequence (founder approval points marked **A**)
 
 1. **A** Approve starting Gate 006C (names this plan's scope).
-2. **A** Decide P8 (production cost timing; section 4). If option 2 is chosen,
-   its Bicep change is reviewed and merged first. P5a (secret names) was
-   confirmed by the founder on 2026-10-17.
+2. **A** P8 decided 2026-10-17 (option 2). Its Bicep change (PR #37) is
+   reviewed and merged before B4. P5a (secret names) was confirmed by the
+   founder on 2026-10-17.
 3. P1–P4 and P6–P7 completed; B1–B3 pass (offline).
 4. **A** Authorize B4 (Phase A what-if; Azure access) and review its output
    against section 3.
@@ -231,8 +239,8 @@ documentation on a gate branch only.
 1. Approve starting Gate 006C when provisioning is ready (P1–P8).
 2. (Resolved 2026-10-17) The founder confirmed the Key Vault secret names
    (P5a). Creating the secret values (P5b) is still a separate approval.
-3. Phase B production cost timing (P8, section 4), decided before any
-   provisioning. No option is assumed.
+3. (Resolved 2026-10-17) Phase B production cost timing (P8): option 2,
+   `productionMinReplicas` 0 until cutover (PR #37).
 4. Authorize each Azure step separately, including the `what-if` runs B4 and
    B6, which change nothing but still access Azure.
 5. (Resolved 2026-10-17) The founder approved installing the Bicep CLI locally;

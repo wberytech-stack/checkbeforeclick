@@ -28,7 +28,9 @@ param secretNames object
 @description('Plain (non-secret) environment variables for this environment')
 param plainEnv array
 
+@description('Minimum replicas: 0 allows scale to zero (staging; production before cutover), 1 keeps one replica running.')
 @minValue(0)
+@maxValue(1)
 param minReplicas int
 
 @minValue(1)

@@ -14,7 +14,9 @@ import path from "node:path";
 
 const ROOT = process.cwd();
 const YAML = createRequire(path.join(ROOT, "package.json"))("yaml") as typeof import("yaml");
-const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
+// Line endings are normalized so the checks give the same result on an LF checkout
+// (CI) and a CRLF checkout (Windows with core.autocrlf=true).
+const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8").replace(/\r\n?/g, "\n");
 
 let failures = 0;
 let passes = 0;
@@ -189,8 +191,33 @@ check("bicep: Log Analytics daily cap set", /dailyQuotaGb/.test(bicep));
 check("bicep: AcrPull role id", bicep.includes("7f951dda-4ed3-4680-a7ca-43fe172d538d"));
 check("bicep: Key Vault Secrets User role id", bicep.includes("4633458b-17de-408a-b874-0445c86b69e6"));
 check("bicep: secrets via keyVaultUrl + identity only", /keyVaultUrl:/.test(bicep) && !/\bvalue:\s*'[^']*'/.test(bicep.split("secrets:")[1]?.split("template:")[0] ?? ""));
-check("bicep: staging minReplicas 0, production minReplicas 1",
-  /name: 'web-staging'[\s\S]*?minReplicas: 0/.test(bicep) && /name: 'web-production'[\s\S]*?minReplicas: 1/.test(bicep));
+// Gate 006C decision P8: production minimum replicas is a parameter (0 before cutover,
+// 1 when production is activated); staging stays at a fixed 0.
+{
+  const mainBicep = read(path.join(bicepDir, "main.bicep"));
+  const moduleBlock = (name: string) =>
+    mainBicep.match(new RegExp(`^module \\w+ 'modules/web-app\\.bicep'[^\\n]*\\n  name: '${name}'[\\s\\S]*?\\n\\}`, "m"))?.[0] ?? "";
+  const stg = moduleBlock("web-staging");
+  const prod = moduleBlock("web-production");
+  const decl = mainBicep.match(/((?:^@[^\n]*\n|^\s+\d+\n|^\]\)\n)*)^param productionMinReplicas (\w+)(.*)$/m);
+  check("P8: productionMinReplicas is declared as int", decl?.[2] === "int", decl?.[0] ?? "missing");
+  check("P8: productionMinReplicas has no default (omitting it fails the deployment)", decl !== null && decl[3].trim() === "");
+  check("P8: productionMinReplicas is restricted to @allowed([0, 1])",
+    /@allowed\(\[\s*0\s+1\s*\]\)\s*\nparam productionMinReplicas int/.test(mainBicep));
+  check("P8: production module passes minReplicas: productionMinReplicas", /\n    minReplicas: productionMinReplicas\n/.test(prod));
+  check("P8: production keeps maxReplicas 3", /\n    maxReplicas: 3\n/.test(prod));
+  check("P8: staging module keeps minReplicas 0 and maxReplicas 1", /\n    minReplicas: 0\n/.test(stg) && /\n    maxReplicas: 1\n/.test(stg));
+  check("P8: staging module does not use productionMinReplicas", stg !== "" && !stg.includes("productionMinReplicas"));
+  check("P8: productionMinReplicas is used only by the production module",
+    (mainBicep.match(/productionMinReplicas/g) ?? []).length === 2 && prod.includes("productionMinReplicas"));
+  check("P8: no hardcoded production minReplicas remains", !/\n    minReplicas: 1\n/.test(mainBicep));
+  const pmr = pv("productionMinReplicas");
+  check("P8: parameters file sets productionMinReplicas to the pre-cutover value 0",
+    Number.isInteger(pmr) && pmr === 0, JSON.stringify(pmr));
+  const mod = read(path.join(bicepDir, "modules", "web-app.bicep"));
+  check("P8: web-app.bicep bounds minReplicas to 0..1 (@minValue(0), @maxValue(1))",
+    /@minValue\(0\)\n@maxValue\(1\)\nparam minReplicas int/.test(mod));
+}
 check("bicep: probes on /api/healthz port 3000", /path: '\/api\/healthz'/.test(bicep) && /targetPort: 3000/.test(bicep));
 check("bicep: ingress https only", /allowInsecure: false/.test(bicep));
 check("bicep: apps are Phase B only (deployApps, default false)",
@@ -249,13 +276,23 @@ check("bicep params file: no key that main.bicep does not declare (ARM rejects u
   fileKeys.every((k) => mainParams.some((p) => p.name === k)),
   fileKeys.filter((k) => !mainParams.some((p) => p.name === k)).join(","));
 const modParams = bicepParams(modSrc);
-for (const m of mainSrc.matchAll(/^module\s+(\w+)\s+'modules\/web-app\.bicep'[\s\S]*?\n  params: \{\n([\s\S]*?)\n  \}\n\}/gm)) {
-  const passed = [...m[2].matchAll(/^\s{4}(\w+):/gm)].map((x) => x[1]);
-  check(`bicep module ${m[1]}: passes every required web-app.bicep param and no unknown one`,
+// One check per expected module, so a block that cannot be parsed fails instead of
+// silently producing no check at all.
+const moduleParamBlocks = new Map(
+  [...mainSrc.matchAll(/^module\s+(\w+)\s+'modules\/web-app\.bicep'[\s\S]*?\n  params: \{\n([\s\S]*?)\n  \}\n\}/gm)]
+    .map((m) => [m[1], m[2]] as const));
+for (const name of ["staging", "production"]) {
+  const block = moduleParamBlocks.get(name);
+  const passed = block === undefined ? [] : [...block.matchAll(/^\s{4}(\w+):/gm)].map((x) => x[1]);
+  check(`bicep module ${name}: passes every required web-app.bicep param and no unknown one`,
+    block !== undefined &&
     modParams.filter((p) => p.required).every((p) => passed.includes(p.name)) &&
     passed.every((p) => modParams.some((q) => q.name === p)),
-    `passed=${passed.join(",")}`);
+    block === undefined ? "params block not found or not parseable" : `passed=${passed.join(",")}`);
 }
+check("bicep: every web-app module declaration has a parseable params block",
+  moduleParamBlocks.size === (mainSrc.match(/^module\s+\w+\s+'modules\/web-app\.bicep'/gm) ?? []).length,
+  `parsed=${[...moduleParamBlocks.keys()].join(",")}`);
 check("bicep: both web-app modules are invoked", (mainSrc.match(/^module\s+\w+\s+'modules\/web-app\.bicep'/gm) ?? []).length === 2);
 const vaultKeys = [...modSrc.matchAll(/vaultKey:\s*'(\w+)'/g)].map((m) => m[1]).sort();
 for (const k of ["stagingSecretNames", "productionSecretNames"]) {

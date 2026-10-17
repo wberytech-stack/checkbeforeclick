@@ -12,7 +12,11 @@ the first Azure-touching step of Gate 006C: the Phase A `what-if` (B4 in
   20).
 - Nothing in this document was executed against Azure. No secret values were
   created or read, and no GitHub setting changed.
-- Base: `master@3fad5db` (PR #35 merged, including the F1 compile fix).
+- Base: `master` **after PR #37 (P8) merges**. First written against
+  `master@3fad5db` and merged in PR #36 (`e157572`); refreshed in PR #37
+  because P8 changes `main.bicep` and `main.parameters.json`. The files under
+  `infra/azure/hosting/` are then exactly those of commit `336fa30`, the last
+  commit that changes them.
 
 ## 1. Decision recorded: P5a (Key Vault secret names)
 
@@ -34,22 +38,27 @@ staging-readiness plan (P5a)." The confirmed names (`main.parameters.json`):
 That is 7 distinct names. **P5b (creating the secrets with values) remains
 unapproved**, and B4 does not need it: Phase A never references a secret.
 
-## 2. Verified inputs (offline, 2026-10-17 00:58 -04:00)
+## 2. Verified inputs (offline; refreshed 2026-10-17 for P8)
 
 | Check | Result |
 | --- | --- |
 | Bicep CLI | 0.48.1 (cec7951cf6), installed with founder approval |
-| `bicep build infra/azure/hosting/main.bicep` on `master@3fad5db` | Exit 0, no diagnostics |
+| `bicep build infra/azure/hosting/main.bicep` (infra as of `336fa30`, PR #37 branch merged with `master@e157572`) | Exit 0, no diagnostics |
 | `bicep lint` on `main.bicep` and `modules/web-app.bicep` | Exit 0, no diagnostics |
-| `scripts/azure-hosting/test-hosting-safety.ts` | 92 passed, 0 failed |
-| SHA-256 `infra/azure/hosting/main.bicep` | `2c62b1415aff39dfa8bdb5711680158e1c273de3a3fb114d7bc6fd728a0e2bfd` |
-| SHA-256 `infra/azure/hosting/modules/web-app.bicep` | `7b9e114640d98783fa1d269df44e77271b999a42273613a88892f77eedeaa947` |
-| SHA-256 `infra/azure/hosting/main.parameters.json` | `d281102721b5ba547e20a08198dd356c02e0ae5e9f973ab9a86e67be9ce86d16` |
+| `scripts/azure-hosting/test-hosting-safety.ts` | 103 passed, 0 failed (LF and CRLF checkouts) |
+| Compiled ARM | 12 required parameters, all in `main.parameters.json`; 6 unconditional resources |
+| SHA-256 `infra/azure/hosting/main.bicep` (LF) | `42ac6d5a85bba47ed45587639eacad40415cc7da6da14867078eba20fad87c2a` |
+| SHA-256 `infra/azure/hosting/modules/web-app.bicep` (LF) | `699dfb2c0366ba2e770ecf77363e22be4386ceaf3bb9da06632f0bd839b109a7` |
+| SHA-256 `infra/azure/hosting/main.parameters.json` (LF) | `9ce5e0b64fd7038119e7d1efbae720aa1bb5bcc12fe359f26236722bca2f8716` |
 
-The hashes are taken on a checkout with Git's line endings as stored on this
-machine. If the founder's checkout differs only in line endings, the hashes
-differ; `git rev-parse HEAD` = `3fad5db…` (or a later master with no change
-under `infra/azure/hosting/`) is the authoritative check.
+Earlier values, before P8, at `master@3fad5db`: `main.bicep` `2c62b141…`,
+`web-app.bicep` `7b9e1146…`, `main.parameters.json` `d2811027…`. Safety was
+92/92 then.
+
+The hashes are of LF files. A Windows checkout with `core.autocrlf=true` has
+CRLF files and different hashes. **The authoritative check is Git:**
+`git diff --stat 336fa30 HEAD -- infra/azure/hosting` must print nothing
+(section 5, step 1).
 
 ## 3. What B4 evaluates (from the compiled ARM template)
 
@@ -70,8 +79,10 @@ resources**. The 2 app deployments are conditional and are skipped.
   (default `0.5`), `location` (default `resourceGroup().location`), `tags`
   (default).
 - **Parameters Phase A ignores:** `stagingAppName`, `productionAppName`,
-  `deployApps`, `stagingImage`, `productionImage`, both `*SecretNames`, both
-  `*PlainEnv`.
+  `deployApps`, `stagingImage`, `productionImage`, `productionMinReplicas`
+  (P8), both `*SecretNames`, both `*PlainEnv`. `productionMinReplicas` has no
+  default, so the parameters file must still carry it even for Phase A. It
+  does (`0`), and the B4 commands pass that file.
 - **Placeholders:** `main.parameters.json` still has 6 `REPLACE_WITH_` values
   (4 in `stagingPlainEnv`, 2 in `productionPlainEnv`). They feed only the Phase
   B app deployments, so they **do not block B4**. They must be filled before B6.
@@ -86,14 +97,14 @@ resources**. The 2 app deployments are conditional and are skipped.
 | # | Item | Evidence in the repository | Status for B4 |
 | --- | --- | --- | --- |
 | A1 | **Founder authorization for B4** (names the action) | None yet | **Blocker** |
-| A2 | P8 (Phase B production cost timing). The merged plan's sequence (section 6, step 2) decides it before any Azure step | Not decided | **Blocker under the plan's order**; the founder can decide it or amend the order |
+| A2 | P8 (Phase B production cost timing). The merged plan's sequence (section 6, step 2) decides it before any Azure step | **Decided 2026-10-17: option 2** (`productionMinReplicas`, 0 until cutover), implemented in PR #37 (`docs/gates/gate-006c-p8-production-min-replicas.md`) | Not a blocker once PR #37 is merged. Run B4 after that merge, so the previewed template is the one that will be applied |
 | A3 | P1: right subscription and tenant; founder holds Owner or User Access Administrator on `rg-cbc-prod-canadacentral-001` | Not in the repository | Founder confirms (the B4 commands below show the signed-in account) |
 | A4 | RG location is `canadacentral` (template location = RG location) | `docs/azure/FOUNDATION.md:641-642`; audit 2026-06-19 | Historical; B4 prints it (step 3) |
 | A5 | `kv-cbc-prod-cc-001` is in `rg-cbc-prod-canadacentral-001` | `docs/azure/FOUNDATION.md:671-673` | Historical; if wrong, B4 fails with a not-found or scope error (stop condition) |
 | A6 | P4: vault uses Azure RBAC | Audit 2026-06-19 ("Standard, RBAC, purge-protected") | Historical. Not needed for B4 to succeed (a role assignment is created either way), but needed for Phase B runtime |
 | A7 | P2: providers registered (`Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.OperationalInsights`, `Microsoft.ManagedIdentity`) | Not in the repository | `what-if` reports an unregistered provider as an error (stop condition) |
 | A8 | P3: names available, especially the global registry name `crcbcprodcc001` | Not in the repository | **`what-if` does not detect a global name clash**: it shows Create, and only B5 would fail. Check before B5 (an Azure read, so under the same authorization or a separate one) |
-| A9 | Founder workstation: Azure CLI signed in; repository at `master@3fad5db` | - | Founder |
+| A9 | Founder workstation: Azure CLI signed in; repository at `master` including the PR #37 merge (infra identical to `336fa30`) | - | Founder |
 | A10 | P5b secret values, P6 plain values, GitHub environments and variables, OIDC | - | **Not needed for B4** |
 
 ## 5. Exact commands (founder only, after authorization)
@@ -107,12 +118,18 @@ bash alike).
    git fetch origin
    ```
    ```bash
-   git switch --detach 3fad5db
+   git switch --detach origin/master
    ```
    ```bash
-   git diff --stat 3fad5db -- infra/azure/hosting
+   git log --oneline -1
    ```
-   The last command must print nothing.
+   ```bash
+   git diff --stat 336fa30 HEAD -- infra/azure/hosting
+   ```
+   The `git log` line records the exact master commit previewed; include it
+   with the shared output. The last command must print nothing. It also proves
+   PR #37 is merged, because before that merge `main.bicep` differs from
+   `336fa30`.
 
 2. Confirm the Azure context (Azure read):
 
@@ -193,7 +210,8 @@ Not expected: any `~ Modify`, `- Delete`, `* Deploy`, or a Container App.
 6. A literal secret or key value appears in the output.
 7. The subscription, tenant, or resource group differs from the expected CBC
    values.
-8. `git diff --stat 3fad5db -- infra/azure/hosting` is not empty.
+8. `git diff --stat 336fa30 HEAD -- infra/azure/hosting` is not empty (the
+   template differs from the reviewed one, or PR #37 is not merged yet).
 
 ## 9. After B4
 
@@ -202,5 +220,9 @@ Not expected: any `~ Modify`, `- Delete`, `* Deploy`, or a Container App.
 - B5 (Phase A create) needs **separate** founder authorization. Before B5:
   A8 (registry name availability) and the remaining P-items in the plan's
   sequence.
-- Nothing in B4 incurs cost. Costs start at B5 (registry, Log Analytics), and
-  production replica costs at B7 (P8).
+- Nothing in B4 incurs cost. Costs start at B5 (registry, Log Analytics).
+  Under P8 option 2, B7 creates production with `minReplicas: 0`, so replica
+  compute is billed only while a replica runs. The always-on replica charge
+  starts at the explicit cutover change to `1` (Gate 006D;
+  `docs/gates/gate-006c-p8-production-min-replicas.md`). Scale to zero is not
+  zero total cost.

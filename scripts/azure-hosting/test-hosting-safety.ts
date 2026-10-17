@@ -14,7 +14,9 @@ import path from "node:path";
 
 const ROOT = process.cwd();
 const YAML = createRequire(path.join(ROOT, "package.json"))("yaml") as typeof import("yaml");
-const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
+// Line endings are normalized so the checks give the same result on an LF checkout
+// (CI) and a CRLF checkout (Windows with core.autocrlf=true).
+const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8").replace(/\r\n?/g, "\n");
 
 let failures = 0;
 let passes = 0;
@@ -274,13 +276,23 @@ check("bicep params file: no key that main.bicep does not declare (ARM rejects u
   fileKeys.every((k) => mainParams.some((p) => p.name === k)),
   fileKeys.filter((k) => !mainParams.some((p) => p.name === k)).join(","));
 const modParams = bicepParams(modSrc);
-for (const m of mainSrc.matchAll(/^module\s+(\w+)\s+'modules\/web-app\.bicep'[\s\S]*?\n  params: \{\n([\s\S]*?)\n  \}\n\}/gm)) {
-  const passed = [...m[2].matchAll(/^\s{4}(\w+):/gm)].map((x) => x[1]);
-  check(`bicep module ${m[1]}: passes every required web-app.bicep param and no unknown one`,
+// One check per expected module, so a block that cannot be parsed fails instead of
+// silently producing no check at all.
+const moduleParamBlocks = new Map(
+  [...mainSrc.matchAll(/^module\s+(\w+)\s+'modules\/web-app\.bicep'[\s\S]*?\n  params: \{\n([\s\S]*?)\n  \}\n\}/gm)]
+    .map((m) => [m[1], m[2]] as const));
+for (const name of ["staging", "production"]) {
+  const block = moduleParamBlocks.get(name);
+  const passed = block === undefined ? [] : [...block.matchAll(/^\s{4}(\w+):/gm)].map((x) => x[1]);
+  check(`bicep module ${name}: passes every required web-app.bicep param and no unknown one`,
+    block !== undefined &&
     modParams.filter((p) => p.required).every((p) => passed.includes(p.name)) &&
     passed.every((p) => modParams.some((q) => q.name === p)),
-    `passed=${passed.join(",")}`);
+    block === undefined ? "params block not found or not parseable" : `passed=${passed.join(",")}`);
 }
+check("bicep: every web-app module declaration has a parseable params block",
+  moduleParamBlocks.size === (mainSrc.match(/^module\s+\w+\s+'modules\/web-app\.bicep'/gm) ?? []).length,
+  `parsed=${[...moduleParamBlocks.keys()].join(",")}`);
 check("bicep: both web-app modules are invoked", (mainSrc.match(/^module\s+\w+\s+'modules\/web-app\.bicep'/gm) ?? []).length === 2);
 const vaultKeys = [...modSrc.matchAll(/vaultKey:\s*'(\w+)'/g)].map((m) => m[1]).sort();
 for (const k of ["stagingSecretNames", "productionSecretNames"]) {

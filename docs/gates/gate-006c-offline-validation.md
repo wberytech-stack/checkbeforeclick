@@ -135,8 +135,10 @@ evidence (AGENTS.md section 15), together with the raw outputs.
 
 ## Remaining before any Azure step
 
-1. Founder confirms the Key Vault secret names (P5a) and decides the Phase B
-   production cost timing (P8).
+1. The founder confirmed the Key Vault secret names (P5a) on 2026-10-17. The
+   Phase B production cost timing (P8) is still open. The B4 runbook,
+   prerequisites, and stop conditions are in
+   `docs/gates/gate-006c-b4-whatif-handoff.md`.
 2. Offline B1–B3 are **done by Claude** with Bicep CLI v0.48.1 (builds and lint
    clean on this branch). The founder may repeat them, but they are no longer
    blocking. The F1 fix must be merged before B4, so the `what-if` uses the

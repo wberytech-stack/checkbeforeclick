@@ -65,6 +65,21 @@ merged_prs_on_master:
     gate: 006B
     evidence: [{type: commit, ref: "754b945"}]
     verified_at: 2026-10-16
+  - pr: 33
+    gate: 006B
+    scope: post-merge verification and state reconciliation (state.yaml only)
+    evidence: [{type: commit, ref: "7850960"}]
+    verified_at: 2026-10-17
+  - pr: 34
+    gate: 006C
+    scope: staging readiness plan (docs only)
+    evidence: [{type: commit, ref: "e63b87b"}]
+    verified_at: 2026-10-17
+  - pr: 35
+    gate: 006C
+    scope: offline validation; BCP138 fix in modules/web-app.bicep; structural safety checks
+    evidence: [{type: commit, ref: "3fad5db"}]
+    verified_at: 2026-10-17
 
 merged_branches_on_master:
   # founder-approved merges. merge_method absent = merge commit (first-parent + second parent == branch_head);
@@ -133,6 +148,27 @@ merged_branches_on_master:
     content: "Gate 006B Azure Container Apps build artifacts, local only (PR #32, GitHub merge commit; tree identical to the reviewed 3cfe6af)"
     evidence: [{type: commit, ref: "754b945"}, {type: git_log, ref: "merge-base --is-ancestor 3cfe6af origin/master; 3cfe6af = refs/pull/32/head; git diff 3cfe6af 754b945 empty"}]
     verified_at: 2026-10-16
+  - branch: gate-006b-post-merge-reconciliation
+    branch_head: "04dd3b5"
+    merge_commit: "7850960d59d7d178871cbb78cba8abf4209f09ba"
+    parents: ["754b945", "04dd3b5"]
+    content: "state.yaml records for the Gate 006B merge and PRs #26/#31/#32; date convention (PR #33, GitHub merge commit)"
+    evidence: [{type: commit, ref: "7850960"}, {type: git_log, ref: "merge-base --is-ancestor 04dd3b5 origin/master; 04dd3b5 = refs/pull/33/head"}]
+    verified_at: 2026-10-17
+  - branch: gate-006c-staging-readiness-plan
+    branch_head: "33f8ba9"
+    merge_commit: "e63b87bfec28b57b6aaab0337383d6a21a33a900"
+    parents: ["7850960", "33f8ba9"]
+    content: "Gate 006C staging readiness plan, docs only (PR #34, GitHub merge commit)"
+    evidence: [{type: commit, ref: "e63b87b"}, {type: git_log, ref: "merge-base --is-ancestor 33f8ba9 origin/master; 33f8ba9 = refs/pull/34/head"}]
+    verified_at: 2026-10-17
+  - branch: gate-006c-offline-validation
+    branch_head: "fbd0094"
+    merge_commit: "3fad5db33079647a0e340886d67a8e03e50105b4"
+    parents: ["e63b87b", "fbd0094"]
+    content: "Gate 006C offline validation: BCP138 fix, 12 structural checks, Bicep CLI 0.48.1 compile/lint evidence (PR #35, GitHub merge commit)"
+    evidence: [{type: commit, ref: "3fad5db"}, {type: git_log, ref: "merge-base --is-ancestor fbd0094 origin/master; fbd0094 = refs/pull/35/head"}]
+    verified_at: 2026-10-17
 
 unmerged_gate_branches:
   # not ancestors of origin/master (derived from git, never a stored SHA); base and push_state per branch
@@ -261,6 +297,18 @@ gates:
     azure_state: {status: unverified, note: "nothing provisioned or deployed by agents; Bicep what-if, OIDC and Key Vault resolution not exercised"}
     evidence: [{type: commit, ref: "754b945"}, {type: gate_doc, ref: docs/gates/gate-006b-azure-hosting-build.md}]
     verified_at: 2026-10-16
+  "006C":
+    status: in_progress_offline
+    scope: >-
+      Founder-approved 2026-10-17 for planning and offline validation only (no Azure access). Plan merged (PR #34, e63b87b); offline validation merged (PR #35, 3fad5db): BCP138 compile error in the 006B module fixed and compiler-confirmed with Bicep CLI 0.48.1 (installed with founder approval); offline B1-B3 pass. B4 what-if runbook prepared (docs/gates/gate-006c-b4-whatif-handoff.md); B4-B7 not run.
+    decisions:
+      - {id: P5a, status: confirmed, date: 2026-10-17, note: "founder confirmed the 7 Key Vault secret names in the merged plan"}
+      - {id: P5b, status: not_approved, note: "creating secret values is a separate founder-only action"}
+      - {id: P8, status: open, note: "Phase B production cost timing; the plan decides it before any Azure step"}
+    tests: "92 passed, 0 failed (scripts/azure-hosting/test-hosting-safety.ts on master@3fad5db); bicep build/lint exit 0 (CLI 0.48.1)"
+    azure_state: {status: unverified, note: "no Azure access by agents; what-if, provisioning and deployment not run"}
+    evidence: [{type: commit, ref: "e63b87b"}, {type: commit, ref: "3fad5db"}, {type: gate_doc, ref: docs/gates/gate-006c-staging-readiness-plan.md}, {type: gate_doc, ref: docs/gates/gate-006c-offline-validation.md}]
+    verified_at: 2026-10-17
   "agent-framework":
     status: merged_binding
     note: 'AGENTS.md on master is marked "Status: BINDING" (merged via cbddac2); section 20 (Azure deployments/resources, hard rule) added by Gate 006A via 7e27d04'

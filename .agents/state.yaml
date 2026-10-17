@@ -85,6 +85,11 @@ merged_prs_on_master:
     scope: B4 Phase A what-if runbook (offline); P5a record; state records
     evidence: [{type: commit, ref: "e157572"}]
     verified_at: 2026-10-17
+  - pr: 37
+    gate: 006C
+    scope: P8 productionMinReplicas parameter (0 until cutover); CRLF-safe safety test; B4 runbook refresh
+    evidence: [{type: commit, ref: "c220dda"}]
+    verified_at: 2026-10-17
 
 merged_branches_on_master:
   # founder-approved merges. merge_method absent = merge commit (first-parent + second parent == branch_head);
@@ -180,6 +185,13 @@ merged_branches_on_master:
     parents: ["3fad5db", "99888a0"]
     content: "Gate 006C B4 Phase A what-if runbook (offline), P5a record, state records (PR #36, GitHub merge commit)"
     evidence: [{type: commit, ref: "e157572"}, {type: git_log, ref: "merge-base --is-ancestor 99888a0 origin/master; 99888a0 = refs/pull/36/head"}]
+    verified_at: 2026-10-17
+  - branch: gate-006c-p8-production-min-replicas
+    branch_head: "87fabe9"
+    merge_commit: "c220dda5bab99751b25f51fe583636f33989c2a3"
+    parents: ["e157572", "87fabe9"]
+    content: "Gate 006C P8: productionMinReplicas parameter, CRLF-safe safety test, B4 runbook refresh (PR #37, GitHub merge commit; tree identical to 87fabe9)"
+    evidence: [{type: commit, ref: "c220dda"}, {type: git_log, ref: "merge-base --is-ancestor 87fabe9 origin/master; 87fabe9 = refs/pull/37/head; git diff 87fabe9 c220dda empty"}]
     verified_at: 2026-10-17
 
 unmerged_gate_branches:
@@ -310,16 +322,17 @@ gates:
     evidence: [{type: commit, ref: "754b945"}, {type: gate_doc, ref: docs/gates/gate-006b-azure-hosting-build.md}]
     verified_at: 2026-10-16
   "006C":
-    status: in_progress_offline
+    status: in_progress_phase_a_created
     scope: >-
-      Founder-approved 2026-10-17 for planning and offline validation only (no Azure access). Plan merged (PR #34, e63b87b); offline validation merged (PR #35, 3fad5db): BCP138 compile error in the 006B module fixed and compiler-confirmed with Bicep CLI 0.48.1 (installed with founder approval); offline B1-B3 pass. B4 what-if runbook merged (PR #36, e157572; docs/gates/gate-006c-b4-whatif-handoff.md) and refreshed for P8 in PR #37; B4-B7 not run.
+      Started 2026-10-17 for planning and offline validation (PRs #34-#37: plan, BCP138 fix, B4 runbook, P8). Founder then authorized and ran B4 (Phase A what-if: PASSED, 6 to create, 2 to ignore) and B5 (Phase A create: Succeeded; 5 read-only post-checks passed) against master@c220dda; Claude ran no Azure command. Phase A resources exist; no Container App; P5b, P6, OIDC/GitHub, Supabase redirect, B6/B7 not started (docs/gates/gate-006c-b4-b5-results.md).
     decisions:
       - {id: P5a, status: confirmed, date: 2026-10-17, note: "founder confirmed the 7 Key Vault secret names in the merged plan"}
       - {id: P5b, status: not_approved, note: "creating secret values is a separate founder-only action"}
       - {id: P8, status: decided, date: 2026-10-17, note: "option 2: productionMinReplicas 0 until cutover, 1 at an explicit cutover change; implemented in PR #37 (docs/gates/gate-006c-p8-production-min-replicas.md)"}
     tests: "92 passed, 0 failed (scripts/azure-hosting/test-hosting-safety.ts on master@3fad5db); 103 passed, 0 failed on the PR #37 branch; bicep build/lint exit 0 (CLI 0.48.1)"
-    azure_state: {status: unverified, note: "no Azure access by agents; what-if, provisioning and deployment not run"}
-    evidence: [{type: commit, ref: "e63b87b"}, {type: commit, ref: "3fad5db"}, {type: gate_doc, ref: docs/gates/gate-006c-staging-readiness-plan.md}, {type: gate_doc, ref: docs/gates/gate-006c-offline-validation.md}]
+    azure_state: {status: founder_reported, date: 2026-10-17, note: "Phase A created by the founder (deployment cbc-hosting-phase-a Succeeded): id-cbc-web-cc-001, crcbcprodcc001 (Basic), log-cbc-prod-cc-001, cae-cbc-prod-cc-001, AcrPull and Key Vault Secrets User assignments (ServicePrincipal). Evidence is founder-run CLI output recorded in the gate doc, not repository evidence; agents have no Azure access"}
+    phase_b_inputs: {stagingPublicOrigin: "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io", registryLoginServer: crcbcprodcc001.azurecr.io}
+    evidence: [{type: commit, ref: "e63b87b"}, {type: commit, ref: "3fad5db"}, {type: commit, ref: "c220dda"}, {type: gate_doc, ref: docs/gates/gate-006c-staging-readiness-plan.md}, {type: gate_doc, ref: docs/gates/gate-006c-offline-validation.md}, {type: gate_doc, ref: docs/gates/gate-006c-b4-b5-results.md}]
     verified_at: 2026-10-17
   "agent-framework":
     status: merged_binding

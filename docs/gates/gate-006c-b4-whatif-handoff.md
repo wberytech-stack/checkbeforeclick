@@ -2,6 +2,11 @@
 
 ## Status
 
+> **Update 2026-10-17: B4 was run by the founder and PASSED** (6 to create, 2
+> to ignore). B5 (Phase A create) then succeeded. Results:
+> `docs/gates/gate-006c-b4-b5-results.md`. The text below is the runbook as
+> prepared.
+
 **Prepared offline. B4 has not been run.** This is the founder's runbook for
 the first Azure-touching step of Gate 006C: the Phase A `what-if` (B4 in
 `docs/gates/gate-006c-staging-readiness-plan.md`, section 3).

@@ -2,6 +2,12 @@
 
 ## Status
 
+> **Progress, 2026-10-17:** Gate 006C was started by the founder. B1–B3 passed
+> offline (PR #35), and P8 was decided (PR #37). The founder ran **B4 (passed)**
+> and **B5 (Phase A created)**; see `docs/gates/gate-006c-b4-b5-results.md`.
+> Sequence step 6 onward (secrets, plain values, OIDC/GitHub, Supabase
+> redirect, B6/B7) has **not** started. The text below is the plan as approved.
+
 **Plan only. Gate 006C has not started.** This document prepares the first
 Azure **staging** deployment of CheckBeforeClick and its smoke tests. Nothing
 here was executed:

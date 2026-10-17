@@ -135,8 +135,9 @@ evidence (AGENTS.md section 15), together with the raw outputs.
 
 ## Remaining before any Azure step
 
-1. The founder confirmed the Key Vault secret names (P5a) on 2026-10-17. The
-   Phase B production cost timing (P8) is still open. The B4 runbook,
+1. The founder confirmed the Key Vault secret names (P5a) on 2026-10-17. P8
+   was decided the same day: option 2, implemented in PR #37
+   (`docs/gates/gate-006c-p8-production-min-replicas.md`). The B4 runbook,
    prerequisites, and stop conditions are in
    `docs/gates/gate-006c-b4-whatif-handoff.md`.
 2. Offline B1–B3 are **done by Claude** with Bicep CLI v0.48.1 (builds and lint

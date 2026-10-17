@@ -80,6 +80,11 @@ merged_prs_on_master:
     scope: offline validation; BCP138 fix in modules/web-app.bicep; structural safety checks
     evidence: [{type: commit, ref: "3fad5db"}]
     verified_at: 2026-10-17
+  - pr: 36
+    gate: 006C
+    scope: B4 Phase A what-if runbook (offline); P5a record; state records
+    evidence: [{type: commit, ref: "e157572"}]
+    verified_at: 2026-10-17
 
 merged_branches_on_master:
   # founder-approved merges. merge_method absent = merge commit (first-parent + second parent == branch_head);
@@ -168,6 +173,13 @@ merged_branches_on_master:
     parents: ["e63b87b", "fbd0094"]
     content: "Gate 006C offline validation: BCP138 fix, 12 structural checks, Bicep CLI 0.48.1 compile/lint evidence (PR #35, GitHub merge commit)"
     evidence: [{type: commit, ref: "3fad5db"}, {type: git_log, ref: "merge-base --is-ancestor fbd0094 origin/master; fbd0094 = refs/pull/35/head"}]
+    verified_at: 2026-10-17
+  - branch: gate-006c-b4-whatif-handoff
+    branch_head: "99888a0"
+    merge_commit: "e1575729090a13ab85ee5a8a4d72036be82e5318"
+    parents: ["3fad5db", "99888a0"]
+    content: "Gate 006C B4 Phase A what-if runbook (offline), P5a record, state records (PR #36, GitHub merge commit)"
+    evidence: [{type: commit, ref: "e157572"}, {type: git_log, ref: "merge-base --is-ancestor 99888a0 origin/master; 99888a0 = refs/pull/36/head"}]
     verified_at: 2026-10-17
 
 unmerged_gate_branches:
@@ -300,12 +312,12 @@ gates:
   "006C":
     status: in_progress_offline
     scope: >-
-      Founder-approved 2026-10-17 for planning and offline validation only (no Azure access). Plan merged (PR #34, e63b87b); offline validation merged (PR #35, 3fad5db): BCP138 compile error in the 006B module fixed and compiler-confirmed with Bicep CLI 0.48.1 (installed with founder approval); offline B1-B3 pass. B4 what-if runbook prepared (docs/gates/gate-006c-b4-whatif-handoff.md); B4-B7 not run.
+      Founder-approved 2026-10-17 for planning and offline validation only (no Azure access). Plan merged (PR #34, e63b87b); offline validation merged (PR #35, 3fad5db): BCP138 compile error in the 006B module fixed and compiler-confirmed with Bicep CLI 0.48.1 (installed with founder approval); offline B1-B3 pass. B4 what-if runbook merged (PR #36, e157572; docs/gates/gate-006c-b4-whatif-handoff.md) and refreshed for P8 in PR #37; B4-B7 not run.
     decisions:
       - {id: P5a, status: confirmed, date: 2026-10-17, note: "founder confirmed the 7 Key Vault secret names in the merged plan"}
       - {id: P5b, status: not_approved, note: "creating secret values is a separate founder-only action"}
-      - {id: P8, status: open, note: "Phase B production cost timing; the plan decides it before any Azure step"}
-    tests: "92 passed, 0 failed (scripts/azure-hosting/test-hosting-safety.ts on master@3fad5db); bicep build/lint exit 0 (CLI 0.48.1)"
+      - {id: P8, status: decided, date: 2026-10-17, note: "option 2: productionMinReplicas 0 until cutover, 1 at an explicit cutover change; implemented in PR #37 (docs/gates/gate-006c-p8-production-min-replicas.md)"}
+    tests: "92 passed, 0 failed (scripts/azure-hosting/test-hosting-safety.ts on master@3fad5db); 103 passed, 0 failed on the PR #37 branch; bicep build/lint exit 0 (CLI 0.48.1)"
     azure_state: {status: unverified, note: "no Azure access by agents; what-if, provisioning and deployment not run"}
     evidence: [{type: commit, ref: "e63b87b"}, {type: commit, ref: "3fad5db"}, {type: gate_doc, ref: docs/gates/gate-006c-staging-readiness-plan.md}, {type: gate_doc, ref: docs/gates/gate-006c-offline-validation.md}]
     verified_at: 2026-10-17

@@ -124,7 +124,7 @@ back in line.
 | Compiled ARM vs parameters file | 12 required parameters, none missing, no unknown key |
 | Phase A unconditional resources | Still 6 |
 | Compiler, temporary `.bicepparam` files (scratch, deleted) | `0` compiles and the compiled parameters carry 0; `1` compiles; `2` rejected (BCP327); `-1` rejected (BCP328); `'0'` rejected (BCP033); omitted rejected (BCP258); module alone with `minReplicas = 2` rejected (BCP327) |
-| `scripts/azure-hosting/test-hosting-safety.ts` | **102 passed, 0 failed** (11 new P8 checks) |
+| `scripts/azure-hosting/test-hosting-safety.ts` | **102 passed, 0 failed** at `336fa30` (11 new P8 checks); **103 passed, 0 failed** from `7f38246` on (line-ending fix below), on LF and CRLF checkouts |
 | Mutation run of the P8 checks (scratch copy) | **8/8 caught**: default added; `@allowed` removed; staging wired to the parameter; production hard-coded back to 1; parameters file set to 1; parameters entry removed; module `@maxValue` removed; staging raised to 1 |
 | ESLint, strict `tsc` on `scripts/azure-hosting/` | Pass |
 | `state-reconcile --check` | consistent |
@@ -135,17 +135,35 @@ staging does not use the parameter; the parameter is used only by production;
 no hard-coded production `minReplicas: 1`; the parameters file has 0; module
 bound `@minValue(0)` and `@maxValue(1)`.
 
-## Relationship to draft PR #36 (B4 handoff)
+## Line-ending independence of the safety test (commit `7f38246`)
 
-This change is kept separate from PR #36, as instructed. If it merges before
-B4 runs:
+Found while re-verifying after a reboot, and fixed with founder approval
+(2026-10-17). The safety test matched literal `\n`, so on a CRLF checkout
+(Windows with `core.autocrlf=true`, or a `git archive` export):
 
-- the B4 runbook's pinned commit (`3fad5db`) and its file hashes become stale
-  for `main.bicep` and `main.parameters.json`. Re-pin B4 to the new master
-  commit and re-record the hashes before the founder runs it;
-- the B4 expected result is unchanged (6 to create), because Phase A does not
-  use the new parameter.
+- 4 P8 checks failed falsely;
+- the two module-call checks were silently skipped.
 
-`.agents/state.yaml` is not changed here, to avoid conflicting with PR #36,
-which adds the Gate 006C entry. P8's status should be updated to "decided:
-option 2" after both merge.
+`read()` now normalizes line endings. The module-call checks now emit one check
+per expected module, which fails when its params block cannot be parsed. The
+LF tree, a CRLF copy, and a `git archive` export all pass 103/103. An
+unparseable module block now fails; the previous test reported 101 passed,
+0 failed.
+
+## Relationship to PR #36 (B4 handoff, merged)
+
+PR #36 merged into master as `e157572`. This branch was brought up to date
+with a merge commit (no rebase); the merge was conflict-free and matched
+`git merge-tree`. Because P8 changes `main.bicep` and `main.parameters.json`,
+this PR also refreshes `docs/gates/gate-006c-b4-whatif-handoff.md`:
+
+- it is re-pinned to master after this PR merges;
+- the authoritative check is `git diff --stat 336fa30 HEAD -- infra/azure/hosting`
+  printing nothing;
+- the LF file hashes are updated;
+- P8 is no longer a B4 blocker;
+- `productionMinReplicas` is listed among the parameters Phase A ignores.
+
+The B4 expected result is unchanged (6 to create).
+
+`.agents/state.yaml` records P8 as decided (option 2) and PR #36's merge.

@@ -272,20 +272,32 @@ group. Do not create a client secret.
   on Vercel. Password login is unaffected.
 - Last: `CBC_AZURE_DEPLOY_ENABLED=enabled`.
 
-**5. First image.** Run `azure-deploy` with `staging` and a master SHA. The
-run pushes `crcbcprodcc001.azurecr.io/cbc-web:<sha>-stg`, then fails closed
-because the app does not exist yet. Repeat for `production` if desired.
+**5. First images (expected failure).** Run `azure-deploy` with `staging`
+and a master SHA, then again with `production` and the same SHA (each run
+needs your approval in its `azure-<env>` environment). Before Phase B, each
+run is **expected to end in failure after pushing its image**:
+- the build job succeeds, and the deploy job signs in and pushes
+  `crcbcprodcc001.azurecr.io/cbc-web:<sha>-stg` (or `-prod`);
+- it then stops with
+  `Container App <name> not found. Image pushed as <ref>; apply Bicep Phase B with this image (Gate 006B runbook), then re-run.`;
+- nothing is deployed, and no Container App is created or changed. This red
+  run is the designed fail-closed path, not an error to debug.
 
-**6. Phase B (apps):** rerun what-if and then create with
-`deployApps=true stagingImage=<ref> productionImage=<ref>` as extra
-`--parameters`.
+Copy both image refs from the two runs' messages. **Both are required**,
+because Phase B creates the staging and production apps together.
+
+**6. Phase B (apps, required after step 5):** rerun what-if and then create
+with `deployApps=true stagingImage=<stg ref> productionImage=<prod ref>` as
+extra `--parameters`. Until Phase B is applied, every `azure-deploy` run ends
+as in step 5.
 
 **7. Staging smoke.**
 ```bash
 node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/smoke.ts https://<staging-fqdn> https://<staging-fqdn>
 ```
-Then run the manual S4–S12 checks from Gate 006A section 7. Later deploys are
-just step 5, which now updates the app.
+Then run the manual S4–S12 checks from Gate 006A section 7. After Phase B,
+later deploys are a normal `azure-deploy` run: it updates the existing app,
+waits for the new revision to be ready, and checks `/api/healthz`.
 
 **R. Rollback.** In the portal, or with
 `az containerapp revision list` / `az containerapp revision activate` and

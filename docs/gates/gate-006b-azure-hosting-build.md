@@ -15,12 +15,12 @@ Branch `gate-006b-azure-hosting-build`, cut from master `c23d2c5`.
 | # | Condition | Status |
 | --- | --- | --- |
 | 1 | No Azure access, provisioning, deploy, DNS, GitHub environment, secrets or production actions | Met. `az` was not invoked; the Bicep was not compiled against Azure. Docker ran locally on 127.0.0.1 only |
-| 2 | Deploy workflow manual-only, fail closed | Met. `workflow_dispatch` only; inert until `CBC_AZURE_DEPLOY_ENABLED=enabled`; validates inputs, variables and master ancestry before building; Azure access only in the `azure-<env>` environment |
-| 3 | Preserve Vercel production behavior; validate the Vercel preview before any merge | Code-level: see "Vercel impact" below. **The preview check is founder-run** (Claude cannot access Vercel) |
+| 2 | Deploy workflow manual-only, fail closed | Met. `workflow_dispatch` only; runs only when dispatched from `master`; inert until `CBC_AZURE_DEPLOY_ENABLED=enabled`; validates inputs, variables (including a required https `NEXT_PUBLIC_APP_URL`) and master ancestry before building; Azure access only in the `azure-<env>` environment; fails closed if the app does not exist; waits for the new revision to be ready before the health check |
+| 3 | Preserve Vercel production behavior; validate the Vercel preview before any merge | Code-level: see "Vercel impact" below. Vercel preview builds report `success` (through `dab49cf`), but the preview is behind Vercel SSO, so the **functional preview check is founder-run** |
 | 4 | Verify real routes and auth behavior before finalizing container tests | Met. The smoke expectations come from `proxy.ts`, `app/page.tsx` and `app/api/scan/**` |
 | 5 | Distinguish locally validated from Azure-pending | See the two tables under "Validation" |
 | 6 | No dependency or lockfile changes | Met. `package.json` and `package-lock.json` are unchanged. `npm ci --ignore-scripts` works (see Findings) |
-| 7 | Follow AGENTS.md; stop if more authorization is needed | Followed. No step needed more authorization |
+| 7 | Follow AGENTS.md; stop if more authorization is needed | Followed. The one app-code change outside the original scope (sign-out redirect) was stopped for, and the founder authorized it on 2026-10-16 before it was made |
 
 ## Changed files
 
@@ -30,14 +30,14 @@ Branch `gate-006b-azure-hosting-build`, cut from master `c23d2c5`.
 | `app/api/healthz/route.ts` | New. `GET` returns `{"status":"ok"}` with status 200 and `no-store`. No auth, no database, no environment reads |
 | `app/auth/signout/route.ts` | One line (founder-authorized, checkpoint 4): redirect base `process.env.NEXT_PUBLIC_APP_URL ?? request.url` |
 | `proxy.ts` | Matcher excludes exactly `/api/healthz`, so probes never call Supabase auth. All other routes are unchanged (regex checked) |
-| `Dockerfile` | New. Three stages (deps, build, runtime) on `node:24.14.0-bookworm-slim`. `npm ci --ignore-scripts`; only `NEXT_PUBLIC_*` and `CBC_BUILD_SHA` build args; runtime runs as `USER node` on port 3000 with a `HEALTHCHECK` |
+| `Dockerfile` | New. Three stages (deps, build, runtime) on `node:24.14.0-bookworm-slim`. `npm ci --ignore-scripts`; only `NEXT_PUBLIC_*` and `CBC_BUILD_SHA` build args; an empty `NEXT_PUBLIC_APP_URL` stays unset at build time; runtime runs as `USER node` on port 3000 with a `HEALTHCHECK` |
 | `.dockerignore` | New. Excludes `.env*`, `.git`, `.github`, `.claude`, key and certificate files, `.npmrc`, `docs`, `scripts`, `infra`, build output |
-| `infra/azure/hosting/main.bicep` | New. Identity, registry (Basic, admin disabled), Log Analytics (30 days, daily cap), Container Apps environment, AcrPull and Key Vault Secrets User role assignments, existing Key Vault. Apps are created in Phase B only |
-| `infra/azure/hosting/modules/web-app.bicep` | New. One Container App: user-assigned identity, registry pull by identity, Key Vault references **by name**, probes on `/api/healthz:3000`, HTTPS-only ingress |
-| `infra/azure/hosting/main.parameters.json` | New. Resource names and **Key Vault secret names** (no values). Plain-variable values are `REPLACE_WITH_…` placeholders the founder fills in |
+| `infra/azure/hosting/main.bicep` | New. Identity, registry (Basic, admin disabled), Log Analytics (30 days, daily cap), Container Apps environment, AcrPull and Key Vault Secrets User role assignments, existing Key Vault. Apps are created in Phase B only (`deployApps`). Output `stagingPublicOrigin` |
+| `infra/azure/hosting/modules/web-app.bicep` | New. One Container App: user-assigned identity, registry pull by identity, Key Vault references **by name**, probes on `/api/healthz:3000`, HTTPS-only ingress, explicit `PORT`/`HOSTNAME` |
+| `infra/azure/hosting/main.parameters.json` | New. Resource names and **Key Vault secret names** (no values). Plain variables include `INNGEST_SERVE_ORIGIN` per environment; remaining values are `REPLACE_WITH_…` placeholders the founder fills in |
 | `.github/workflows/azure-deploy.yml` | New. Manual, founder-gated deploy (below) |
-| `scripts/azure-hosting/test-hosting-safety.ts` | New. 71 static safety assertions |
-| `scripts/azure-hosting/smoke.ts` | New. Signed-out smoke checks for any base URL (local or staging) |
+| `scripts/azure-hosting/test-hosting-safety.ts` | New. 80 static safety assertions (as of `ee92bf7`) |
+| `scripts/azure-hosting/smoke.ts` | New. 11 signed-out smoke checks for any base URL (local or staging), with an optional public-origin assertion for the auth callback and sign-out redirects |
 
 ## Findings
 
@@ -127,6 +127,11 @@ Branch `gate-006b-azure-hosting-build`, cut from master `c23d2c5`.
 - **Rollback:** manual (runbook step R).
 
 ## Validation
+
+**Latest results (code head `ee92bf7`; `dab49cf` and later are docs only):** safety
+80/80; smoke 11/11 with and without `NEXT_PUBLIC_APP_URL`; `npm run build`, ESLint,
+strict TypeScript and `git diff --check` pass. The checkpoint tables below are the
+dated history.
 
 ### Locally validated (2026-10-16, evidence under `.git/cbc-evidence/`, not committed)
 

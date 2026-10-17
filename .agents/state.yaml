@@ -7,12 +7,16 @@
 #   evidence:
 #     - { type: commit | branch | file | gate_doc | git_log, ref: "<sha | path[:line] | branch>" }
 #   verified_at: YYYY-MM-DD   # date the evidence was last inspected in a session
+#   Dates are repository-local calendar dates (the founder's timezone, UTC-04:00 in
+#   October 2026). Merge records written by the Gate 005E reconciler use the merge
+#   commit's committer date (scripts/state-reconcile/reconcile.ts apply()), so they
+#   stay deterministic; snapshot_date is the date the whole file was last re-verified.
 #   status: verified | unverified
 # "unverified" = not provable from the repository; never fabricate evidence.
 
 schema_version: 4
 project: cbc
-snapshot_date: 2026-10-16
+snapshot_date: 2026-10-17
 
 repository:
   remote: github.com/wberytech-stack/checkbeforeclick
@@ -346,5 +350,5 @@ unverified:
   - GitHub PR metadata, review state and open PRs (gh unavailable; only merge commits checked)
   - Current Dependabot alert state on GitHub
   - Live state of cbc_prod (migrations applied, roles) beyond docs/azure records
-  - "What, if anything, is currently deployed from master. Not repository evidence: on 2026-10-17T03:50Z GitHub showed a Vercel Production deployment with status success for 754b945, and anonymous GETs of checkbeforeclick.com returned /api/healthz 200 (route added in 754b945)"
+  - "What, if anything, is currently deployed from master. Not repository evidence: on 2026-10-16 23:50 -04:00 (2026-10-17T03:50Z) GitHub showed a Vercel Production deployment with status success for 754b945, and anonymous GETs of checkbeforeclick.com at 23:54 -04:00 returned /api/healthz 200 (route added in 754b945); re-checked 2026-10-17"
   - "Node version of the Vercel runtime (the repository now pins node:24.14.0 only for the Azure image in Dockerfile, which is not deployed anywhere)"

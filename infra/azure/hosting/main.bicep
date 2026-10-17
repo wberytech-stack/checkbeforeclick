@@ -41,6 +41,18 @@ param stagingImage string = ''
 @description('Phase B: full image ref for production, e.g. crcbcprodcc001.azurecr.io/cbc-web:<sha>-prod')
 param productionImage string = ''
 
+// Gate 006C decision P8: production may scale to zero until cutover. Required (no
+// default) so a deployment that omits it fails instead of silently picking a value.
+// 0 = pre-cutover (no always-on replica); 1 = production activated at cutover
+// (Gate 006D). Changing it is a reviewed parameters-file change plus a
+// founder-authorized what-if and deployment. Staging is not affected.
+@description('Production Container App minimum replicas: 0 before cutover, 1 once production is activated.')
+@allowed([
+  0
+  1
+])
+param productionMinReplicas int
+
 @description('Log Analytics daily ingestion cap in GB (cost guardrail).')
 param logDailyQuotaGb string = '0.5'
 
@@ -169,7 +181,7 @@ module production 'modules/web-app.bicep' = if (deployApps) {
     keyVaultUri: keyVault.properties.vaultUri
     secretNames: productionSecretNames
     plainEnv: productionPlainEnv
-    minReplicas: 1
+    minReplicas: productionMinReplicas
     maxReplicas: 3
     tags: union(tags, { environment: 'production' })
   }

@@ -189,8 +189,33 @@ check("bicep: Log Analytics daily cap set", /dailyQuotaGb/.test(bicep));
 check("bicep: AcrPull role id", bicep.includes("7f951dda-4ed3-4680-a7ca-43fe172d538d"));
 check("bicep: Key Vault Secrets User role id", bicep.includes("4633458b-17de-408a-b874-0445c86b69e6"));
 check("bicep: secrets via keyVaultUrl + identity only", /keyVaultUrl:/.test(bicep) && !/\bvalue:\s*'[^']*'/.test(bicep.split("secrets:")[1]?.split("template:")[0] ?? ""));
-check("bicep: staging minReplicas 0, production minReplicas 1",
-  /name: 'web-staging'[\s\S]*?minReplicas: 0/.test(bicep) && /name: 'web-production'[\s\S]*?minReplicas: 1/.test(bicep));
+// Gate 006C decision P8: production minimum replicas is a parameter (0 before cutover,
+// 1 when production is activated); staging stays at a fixed 0.
+{
+  const mainBicep = read(path.join(bicepDir, "main.bicep"));
+  const moduleBlock = (name: string) =>
+    mainBicep.match(new RegExp(`^module \\w+ 'modules/web-app\\.bicep'[^\\n]*\\n  name: '${name}'[\\s\\S]*?\\n\\}`, "m"))?.[0] ?? "";
+  const stg = moduleBlock("web-staging");
+  const prod = moduleBlock("web-production");
+  const decl = mainBicep.match(/((?:^@[^\n]*\n|^\s+\d+\n|^\]\)\n)*)^param productionMinReplicas (\w+)(.*)$/m);
+  check("P8: productionMinReplicas is declared as int", decl?.[2] === "int", decl?.[0] ?? "missing");
+  check("P8: productionMinReplicas has no default (omitting it fails the deployment)", decl !== null && decl[3].trim() === "");
+  check("P8: productionMinReplicas is restricted to @allowed([0, 1])",
+    /@allowed\(\[\s*0\s+1\s*\]\)\s*\nparam productionMinReplicas int/.test(mainBicep));
+  check("P8: production module passes minReplicas: productionMinReplicas", /\n    minReplicas: productionMinReplicas\n/.test(prod));
+  check("P8: production keeps maxReplicas 3", /\n    maxReplicas: 3\n/.test(prod));
+  check("P8: staging module keeps minReplicas 0 and maxReplicas 1", /\n    minReplicas: 0\n/.test(stg) && /\n    maxReplicas: 1\n/.test(stg));
+  check("P8: staging module does not use productionMinReplicas", stg !== "" && !stg.includes("productionMinReplicas"));
+  check("P8: productionMinReplicas is used only by the production module",
+    (mainBicep.match(/productionMinReplicas/g) ?? []).length === 2 && prod.includes("productionMinReplicas"));
+  check("P8: no hardcoded production minReplicas remains", !/\n    minReplicas: 1\n/.test(mainBicep));
+  const pmr = pv("productionMinReplicas");
+  check("P8: parameters file sets productionMinReplicas to the pre-cutover value 0",
+    Number.isInteger(pmr) && pmr === 0, JSON.stringify(pmr));
+  const mod = read(path.join(bicepDir, "modules", "web-app.bicep"));
+  check("P8: web-app.bicep bounds minReplicas to 0..1 (@minValue(0), @maxValue(1))",
+    /@minValue\(0\)\n@maxValue\(1\)\nparam minReplicas int/.test(mod));
+}
 check("bicep: probes on /api/healthz port 3000", /path: '\/api\/healthz'/.test(bicep) && /targetPort: 3000/.test(bicep));
 check("bicep: ingress https only", /allowInsecure: false/.test(bicep));
 check("bicep: apps are Phase B only (deployApps, default false)",

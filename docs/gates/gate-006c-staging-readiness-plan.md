@@ -135,6 +135,14 @@ Either way, from B7 on, the production app runs the production configuration
 (production Supabase project and Inngest keys) on its default Azure FQDN,
 although no DNS points at it until Gate 006D.
 
+**P8 decided (2026-10-17): option 2.** The founder approved preparing the
+offline, separately reviewed Bicep change: `productionMinReplicas` is 0 until
+cutover, and set to 1 when production is activated. Scale to zero removes the
+always-on replica charge, not all Azure cost. The change, cost notes,
+Phase B smoke implications, and the explicit cutover step are in
+`docs/gates/gate-006c-p8-production-min-replicas.md`. Once it is merged, the
+B6 expectation for production is `minReplicas: 0`.
+
 Cost evidence for 006C: Cost Management for the resource group after 24–48
 hours, compared with the estimate.
 

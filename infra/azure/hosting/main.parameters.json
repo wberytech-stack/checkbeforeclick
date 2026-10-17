@@ -9,6 +9,7 @@
     "identityName": { "value": "id-cbc-web-cc-001" },
     "stagingAppName": { "value": "ca-cbc-web-stg-cc-001" },
     "productionAppName": { "value": "ca-cbc-web-prod-cc-001" },
+    "productionMinReplicas": { "value": 0 },
     "stagingSecretNames": {
       "value": {
         "supabaseServiceRoleKey": "cbc-stg-supabase-service-role-key",

@@ -78,8 +78,10 @@ Resource counts below were checked against `infra/azure/hosting/main.bicep`
 and `modules/web-app.bicep` at `master@754b945`.
 
 Offline validation (`docs/gates/gate-006c-offline-validation.md`) found a
-compile error in the merged module (BCP138, a for-expression inside `concat()`).
-Run B2 only after that fix is merged.
+compile error in the merged module (BCP138, a for-expression inside `concat()`),
+confirmed by Bicep CLI v0.48.1. With the fix, B1–B3 pass offline (build and lint
+clean; run by Claude with the founder's approval to install the CLI). Merge the
+fix before B4.
 
 | Step | Command (founder) | Touches Azure? | Pass condition |
 | --- | --- | --- | --- |
@@ -91,10 +93,9 @@ Run B2 only after that fix is merged.
 | B6 | Phase B what-if: the B4 command plus `--parameters deployApps=true stagingImage=<stg ref> productionImage=<prod ref>`. First, no `REPLACE_WITH_` value may remain in `main.parameters.json` (those values feed only the Phase B app environments) | **Yes**: reads Azure; changes nothing. Founder authorization required, and only after the P8 decision | **2 Create**: `ca-cbc-web-stg-cc-001` and `ca-cbc-web-prod-cc-001` (containerApps, through the `web-staging` and `web-production` module deployments). The 6 Phase A resources show NoChange; no Modify or Delete |
 | B7 | Phase B create: the B6 command with `create` | **Yes**: creates both apps; the production app starts its always-on replica. Founder authorization required | Both apps provisioned; the staging revision becomes healthy once the Key Vault references resolve |
 
-Optional, needs founder approval because it downloads a binary: let Claude run
-B1–B3 locally (`az bicep install`), so compile errors are fixed on a gate
-branch before the founder runs B4. Claude would never run B4–B7, because they
-all access Azure (AGENTS.md section 8). Until then, B1–B3 are founder-run.
+The founder approved installing the Bicep CLI locally (2026-10-17), so Claude
+ran B1–B3 offline and fixed the compile error on a gate branch before any B4.
+Claude never runs B4–B7, because they all access Azure (AGENTS.md section 8).
 
 Known review points for the what-if output:
 
@@ -234,8 +235,8 @@ documentation on a gate branch only.
    provisioning. No option is assumed.
 4. Authorize each Azure step separately, including the `what-if` runs B4 and
    B6, which change nothing but still access Azure.
-5. Whether Claude may install the Bicep CLI locally for offline compile and
-   lint (B1–B3) before the founder's what-if.
+5. (Resolved 2026-10-17) The founder approved installing the Bicep CLI locally;
+   B1–B3 ran offline and pass with the F1 fix.
 6. Whether a later gate should automate the Inngest sync after each deploy.
 
 ## Out of scope

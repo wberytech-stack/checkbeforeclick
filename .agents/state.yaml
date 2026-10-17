@@ -90,6 +90,11 @@ merged_prs_on_master:
     scope: P8 productionMinReplicas parameter (0 until cutover); CRLF-safe safety test; B4 runbook refresh
     evidence: [{type: commit, ref: "c220dda"}]
     verified_at: 2026-10-17
+  - pr: 38
+    gate: 006C
+    scope: B4 what-if pass and B5 Phase A creation evidence; PR #37 state record (docs and state only)
+    evidence: [{type: commit, ref: "e0e8cde"}]
+    verified_at: 2026-10-17
 
 merged_branches_on_master:
   # founder-approved merges. merge_method absent = merge commit (first-parent + second parent == branch_head);
@@ -192,6 +197,13 @@ merged_branches_on_master:
     parents: ["e157572", "87fabe9"]
     content: "Gate 006C P8: productionMinReplicas parameter, CRLF-safe safety test, B4 runbook refresh (PR #37, GitHub merge commit; tree identical to 87fabe9)"
     evidence: [{type: commit, ref: "c220dda"}, {type: git_log, ref: "merge-base --is-ancestor 87fabe9 origin/master; 87fabe9 = refs/pull/37/head; git diff 87fabe9 c220dda empty"}]
+    verified_at: 2026-10-17
+  - branch: gate-006c-b4-b5-evidence
+    branch_head: "3cfd6ae"
+    merge_commit: "e0e8cdeefa870a44a3bd9112614a3f6595a2f50b"
+    parents: ["c220dda", "3cfd6ae"]
+    content: "Gate 006C B4/B5 results and PR #37 state record (PR #38, GitHub merge commit; tree identical to 3cfd6ae)"
+    evidence: [{type: commit, ref: "e0e8cde"}, {type: git_log, ref: "merge-base --is-ancestor 3cfd6ae origin/master; 3cfd6ae = refs/pull/38/head; git diff 3cfd6ae e0e8cde empty"}]
     verified_at: 2026-10-17
 
 unmerged_gate_branches:
@@ -329,6 +341,7 @@ gates:
       - {id: P5a, status: confirmed, date: 2026-10-17, note: "founder confirmed the 7 Key Vault secret names in the merged plan"}
       - {id: P5b, status: not_approved, note: "creating secret values is a separate founder-only action"}
       - {id: P8, status: decided, date: 2026-10-17, note: "option 2: productionMinReplicas 0 until cutover, 1 at an explicit cutover change; implemented in PR #37 (docs/gates/gate-006c-p8-production-min-replicas.md)"}
+      - {id: P6, status: prepared, date: 2026-10-17, note: "founder-verified: staging INNGEST_ENV audit/azure-current-state (shared with Vercel Preview, temporary, documented risk); provider flags unset in Vercel and omitted; staging INNGEST_SERVE_ORIGIN = stagingPublicOrigin; in main.parameters.json, effective only at B6/B7 (docs/gates/gate-006c-p6-plain-values.md)"}
     tests: "92 passed, 0 failed (scripts/azure-hosting/test-hosting-safety.ts on master@3fad5db); 103 passed, 0 failed on the PR #37 branch; bicep build/lint exit 0 (CLI 0.48.1)"
     azure_state: {status: founder_reported, date: 2026-10-17, note: "Phase A created by the founder (deployment cbc-hosting-phase-a Succeeded): id-cbc-web-cc-001, crcbcprodcc001 (Basic), log-cbc-prod-cc-001, cae-cbc-prod-cc-001, AcrPull and Key Vault Secrets User assignments (ServicePrincipal). Evidence is founder-run CLI output recorded in the gate doc, not repository evidence; agents have no Azure access"}
     phase_b_inputs: {stagingPublicOrigin: "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io", registryLoginServer: crcbcprodcc001.azurecr.io}

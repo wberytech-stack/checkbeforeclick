@@ -28,17 +28,13 @@
     },
     "stagingPlainEnv": {
       "value": [
-        { "name": "INNGEST_ENV", "value": "REPLACE_WITH_STAGING_INNGEST_BRANCH_ENV_NAME" },
-        { "name": "INNGEST_SERVE_ORIGIN", "value": "REPLACE_WITH_STAGING_PUBLIC_ORIGIN_FROM_PHASE_A_OUTPUT" },
-        { "name": "WEB_RISK_PROVIDER_ENABLED", "value": "REPLACE_WITH_CURRENT_PREVIEW_VALUE" },
-        { "name": "DOMAIN_AGE_PROVIDER_ENABLED", "value": "REPLACE_WITH_CURRENT_PREVIEW_VALUE" }
+        { "name": "INNGEST_ENV", "value": "audit/azure-current-state" },
+        { "name": "INNGEST_SERVE_ORIGIN", "value": "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io" }
       ]
     },
     "productionPlainEnv": {
       "value": [
-        { "name": "INNGEST_SERVE_ORIGIN", "value": "https://checkbeforeclick.com" },
-        { "name": "WEB_RISK_PROVIDER_ENABLED", "value": "REPLACE_WITH_CURRENT_PRODUCTION_VALUE" },
-        { "name": "DOMAIN_AGE_PROVIDER_ENABLED", "value": "REPLACE_WITH_CURRENT_PRODUCTION_VALUE" }
+        { "name": "INNGEST_SERVE_ORIGIN", "value": "https://checkbeforeclick.com" }
       ]
     }
   }

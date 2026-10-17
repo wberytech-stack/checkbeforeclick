@@ -129,7 +129,7 @@ Management after 24–48 hours. The $300 per month budget alert is in place.
 | P4 Key Vault RBAC | Done: `True` (founder-reported) |
 | P5a secret names | Confirmed (2026-10-17) |
 | P5b secret values | **Not approved, not done** |
-| P6 plain values | **Not done**; `stagingPublicOrigin` now known |
+| P6 plain values | Founder-verified 2026-10-17 and filled in the parameters file (`docs/gates/gate-006c-p6-plain-values.md`); take effect only at B6/B7 |
 | P7 budget | Done: alert present |
 | P8 production cost timing | Decided: option 2 (PR #37) |
 | B1–B3 offline | Done (PR #35) |

@@ -180,6 +180,31 @@ for (const k of ["stagingPlainEnv", "productionPlainEnv"]) {
   check(`bicep params: ${k} holds no secret-named variables`,
     names.every((n: string) => !/(KEY|SECRET|PASSWORD|TOKEN)/.test(n)), names.join(","));
 }
+// Gate 006C P6 (founder-confirmed 2026-10-17): Phase B plain values are filled in.
+{
+  type PlainEnv = Array<{ name: string; value: string }>;
+  const stgEnv = (pv("stagingPlainEnv") ?? []) as PlainEnv;
+  const prodEnv = (pv("productionPlainEnv") ?? []) as PlainEnv;
+  const val = (env: PlainEnv, n: string) => env.find((e) => e.name === n)?.value;
+  check("P6: parameters file has no REPLACE_WITH_ placeholder left",
+    !JSON.stringify(params).includes("REPLACE_WITH_"));
+  check("P6: staging INNGEST_SERVE_ORIGIN is the Phase A staging origin (https, staging app, canadacentral)",
+    /^https:\/\/ca-cbc-web-stg-cc-001\.[a-z0-9-]+\.canadacentral\.azurecontainerapps\.io$/.test(val(stgEnv, "INNGEST_SERVE_ORIGIN") ?? ""),
+    val(stgEnv, "INNGEST_SERVE_ORIGIN"));
+  check("P6: production INNGEST_SERVE_ORIGIN stays https://checkbeforeclick.com (production boundary unchanged)",
+    val(prodEnv, "INNGEST_SERVE_ORIGIN") === "https://checkbeforeclick.com", val(prodEnv, "INNGEST_SERVE_ORIGIN"));
+  check("P6: staging sets a non-empty INNGEST_ENV (Inngest branch environment)",
+    /^[A-Za-z0-9._/-]+$/.test(val(stgEnv, "INNGEST_ENV") ?? ""), val(stgEnv, "INNGEST_ENV"));
+  check("P6: production does not set INNGEST_ENV (defaults to the Inngest Production environment)",
+    val(prodEnv, "INNGEST_ENV") === undefined);
+  // Mirrors Vercel, where both flags are unset in Production and Preview; the providers
+  // are enabled unless a flag is exactly "false" (lib/scan/providers/*.ts).
+  for (const [k, env] of [["staging", stgEnv], ["production", prodEnv]] as const) {
+    check(`P6: ${k} does not set WEB_RISK_PROVIDER_ENABLED or DOMAIN_AGE_PROVIDER_ENABLED (providers enabled by default)`,
+      !env.some((e) => e.name === "WEB_RISK_PROVIDER_ENABLED" || e.name === "DOMAIN_AGE_PROVIDER_ENABLED"),
+      env.map((e) => e.name).join(","));
+  }
+}
 for (const t of [
   "Microsoft.ContainerRegistry/registries@", "Microsoft.OperationalInsights/workspaces@",
   "Microsoft.App/managedEnvironments@", "Microsoft.ManagedIdentity/userAssignedIdentities@",

@@ -56,7 +56,7 @@ Gate 006C passes only when all of these hold:
 | P2 | Resource providers registered: `Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.OperationalInsights`, `Microsoft.ManagedIdentity` | `az provider show -n <ns> --query registrationState` | "Registered" for each |
 | P3 | Names free: `crcbcprodcc001` (global), `log-cbc-prod-cc-001`, `cae-cbc-prod-cc-001`, `id-cbc-web-cc-001`, both app names | `az acr check-name -n crcbcprodcc001`; the what-if shows "Create", not "Modify" | Output lines |
 | P4 | `kv-cbc-prod-cc-001` uses **Azure RBAC** authorization (required for the Key Vault Secrets User role) | `az keyvault show -n kv-cbc-prod-cc-001 --query properties.enableRbacAuthorization` | `true` |
-| P5a | Key Vault secret **names** as in `main.parameters.json` (7 names: `cbc-stg-supabase-service-role-key`, `cbc-prod-supabase-service-role-key`, `cbc-shared-google-web-risk-api-key`, `cbc-stg-inngest-event-key`, `cbc-stg-inngest-signing-key`, `cbc-prod-inngest-event-key`, `cbc-prod-inngest-signing-key`) | ChatGPT's PR #34 review reports that the founder approved these names before the PR #32 merge. Claude has not seen that approval, and another agent's statement is not founder approval (AGENTS.md section 3), so the founder confirms it in their own words | The founder's confirmation |
+| P5a | Key Vault secret **names** as in `main.parameters.json` (7 names: `cbc-stg-supabase-service-role-key`, `cbc-prod-supabase-service-role-key`, `cbc-shared-google-web-risk-api-key`, `cbc-stg-inngest-event-key`, `cbc-stg-inngest-signing-key`, `cbc-prod-inngest-event-key`, `cbc-prod-inngest-signing-key`) | **Confirmed by the founder on 2026-10-17** ("Founder has confirmed all seven Key Vault secret names in the merged staging-readiness plan (P5a)", founder message in the Claude Code session); recorded in `docs/gates/gate-006c-b4-whatif-handoff.md` section 1 | Done |
 | P5b | Creating the 7 secrets with **values** copied from Vercel | **Not approved.** A separate founder-only action (secrets; AGENTS.md sections 6.3 and 20) | Names listed in the portal, never values |
 | P6 | Plain values decided: `INNGEST_ENV` (staging branch environment name), `WEB_RISK_PROVIDER_ENABLED`, `DOMAIN_AGE_PROVIDER_ENABLED` (copy current Vercel Preview values) | Vercel dashboard (names and non-secret values) | Values, since they are not secrets |
 | P7 | Budget alert ($300) still active; optional alert scoped to the new resources | Cost Management | Screenshot |
@@ -166,9 +166,9 @@ hours, compared with the estimate.
 ## 6. Execution sequence (founder approval points marked **A**)
 
 1. **A** Approve starting Gate 006C (names this plan's scope).
-2. **A** Decide P8 (production cost timing; section 4) and confirm P5a (secret
-   names) in your own words. If option 2 is chosen, its Bicep change is
-   reviewed and merged first.
+2. **A** Decide P8 (production cost timing; section 4). If option 2 is chosen,
+   its Bicep change is reviewed and merged first. P5a (secret names) was
+   confirmed by the founder on 2026-10-17.
 3. P1–P4 and P6–P7 completed; B1–B3 pass (offline).
 4. **A** Authorize B4 (Phase A what-if; Azure access) and review its output
    against section 3.
@@ -237,8 +237,8 @@ documentation on a gate branch only.
 ## 10. Decisions needed from the founder
 
 1. Approve starting Gate 006C when provisioning is ready (P1–P8).
-2. Confirm the Key Vault secret names in your own words (P5a). Creating the
-   secret values (P5b) is a separate approval.
+2. (Resolved 2026-10-17) The founder confirmed the Key Vault secret names
+   (P5a). Creating the secret values (P5b) is still a separate approval.
 3. Phase B production cost timing (P8, section 4), decided before any
    provisioning. No option is assumed.
 4. Authorize each Azure step separately, including the `what-if` runs B4 and

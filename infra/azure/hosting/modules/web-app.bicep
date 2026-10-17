@@ -43,6 +43,14 @@ var secretMap = [
   { name: 'inngest-signing-key', vaultKey: 'inngestSigningKey', envName: 'INNGEST_SIGNING_KEY' }
 ]
 
+// Bicep allows for-expressions only as declaration or property values, not as
+// function arguments (BCP138), so the secret env list is built here and then
+// passed to concat() below.
+var secretEnv = [for s in secretMap: {
+  name: s.envName
+  secretRef: s.name
+}]
+
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
@@ -87,10 +95,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           // PORT/HOSTNAME repeat the image defaults explicitly so a platform-injected
           // HOSTNAME (the replica name) can never make Next bind to one interface.
           env: concat(
-            [for s in secretMap: {
-              name: s.envName
-              secretRef: s.name
-            }],
+            secretEnv,
             [
               { name: 'PORT', value: '3000' }
               { name: 'HOSTNAME', value: '0.0.0.0' }

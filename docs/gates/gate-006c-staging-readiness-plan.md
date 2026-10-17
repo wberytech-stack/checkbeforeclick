@@ -12,7 +12,15 @@ here was executed:
 
 Every execution step is founder-only (`AGENTS.md` sections 6.3, 8 and 20).
 Starting Gate 006C, and each Azure action inside it, needs the founder's
-explicit approval naming the action.
+explicit approval naming the action. That includes `az deployment group
+what-if`: it changes nothing, but it signs in to Azure and reads the
+subscription, so it is Azure access that needs authorization like any other
+step.
+
+Revised after ChatGPT's PR #34 review (2026-10-17): secret names versus values
+(P5), `what-if` as authorized Azure access (section 3), the Phase B production
+cost as a decision taken **before** provisioning (sections 4 and 6), and
+resource counts and commands checked against `master@754b945`.
 
 - **Base:** `master@754b945` (Gate 006B merged through PR #32).
 - **Inputs:** Gate 006A plan (`docs/gates/gate-006a-azure-hosting-migration.md`),
@@ -48,10 +56,11 @@ Gate 006C passes only when all of these hold:
 | P2 | Resource providers registered: `Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.OperationalInsights`, `Microsoft.ManagedIdentity` | `az provider show -n <ns> --query registrationState` | "Registered" for each |
 | P3 | Names free: `crcbcprodcc001` (global), `log-cbc-prod-cc-001`, `cae-cbc-prod-cc-001`, `id-cbc-web-cc-001`, both app names | `az acr check-name -n crcbcprodcc001`; the what-if shows "Create", not "Modify" | Output lines |
 | P4 | `kv-cbc-prod-cc-001` uses **Azure RBAC** authorization (required for the Key Vault Secrets User role) | `az keyvault show -n kv-cbc-prod-cc-001 --query properties.enableRbacAuthorization` | `true` |
-| P5 | Key Vault secret names confirmed or renamed in `main.parameters.json`; the 7 secrets created with values copied from Vercel | Portal (names only) | List of names, never values |
+| P5a | Key Vault secret **names** as in `main.parameters.json` (7 names: `cbc-stg-supabase-service-role-key`, `cbc-prod-supabase-service-role-key`, `cbc-shared-google-web-risk-api-key`, `cbc-stg-inngest-event-key`, `cbc-stg-inngest-signing-key`, `cbc-prod-inngest-event-key`, `cbc-prod-inngest-signing-key`) | ChatGPT's PR #34 review reports that the founder approved these names before the PR #32 merge. Claude has not seen that approval, and another agent's statement is not founder approval (AGENTS.md section 3), so the founder confirms it in their own words | The founder's confirmation |
+| P5b | Creating the 7 secrets with **values** copied from Vercel | **Not approved.** A separate founder-only action (secrets; AGENTS.md sections 6.3 and 20) | Names listed in the portal, never values |
 | P6 | Plain values decided: `INNGEST_ENV` (staging branch environment name), `WEB_RISK_PROVIDER_ENABLED`, `DOMAIN_AGE_PROVIDER_ENABLED` (copy current Vercel Preview values) | Vercel dashboard (names and non-secret values) | Values, since they are not secrets |
 | P7 | Budget alert ($300) still active; optional alert scoped to the new resources | Cost Management | Screenshot |
-| P8 | Cost decision for Phase B (section 4) | Founder | Recorded decision |
+| P8 | Phase B production cost decision (section 4), taken **before** any provisioning step | Founder | Recorded decision (option 1 or 2); no default is assumed |
 
 Off limits and unchanged: the `cbcpgadmin` item and `pg-cbc-prod-cc-001`
 (`.agents/state.yaml` `off_limits`). Gate 006C does not touch the Azure
@@ -61,21 +70,27 @@ PostgreSQL server; Phase 1 runs on Supabase.
 
 The Bicep has **never been compiled** (Gate 006B had no Bicep CLI). It is
 validated in increasing order of risk; stop at the first failure and share
-the output for analysis.
+the output for analysis. B1–B3 run offline on the founder's machine. **B4–B7
+all access Azure** and each needs founder authorization: B4 and B6 change
+nothing, B5 and B7 create resources.
+
+Resource counts below were checked against `infra/azure/hosting/main.bicep`
+and `modules/web-app.bicep` at `master@754b945`.
 
 | Step | Command (founder) | Touches Azure? | Pass condition |
 | --- | --- | --- | --- |
-| B1 | `az bicep version` | No | Bicep 0.23 or later (the template uses the `!` non-null assertion on conditional module outputs) |
-| B2 | `az bicep build --file infra/azure/hosting/main.bicep --stdout > NUL` | No | No errors. Review warnings (expected: possibly `use-resource-symbol-reference` or `BCP318`-style nullability notes) |
-| B3 | `az bicep lint --file infra/azure/hosting/main.bicep` | No | No errors |
-| B4 | Phase A what-if: `az deployment group what-if -g rg-cbc-prod-canadacentral-001 --template-file infra/azure/hosting/main.bicep --parameters infra/azure/hosting/main.parameters.json` | Read-only preview | Exactly: **Create** identity, registry, Log Analytics workspace, managed environment, 2 role assignments; **no** Container Apps; **no** Modify or Delete on any existing resource; Key Vault appears only as the role-assignment scope |
-| B5 | Phase A create (same command with `create`) | **Yes** (founder approval) | Succeeds; record outputs `registryLoginServer`, `identityClientId`, `stagingPublicOrigin` |
-| B6 | Phase B what-if with `deployApps=true stagingImage=<ref> productionImage=<ref>` | Read-only preview | **Create** the 2 Container Apps only; no change to Phase A resources other than none or "NoChange" |
-| B7 | Phase B create | **Yes** (founder approval) | Both apps provisioned; staging revision healthy after Key Vault references resolve |
+| B1 | `az bicep version` | No (offline) | Bicep 0.23 or later (the template uses the `!` non-null assertion on conditional module outputs) |
+| B2 | `az bicep build --file infra/azure/hosting/main.bicep --stdout` | No (offline) | Compiles with no errors (the ARM JSON is printed). Review any warnings |
+| B3 | `az bicep lint --file infra/azure/hosting/main.bicep` | No (offline) | No errors |
+| B4 | Phase A what-if: `az deployment group what-if --resource-group rg-cbc-prod-canadacentral-001 --template-file infra/azure/hosting/main.bicep --parameters infra/azure/hosting/main.parameters.json` | **Yes**: signs in and reads Azure; changes nothing. Founder authorization required | Exactly **6 Create**: `id-cbc-web-cc-001` (userAssignedIdentities), `crcbcprodcc001` (registries), `log-cbc-prod-cc-001` (workspaces), `cae-cbc-prod-cc-001` (managedEnvironments), and 2 roleAssignments (AcrPull on the registry; Key Vault Secrets User on `kv-cbc-prod-cc-001`). **No** Container Apps (`deployApps` defaults to `false`); **no** Modify or Delete on any existing resource. The Key Vault itself is only read (`existing`) |
+| B5 | Phase A create: the B4 command with `create` in place of `what-if` | **Yes**: creates the 6 resources. Founder authorization required | Succeeds; record outputs `registryLoginServer`, `identityClientId`, `stagingPublicOrigin` |
+| B6 | Phase B what-if: the B4 command plus `--parameters deployApps=true stagingImage=<stg ref> productionImage=<prod ref>`. First, no `REPLACE_WITH_` value may remain in `main.parameters.json` (those values feed only the Phase B app environments) | **Yes**: reads Azure; changes nothing. Founder authorization required, and only after the P8 decision | **2 Create**: `ca-cbc-web-stg-cc-001` and `ca-cbc-web-prod-cc-001` (containerApps, through the `web-staging` and `web-production` module deployments). The 6 Phase A resources show NoChange; no Modify or Delete |
+| B7 | Phase B create: the B6 command with `create` | **Yes**: creates both apps; the production app starts its always-on replica. Founder authorization required | Both apps provisioned; the staging revision becomes healthy once the Key Vault references resolve |
 
 Optional, needs founder approval because it downloads a binary: let Claude run
 B1–B3 locally (`az bicep install`), so compile errors are fixed on a gate
-branch before the founder runs B4. Claude would still never run B4–B7.
+branch before the founder runs B4. Claude would never run B4–B7, because they
+all access Azure (AGENTS.md section 8). Until then, B1–B3 are founder-run.
 
 Known review points for the what-if output:
 
@@ -99,14 +114,21 @@ consumption plan):
 | Log Analytics (0.5 GB/day cap, 30 days) | $1–5 | Cap bounds the worst case |
 | Identity, managed certificate | $0 | |
 
-**Decision for the founder (P8):** Phase B creates the production app with one
-always-on replica, so production hosting cost starts about a week before the
-DNS cutover. Options:
+**Decision for the founder before provisioning (P8):** as merged, Phase B
+creates **both** apps, and the production app always keeps one replica
+(`minReplicas: 1` in `main.bicep`). Production hosting cost therefore starts
+when B7 runs, about a week before the DNS cutover. This plan assumes neither
+option; the founder chooses before B6:
 
-1. Accept it (simplest; roughly $6–9 for the extra days).
-2. A small Bicep change on a gate branch to make production `minReplicas` a
-   parameter (0 until cutover, then 1). That is a code change and needs its
-   own approval.
+1. Keep the merged template and accept the early cost (roughly $6–9 for the
+   extra days at the section 4 estimate).
+2. Approve a small Bicep change on a gate branch first, making production
+   `minReplicas` a parameter (0 until cutover, then 1). That is a code change
+   with its own review and approval, and it adds a step before B6.
+
+Either way, from B7 on, the production app runs the production configuration
+(production Supabase project and Inngest keys) on its default Azure FQDN,
+although no DNS points at it until Gate 006D.
 
 Cost evidence for 006C: Cost Management for the resource group after 24–48
 hours, compared with the estimate.
@@ -131,19 +153,29 @@ hours, compared with the estimate.
 ## 6. Execution sequence (founder approval points marked **A**)
 
 1. **A** Approve starting Gate 006C (names this plan's scope).
-2. P1–P8 completed; B1–B3 pass.
-3. **A** B4 reviewed, then B5 (Phase A create).
-4. OIDC identity, GitHub environments, and variables (006B runbook steps 3–4),
-   using `stagingPublicOrigin` for `CBC_STG_NEXT_PUBLIC_APP_URL` and
-   `INNGEST_SERVE_ORIGIN`; Supabase staging redirect URL added.
-5. **A** Dispatch `azure-deploy` for staging, then production, with the same
+2. **A** Decide P8 (production cost timing; section 4) and confirm P5a (secret
+   names) in your own words. If option 2 is chosen, its Bicep change is
+   reviewed and merged first.
+3. P1–P4 and P6–P7 completed; B1–B3 pass (offline).
+4. **A** Authorize B4 (Phase A what-if; Azure access) and review its output
+   against section 3.
+5. **A** Authorize B5 (Phase A create).
+6. **A** Founder-only secrets and settings actions: create the 7 Key Vault
+   secrets with values (P5b); fill the `REPLACE_WITH_` values in
+   `main.parameters.json` (staging `INNGEST_SERVE_ORIGIN` =
+   `stagingPublicOrigin`); set up the OIDC identity, GitHub environments and
+   variables (006B runbook steps 1, 3 and 4; `CBC_STG_NEXT_PUBLIC_APP_URL` =
+   `stagingPublicOrigin`); add the Supabase staging redirect URL.
+7. **A** Dispatch `azure-deploy` for staging, then production, with the same
    master SHA. Both runs are **expected to fail after pushing their images**
    ("Container App … not found"); record both image refs.
-6. **A** B6 reviewed, then B7 (Phase B create).
-7. **A** Dispatch `azure-deploy` for staging again; it must succeed.
-8. Sync the app in the Inngest staging branch environment
-   (`<stagingPublicOrigin>/api/inngest`); there is no Vercel integration on Azure.
-9. Testing (section 8), then the founder shares the evidence for Claude's analysis.
+8. **A** Authorize B6 (Phase B what-if; Azure access) and review it against
+   section 3.
+9. **A** Authorize B7 (Phase B create; production replica cost starts per P8).
+10. **A** Dispatch `azure-deploy` for staging again; it must succeed.
+11. Sync the app in the Inngest staging branch environment
+    (`<stagingPublicOrigin>/api/inngest`); there is no Vercel integration on Azure.
+12. Testing (section 8), then the founder shares the evidence for Claude's analysis.
 
 ## 7. Rollback and containment
 
@@ -152,7 +184,7 @@ no change to Vercel.
 
 | Situation | Action (founder) |
 | --- | --- |
-| B4 or B6 shows Modify/Delete on an existing resource | Stop; do not apply; share the output |
+| B4 or B6 shows anything other than the expected Create/NoChange set (section 3), or any Modify/Delete on an existing resource | Stop; do not apply; share the output |
 | B5 or B7 fails part-way | Re-run the same deployment (idempotent); if abandoning, delete only the resources the deployment created (identity, registry, workspace, environment, apps, the 2 role assignments). Never touch Key Vault itself or `pg-cbc-prod-cc-001` |
 | A staging deploy revision is unhealthy | Nothing to do for traffic: in single-revision mode the previous revision keeps serving; the workflow fails closed. Investigate logs; redeploy a known-good SHA |
 | A bad revision became active | `az containerapp revision list` / `revision activate` the previous revision, or redeploy the previous SHA |
@@ -192,11 +224,15 @@ documentation on a gate branch only.
 ## 10. Decisions needed from the founder
 
 1. Approve starting Gate 006C when provisioning is ready (P1–P8).
-2. Confirm or rename the Key Vault secret names (P5).
-3. Phase B production cost timing (section 4).
-4. Whether Claude may install the Bicep CLI locally for offline compile and
+2. Confirm the Key Vault secret names in your own words (P5a). Creating the
+   secret values (P5b) is a separate approval.
+3. Phase B production cost timing (P8, section 4), decided before any
+   provisioning. No option is assumed.
+4. Authorize each Azure step separately, including the `what-if` runs B4 and
+   B6, which change nothing but still access Azure.
+5. Whether Claude may install the Bicep CLI locally for offline compile and
    lint (B1–B3) before the founder's what-if.
-5. Whether a later gate should automate the Inngest sync after each deploy.
+6. Whether a later gate should automate the Inngest sync after each deploy.
 
 ## Out of scope
 

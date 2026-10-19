@@ -1,0 +1,145 @@
+# Gate 005G - automated reviewer (AGENTS.md section 6.6 capability 2, once Gate 005F is merged).
+#
+# INERT BY DEFAULT. Nothing runs unless the founder sets CBC_REVIEWER_ENABLED=enabled,
+# and the adapter additionally refuses (no model call) unless ALL hold:
+#   - AGENTS.md on master contains section 6.6 (Gate 005F merged)      E_POLICY_NOT_AUTHORIZED
+#   - CBC_VERCEL_POLICY_VERIFIED=verified-YYYY-MM-DD                   E_VERCEL_POLICY_UNVERIFIED
+#   - .agents/automation.yaml reviewer.model_id == CBC_REVIEWER_MODEL  E_MODEL_NOT_APPROVED
+#   - CBC_REVIEW_MONTHLY_ALLOWANCE_USD == committed allowance, and the
+#     automation/reviews ledger proves month-to-date + worst case fits  E_BUDGET_STOP
+#
+# Security model:
+#   - Triggers run the workflow as defined on master (pull_request_target, schedule,
+#     workflow_dispatch). There is no push/pull_request trigger, so a gate branch
+#     cannot change this file's behavior for its own review.
+#   - The reviewed branch is fetched only as git objects. It is never checked out,
+#     installed, built or executed. `npm ci --ignore-scripts` runs on master's lockfile.
+#   - CBC_REVIEWER_API_KEY lives in the `cbc-reviewer` Environment (deployment branches:
+#     master only) and is exposed to the single review step, nowhere else.
+#   - Branch names and SHAs from events are passed via env and validated in code,
+#     never interpolated into shell commands.
+#   - The only write is an append (no force) to automation/reviews.
+name: reviewer
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cbc-reviewer
+  cancel-in-progress: false
+
+jobs:
+  select:
+    if: vars.CBC_REVIEWER_ENABLED == 'enabled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+
+      - name: Install from lockfile (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Constitutional authorization (Gate 005F section 6.6 on master)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/reviewer/cli.ts authorized
+
+      - name: Select open draft gate PRs not yet reviewed
+        id: targets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          fields="number,isDraft,headRefName,headRefOid,isCrossRepository,state"
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            list="$(gh pr view "$PR_NUMBER" --json "$fields" --jq '[.]')"
+          else
+            list="$(gh pr list --state open --draft --limit 50 --json "$fields")"
+          fi
+          node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/reviewer/cli.ts select-targets "$list" >> "$GITHUB_OUTPUT"
+
+  review:
+    needs: select
+    if: needs.select.outputs.targets != '' && needs.select.outputs.targets != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: cbc-reviewer
+    permissions:
+      contents: write
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.select.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+
+      - name: Install from lockfile (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Review (target read as git objects only)
+        shell: bash
+        env:
+          TARGET_BRANCH: ${{ matrix.target.branch }}
+          TARGET_HEAD: ${{ matrix.target.head }}
+          CBC_REVIEWER_ENABLED: ${{ vars.CBC_REVIEWER_ENABLED }}
+          CBC_REVIEWER_MODEL: ${{ vars.CBC_REVIEWER_MODEL }}
+          CBC_REVIEW_MONTHLY_ALLOWANCE_USD: ${{ vars.CBC_REVIEW_MONTHLY_ALLOWANCE_USD }}
+          CBC_VERCEL_POLICY_VERIFIED: ${{ vars.CBC_VERCEL_POLICY_VERIFIED }}
+          CBC_REVIEWER_API_KEY: ${{ secrets.CBC_REVIEWER_API_KEY }}
+        run: |
+          set -uo pipefail
+          node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/reviewer/cli.ts check-branch "$TARGET_BRANCH" || { echo "::error::invalid branch name"; exit 1; }
+          node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/reviewer/cli.ts review --branch "$TARGET_BRANCH" --head "$TARGET_HEAD" --out "$RUNNER_TEMP/review"
+          code=$?
+          if [ "$code" != 0 ] && [ "$code" != 3 ]; then exit 1; fi
+
+      - name: Publish to automation/reviews (append-only, no force)
+        if: always()
+        shell: bash
+        env:
+          TARGET_BRANCH: ${{ matrix.target.branch }}
+          TARGET_HEAD: ${{ matrix.target.head }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          if [ ! -f "$RUNNER_TEMP/review/adapter-result.json" ]; then echo "nothing to publish"; exit 0; fi
+          node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/reviewer/cli.ts publish --branch "$TARGET_BRANCH" --head "$TARGET_HEAD" --out "$RUNNER_TEMP/review"
+
+      - name: Audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cbc-review-${{ matrix.target.head }}
+          path: ${{ runner.temp }}/review
+          if-no-files-found: ignore

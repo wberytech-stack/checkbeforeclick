@@ -128,6 +128,21 @@ Each secret's state marker reads `verified`.
   yet.
 - **Google:** any Google Cloud setting beyond the founder's report.
 
+## Repository record and Vercel deployment (post-merge, 2026-10-19)
+
+The two evidence classes are kept apart:
+
+| Fact | Evidence class | Source |
+| --- | --- | --- |
+| This record merged into `master` through PR #41, merge commit `e653f6fb3b5d801ff42c5958711a325b80508361` (parents `15f4fa1` and `db3e960`). `db3e960` is `refs/pull/41/head`, and the merge tree is identical to it | **Repository evidence** (verified with git) | `git log`, `git ls-remote origin refs/pull/41/head`, `git diff db3e960 e653f6f` (empty) |
+| PR #41 changed only this document, the readiness plan's P5b row and `.agents/state.yaml` | **Repository evidence** | `git diff --stat 15f4fa1 e653f6f` |
+| The Vercel Production deployment for `e653f6f` showed **Ready** | **Founder-reported** (founder observation, 2026-10-19). Not independent runtime validation; no agent ran any runtime check | Founder |
+| Key Vault secrets 1-4 exist with one enabled version each | **Founder-reported** (unchanged by the merge; still not repository evidence) | Sections above |
+
+The merge records these facts. It does not verify the Key Vault metadata, and
+it changed no application behavior. Merging is not an Azure deployment
+(AGENTS.md section 20). B6/B7 and the smoke tests are still not run.
+
 ## Risks carried forward
 
 - **Supabase service_role (secret 3)** bypasses RLS. If it is ever exposed,

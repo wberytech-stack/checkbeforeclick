@@ -105,6 +105,11 @@ merged_prs_on_master:
     scope: post-merge housekeeping D1-D3 after PR #39 (state.yaml only)
     evidence: [{type: commit, ref: "15f4fa1"}]
     verified_at: 2026-10-19
+  - pr: 41
+    gate: 006C
+    scope: P5b secrets 1-4 founder-reported record (gate doc, readiness-plan row, state); PR #40 state record; P5b authorization wording clarified (docs and state only)
+    evidence: [{type: commit, ref: "e653f6f"}]
+    verified_at: 2026-10-19
 
 merged_branches_on_master:
   # founder-approved merges. merge_method absent = merge commit (first-parent + second parent == branch_head);
@@ -228,6 +233,13 @@ merged_branches_on_master:
     parents: ["80e9ad6", "dcacf69"]
     content: "Gate 006C post-merge housekeeping D1-D3 after PR #39 (PR #40, GitHub merge commit; tree identical to dcacf69)"
     evidence: [{type: commit, ref: "15f4fa1"}, {type: git_log, ref: "merge-base --is-ancestor dcacf69 origin/master; dcacf69 = refs/pull/40/head; git diff dcacf69 15f4fa1 empty"}]
+    verified_at: 2026-10-19
+  - branch: gate-006c-p5b-secrets-record
+    branch_head: "db3e960"
+    merge_commit: "e653f6fb3b5d801ff42c5958711a325b80508361"
+    parents: ["15f4fa1", "db3e960"]
+    content: "Gate 006C P5b secrets 1-4 record and PR #40 state record (PR #41, GitHub merge commit; tree identical to db3e960)"
+    evidence: [{type: commit, ref: "e653f6f"}, {type: git_log, ref: "merge-base --is-ancestor db3e960 origin/master; db3e960 = refs/pull/41/head; git diff db3e960 e653f6f empty"}]
     verified_at: 2026-10-19
 
 unmerged_gate_branches:
@@ -365,7 +377,7 @@ gates:
   "006C":
     status: in_progress_p5b_partial
     scope: >-
-      Started 2026-10-17 for planning and offline validation (PRs #34-#37: plan, BCP138 fix, B4 runbook, P8). Founder then authorized and ran B4 (Phase A what-if: PASSED, 6 to create, 2 to ignore) and B5 (Phase A create: Succeeded; 5 read-only post-checks passed) against master@c220dda; Claude ran no Azure command. Phase A resources exist; no Container App (docs/gates/gate-006c-b4-b5-results.md). P6 merged (PR #39). P5b in progress: Key Vault secrets 1-4 (staging and shared) each individually authorized and created by the founder, metadata-verified, founder-reported 2026-10-19; production secrets 5-7 NOT authorized and NOT created, each requiring separate explicit founder approval (docs/gates/gate-006c-p5b-key-vault-secrets.md). OIDC/GitHub, Supabase redirect, B6/B7 and smoke tests not started; nothing deployed.
+      Started 2026-10-17 for planning and offline validation (PRs #34-#37: plan, BCP138 fix, B4 runbook, P8). Founder then authorized and ran B4 (Phase A what-if: PASSED, 6 to create, 2 to ignore) and B5 (Phase A create: Succeeded; 5 read-only post-checks passed) against master@c220dda; Claude ran no Azure command. Phase A resources exist; no Container App (docs/gates/gate-006c-b4-b5-results.md). P6 merged (PR #39). P5b in progress: Key Vault secrets 1-4 (staging and shared) each individually authorized and created by the founder, metadata-verified, founder-reported 2026-10-19; production secrets 5-7 NOT authorized and NOT created, each requiring separate explicit founder approval (docs/gates/gate-006c-p5b-key-vault-secrets.md). The P5b record merged via PR #41 (e653f6f; repository evidence for the record only, the Key Vault facts in it stay founder-reported). OIDC/GitHub, Supabase redirect, B6/B7 and smoke tests not started; nothing deployed to Azure.
     decisions:
       - {id: P5a, status: confirmed, date: 2026-10-17, note: "founder confirmed the 7 Key Vault secret names in the merged plan"}
       - {id: P5b, status: in_progress, date: 2026-10-19, note: "founder-only. Secrets 1-4 were each individually authorized by the founder and then created by the founder; metadata-verified (each exactly one enabled version, no expiry; vault 5 active incl. 1 pre-existing). Production secrets 5-7 have NOT been authorized and have NOT been created; each requires its own separate, explicit founder approval (no earlier Step 4, tool or review approval covers them). Founder-reported, not repository evidence; value correctness unverified until B7 and staging smoke tests (docs/gates/gate-006c-p5b-key-vault-secrets.md)"}
@@ -379,7 +391,7 @@ gates:
       key_vault_secrets: "2026-10-19 (founder-run tools; redacted founder-local evidence analyzed by Claude; names, versions and metadata only, no values): created and metadata-verified cbc-stg-inngest-event-key, cbc-stg-inngest-signing-key, cbc-stg-supabase-service-role-key, cbc-shared-google-web-risk-api-key (each exactly one enabled version, no expiry; vault 5 active incl. 1 pre-existing). Secrets 1-4 each individually authorized by the founder. NOT authorized and NOT created: cbc-prod-inngest-event-key, cbc-prod-inngest-signing-key, cbc-prod-supabase-service-role-key (each requires separate explicit founder approval)"
       not_exercised: "Key Vault reference resolution by the apps (B7); B6/B7; staging smoke tests; value correctness of any secret; any deployment"
     phase_b_inputs: {stagingPublicOrigin: "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io", registryLoginServer: crcbcprodcc001.azurecr.io}
-    evidence: [{type: commit, ref: "e63b87b"}, {type: commit, ref: "3fad5db"}, {type: commit, ref: "c220dda"}, {type: gate_doc, ref: docs/gates/gate-006c-staging-readiness-plan.md}, {type: gate_doc, ref: docs/gates/gate-006c-offline-validation.md}, {type: gate_doc, ref: docs/gates/gate-006c-b4-b5-results.md}, {type: gate_doc, ref: docs/gates/gate-006c-p5b-key-vault-secrets.md}]
+    evidence: [{type: commit, ref: "e63b87b"}, {type: commit, ref: "3fad5db"}, {type: commit, ref: "c220dda"}, {type: gate_doc, ref: docs/gates/gate-006c-staging-readiness-plan.md}, {type: gate_doc, ref: docs/gates/gate-006c-offline-validation.md}, {type: gate_doc, ref: docs/gates/gate-006c-b4-b5-results.md}, {type: gate_doc, ref: docs/gates/gate-006c-p5b-key-vault-secrets.md}, {type: commit, ref: "e653f6f"}]
     verified_at: 2026-10-19
   "agent-framework":
     status: merged_binding
@@ -472,4 +484,5 @@ unverified:
   - Current Dependabot alert state on GitHub
   - Live state of cbc_prod (migrations applied, roles) beyond docs/azure records
   - "What, if anything, is currently deployed from master. Not repository evidence: on 2026-10-16 23:50 -04:00 (2026-10-17T03:50Z) GitHub showed a Vercel Production deployment with status success for 754b945, and anonymous GETs of checkbeforeclick.com at 23:54 -04:00 returned /api/healthz 200 (route added in 754b945); re-checked 2026-10-17"
+  - "Vercel Production deployment of e653f6f (PR #41 merge). Founder-reported, not repository evidence and not independent runtime validation: on 2026-10-19 the founder observed the Vercel Production deployment for e653f6f as Ready. PR #41 changed only docs/ and .agents/state.yaml (git diff 15f4fa1 e653f6f --stat), so no application behavior changed; no runtime checks were run by agents"
   - "Node version of the Vercel runtime (the repository now pins node:24.14.0 only for the Azure image in Dockerfile, which is not deployed anywhere)"

@@ -2,10 +2,15 @@
 
 ## Status (as of 2026-10-19)
 
-- **Secrets 1-4 are created and metadata-verified** in `kv-cbc-prod-cc-001`. The
-  founder created all four. The vault now holds 5 active secrets: the
-  pre-existing off-limits secret plus these four.
-- **Secrets 5-7 (production) are not approved and not created.**
+- **Secrets 1-4 were each individually authorized by the founder and then
+  created by the founder.** All four are metadata-verified in
+  `kv-cbc-prod-cc-001`. The vault now holds 5 active secrets: the pre-existing
+  off-limits secret plus these four.
+- **Production secrets 5-7 have NOT been authorized and have NOT been
+  created.** Each needs its own separate, explicit founder approval naming that
+  secret before any write. No earlier approval, including the 2026-10-17 Step 4
+  approval, any approval of a tool or script, or any review result, authorizes
+  them.
 - **B6/B7 have not run.** No Container App exists, and nothing was deployed.
 - **Value correctness is unverified.** It is proven only when the apps resolve
   their Key Vault references (B7) and the staging smoke tests pass. Neither has
@@ -27,12 +32,13 @@ have no Azure access (AGENTS.md sections 8 and 20).
 | --- | --- | --- | --- |
 | Step 3: Key Vault write access check | Read-only check, 2026-10-17 | Founder | Prepared a read-only, allow-listed check script; ran no Azure command |
 | Name pre-check | Read-only, names only, 2026-10-17 | Founder | Prepared the script and analyzed the output |
-| P5b (Step 4) | Founder-only creation of exactly the 7 P5a secrets, one at a time, 2026-10-17. The approved entry method was the Azure portal | Founder | Guidance and metadata analysis only. Never requested, saw or handled a value |
+| P5b (Step 4) | Founder-only creation of the 7 P5a secrets, one at a time (Step 4 approval, 2026-10-17; the approved entry method was the Azure portal). **Each of secrets 1-4 was then individually authorized by the founder before it was created.** **Secrets 5-7 (production) are NOT authorized**; each needs its own separate, explicit founder approval | Founder | Guidance and metadata analysis only. Never requested, saw or handled a value |
 | Entry-method change | Portal sign-in failed (`AADSTS50058`), so the founder used founder-run PowerShell tools. Each version was independently reviewed by ChatGPT before the founder ran it (founder-reported) | Founder | Wrote and tested the tools offline only (dummy values, a local mock server, a fake `az`) |
 | Inngest event key for staging | The founder created a dedicated Branch Environments event key, `azure-staging-cbc`. Of the three existing keys (`branch-preview`, `Vercel: checkbeforeclick`, `Default ingest key`), the repository records none as the Azure staging key | Founder | Reviewed repository documentation only (`docs/ENVIRONMENTS.md` §10) |
 | Google Cloud billing | The founder linked the CheckBeforeClick Google Cloud project to an active paid billing account, then confirmed the existing Web Risk key works (founder-reported) | Founder | None |
 
-Not approved and not done: secrets 5-7; any change to the pre-existing secret;
+Not approved and not done: production secrets 5-7 (not authorized, not
+created; each needs a separate, explicit founder approval); any change to the pre-existing secret;
 deleting, purging, disabling or rotating anything; role changes (including
 removing the founder's Secrets Officer role); OIDC, GitHub or Supabase settings;
 B6/B7; any deployment.

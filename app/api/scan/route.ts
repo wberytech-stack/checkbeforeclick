@@ -1,5 +1,4 @@
 ﻿import "server-only"
-import { inngest } from "@/inngest/client"
 import { NextResponse, type NextRequest } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { normalizeScanTarget } from "@/lib/security/urlSafety"
@@ -25,9 +24,15 @@ import {
   type RecordFastScanResultInput,
 } from "@/src/server/scan/recordFastScanResult"
 import { isFastScanPersistenceHelperEnabled } from "@/src/server/scan/fastScanPersistenceFlag"
+import { admitScan, rateLimitHeaders, scanBurstLimiter } from "@/lib/security/rateLimit"
+import { callWebRiskGuarded, type WebRiskReserve } from "@/lib/scan/providers/googleWebRisk"
+
+// Gate 007A: every scan, including email/header/signature/batch, is processed synchronously in this request so
+// that paid Web Risk calls happen only here, under an execution-time reservation. Providers time out at 7 s and
+// run in parallel; 30 s leaves room for the sequential Supabase calls.
+export const maxDuration = 30
 
 const VALID_INPUT_TYPES = ["url", "domain", "email", "header", "signature", "batch"]
-const FAST_PATH_TYPES = ["url", "domain"]
 const MAX_INPUT_LENGTH = 10000
 
 export async function POST(request: NextRequest) {
@@ -82,6 +87,30 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // 5b. Gate 007A: per-user burst limit, then the shared atomic admission (cbc_admit_scan), called with the
+    // user's own session - never the service-role key. Rejected or unconfirmed admissions create no scan row and
+    // make no provider call (fail closed).
+    const admission = await admitScan({
+      userId: ctx.userId,
+      inputType: input_type,
+      burst: scanBurstLimiter,
+      callAdmission: async (inputType) => {
+        const { data, error } = await authClient.rpc("cbc_admit_scan", { p_input_type: inputType })
+        return { data, error }
+      },
+    })
+
+    if (!admission.allowed) {
+      const message =
+        admission.status === 429
+          ? "Scan limit reached. Please wait before scanning again."
+          : "Scanning is temporarily unavailable. Please try again later."
+      return NextResponse.json(
+        { error: message, reason: admission.reason },
+        { status: admission.status, headers: rateLimitHeaders(admission) }
+      )
+    }
+
     // 6. Create scan record
     const scanId = await createScan(ctx.organizationId, ctx.userId, input_type, cleanInput)
 
@@ -92,38 +121,26 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 7. Route to fast path or slow path
-    if (FAST_PATH_TYPES.includes(input_type)) {
-      return await runFastPath({
-        scan_id: scanId,
-        user_id: ctx.userId,
-        organization_id: ctx.organizationId,
-        raw_input: cleanInput,
-        input_type,
+    // 7. Every input type is scanned synchronously here (Gate 007A). Email/header/signature/batch inputs use the
+    // first URL they contain, exactly as the background worker used to; nothing is queued to Inngest any more.
+    // The reservation for the paid Web Risk call is made with the user's own session, never the service role.
+    const reserve: WebRiskReserve = async (provider, admissionId) => {
+      const { data, error } = await authClient.rpc("cbc_reserve_provider_call", {
+        p_provider: provider,
+        p_admission_id: Number(admissionId),
       })
+      return { data, error }
     }
 
-    // 8. Slow path - Inngest for email/header/heavy types
-    try {
-      await inngest.send({
-        name: "scan/requested",
-        data: { scan_id: scanId },
-      })
-    } catch (inngestError) {
-      console.error("Inngest send error:", inngestError)
-
-      await failScan(ctx.organizationId, scanId)
-
-      return NextResponse.json(
-        {
-          error: "Scan was created but could not be queued. Please try again.",
-          scan_id: scanId,
-        },
-        { status: 502 }
-      )
-    }
-
-    return NextResponse.json({ scan_id: scanId }, { status: 201 })
+    return await runFastPath({
+      scan_id: scanId,
+      user_id: ctx.userId,
+      organization_id: ctx.organizationId,
+      raw_input: cleanInput,
+      input_type,
+      admission_id: admission.admissionId,
+      reserve,
+    })
 
   } catch (error) {
     console.error("Scan route error:", error)
@@ -183,12 +200,16 @@ async function runFastPath({
   organization_id,
   raw_input,
   input_type,
+  admission_id,
+  reserve,
 }: {
   scan_id: string
   user_id: string
   organization_id: string
   raw_input: string
   input_type: string
+  admission_id: string | undefined
+  reserve: WebRiskReserve
 }) {
   const startTime = Date.now()
 
@@ -228,8 +249,8 @@ async function runFastPath({
       )
     }
 
-    // Get all enabled fast providers for this input type
-    const providers = getFastProviders(input_type as "url" | "domain")
+    // All enabled fast providers; every input type is checked as its normalized URL
+    const providers = getFastProviders("url")
 
     // Run all providers in parallel - one failure never blocks others
     // Always use normalized URL and "url" type after normalization
@@ -237,11 +258,29 @@ async function runFastPath({
     const providerInput = target.normalizedUrl!
     const providerInputType = "url" as const
 
+    // Unpaid providers run directly. The paid provider (Google Web Risk) runs ONLY through callWebRiskGuarded:
+    // one execution-time reservation, then at most one request. A refused or unconfirmed reservation makes no
+    // request and fails the whole scan with 503 - an incomplete check must never produce a verdict.
+    const budget: { refused: { status: 503; reason: string; retryAfterSeconds: number } | null } = { refused: null }
     const providerResults = await Promise.allSettled(
-      providers.map((provider) =>
-        provider.run(providerInput, providerInputType)
-      )
+      providers.map(async (provider) => {
+        if (provider.paid !== true) return provider.run(providerInput, providerInputType)
+        if (provider.name !== "google_web_risk") throw new Error("No guarded entry point for this paid provider")
+        const outcome = await callWebRiskGuarded({ admissionId: admission_id, url: providerInput, reserve })
+        if ("result" in outcome) return outcome.result
+        budget.refused = outcome.decision
+        throw new Error("Provider budget not granted")
+      })
     )
+
+    if (budget.refused) {
+      await failScan(organization_id, scan_id, Date.now() - startTime)
+      const refused = budget.refused
+      return NextResponse.json(
+        { error: "Scanning is temporarily unavailable. Please try again later.", reason: refused.reason, scan_id },
+        { status: 503, headers: rateLimitHeaders({ allowed: false, status: 503, reason: refused.reason, retryAfterSeconds: refused.retryAfterSeconds }) }
+      )
+    }
 
     // Collect results with provider names
     const results = providers.map((provider, i) => ({

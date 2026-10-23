@@ -1,23 +1,27 @@
 ﻿import "server-only"
-import type { ScanProvider, ScanProviderResult, ProviderInputType } from "./types"
+import type { ScanProvider, ScanProviderResult } from "./types"
+import { guardedPaidCall, WEB_RISK_PROVIDER, type GuardedOutcome } from "@/lib/security/providerBudget"
 
-const TIMEOUT_MS = 8000
+// Gate 007A: Google Web Risk is a PAID provider. The ONLY way to make a request is callWebRiskGuarded(), which
+// reserves exactly one unit of the execution-time budget (cbc_reserve_provider_call) and then makes exactly one
+// request. fetchWebRisk is deliberately not exported, and the provider's run() never makes a request.
+const TIMEOUT_MS = 7000
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  fallback: T
-): Promise<T> {
-  const timeout = new Promise<T>((resolve) =>
-    setTimeout(() => resolve(fallback), ms)
-  )
-  try {
-    return await Promise.race([promise, timeout])
-  } catch {
-    return fallback
+function notConfiguredResult(): ScanProviderResult {
+  return {
+    verdict: "skipped",
+    skipped: true,
+    scoreImpact: 0,
+    confidenceImpact: -25,
+    evidenceTitle: "Google Web Risk not checked",
+    evidenceDetail: "GOOGLE_WEB_RISK_API_KEY not configured.",
+    evidenceSeverity: "info",
+    rawResponse: null,
+    responseTimeMs: 0,
   }
 }
 
+// Exactly one request; an AbortController cancels it at TIMEOUT_MS, so nothing keeps running in the background.
 async function fetchWebRisk(url: string): Promise<ScanProviderResult> {
   const apiKey = process.env.GOOGLE_WEB_RISK_API_KEY
   const startTime = Date.now()
@@ -36,6 +40,8 @@ async function fetchWebRisk(url: string): Promise<ScanProviderResult> {
     }
   }
 
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
     const params = new URLSearchParams({ key: apiKey, uri: url })
     params.append("threatTypes", "MALWARE")
@@ -44,7 +50,7 @@ async function fetchWebRisk(url: string): Promise<ScanProviderResult> {
 
     const response = await fetch(
       `https://webrisk.googleapis.com/v1/uris:search?${params.toString()}`,
-      { method: "GET", headers: { "Content-Type": "application/json" } }
+      { method: "GET", headers: { "Content-Type": "application/json" }, signal: controller.signal }
     )
 
     const responseTimeMs = Date.now() - startTime
@@ -93,24 +99,47 @@ async function fetchWebRisk(url: string): Promise<ScanProviderResult> {
       responseTimeMs,
     }
   } catch (error) {
+    const timedOut = controller.signal.aborted
     return {
       verdict: "error",
-      error: String(error),
+      error: timedOut ? "Timeout" : String(error),
       scoreImpact: 0,
       confidenceImpact: -15,
-      evidenceTitle: "Google Web Risk check could not complete",
-      evidenceDetail: `Check failed: ${String(error)}`,
+      evidenceTitle: timedOut ? "Google Web Risk check timed out" : "Google Web Risk check could not complete",
+      evidenceDetail: timedOut ? "The check did not complete in time. Result may be incomplete." : `Check failed: ${String(error)}`,
       evidenceSeverity: "info",
       rawResponse: null,
       responseTimeMs: Date.now() - startTime,
     }
+  } finally {
+    clearTimeout(timer)
   }
+}
+
+export type WebRiskReserve = (provider: string, admissionId: string) => Promise<{ data: unknown; error: unknown }>
+
+// The single guarded entry point for every Google Web Risk request.
+// - Not configured (no API key): no reservation, no request, a "skipped" result (scan cannot become "safe").
+// - Otherwise: one reservation (fail closed on anything but a grant), then exactly one request.
+export async function callWebRiskGuarded(args: {
+  admissionId: string | undefined
+  url: string
+  reserve: WebRiskReserve
+}): Promise<GuardedOutcome<ScanProviderResult> | { called: false; notConfigured: true; result: ScanProviderResult }> {
+  if (!process.env.GOOGLE_WEB_RISK_API_KEY) return { called: false, notConfigured: true, result: notConfiguredResult() }
+  return guardedPaidCall({
+    provider: WEB_RISK_PROVIDER,
+    admissionId: args.admissionId,
+    reserve: args.reserve,
+    call: () => fetchWebRisk(args.url),
+  })
 }
 
 export const googleWebRiskProvider: ScanProvider = {
   name: "google_web_risk",
   displayName: "Google Web Risk",
   path: "fast",
+  paid: true,
   enabled: process.env.WEB_RISK_PROVIDER_ENABLED !== "false",
 
   supportedInputTypes: ["url", "domain"],
@@ -124,21 +153,18 @@ export const googleWebRiskProvider: ScanProvider = {
 
   timeoutMs: TIMEOUT_MS,
 
-  async run(input: string, _inputType: ProviderInputType): Promise<ScanProviderResult> {
-    return withTimeout(
-      fetchWebRisk(input),
-      TIMEOUT_MS,
-      {
-        verdict: "error",
-        error: "Timeout",
-        scoreImpact: 0,
-        confidenceImpact: -15,
-        evidenceTitle: "Google Web Risk check timed out",
-        evidenceDetail: "The check did not complete in time. Result may be incomplete.",
-        evidenceSeverity: "info",
-        rawResponse: null,
-        responseTimeMs: TIMEOUT_MS,
-      }
-    )
+  // Never makes a request: paid calls must go through callWebRiskGuarded() with an execution-time reservation.
+  async run(): Promise<ScanProviderResult> {
+    return {
+      verdict: "error",
+      error: "Reservation required",
+      scoreImpact: 0,
+      confidenceImpact: -15,
+      evidenceTitle: "Google Web Risk not checked",
+      evidenceDetail: "Paid provider calls require a budget reservation and are only made in the scan request.",
+      evidenceSeverity: "info",
+      rawResponse: null,
+      responseTimeMs: 0,
+    }
   },
 }

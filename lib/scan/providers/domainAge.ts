@@ -1,7 +1,7 @@
 ﻿import "server-only"
 import type { ScanProvider, ScanProviderResult, ProviderInputType } from "./types"
 
-const TIMEOUT_MS = 8000
+const TIMEOUT_MS = 7000
 
 // Extract registerable domain from hostname
 // e.g. "login.paypal-secure.xyz" → "paypal-secure.xyz"

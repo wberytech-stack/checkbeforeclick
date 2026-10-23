@@ -1,6 +1,6 @@
 ﻿import { inngest } from "../client"
 import { normalizeScanTarget } from "@/lib/security/urlSafety"
-import { getFastProviders, getAsyncProviders } from "@/lib/scan/providers"
+import { getFastProviders, getAsyncProviders, withoutPaidProviders } from "@/lib/scan/providers"
 import {
   calculateRiskScoreFromProviders,
   calculateConfidenceFromProviders,
@@ -73,9 +73,13 @@ export const processScan = inngest.createFunction(
 
       // If a URL was extracted, run URL-capable providers inside Inngest
       // If no URL extracted, get async providers for the input type
-      const providers = target.normalizedUrl
-        ? getFastProviders("url")
-        : getAsyncProviders(input_type as "email" | "header")
+      // Gate 007A: never a paid provider here. Delayed, retried, duplicated or replayed worker runs must not be
+      // able to call Google Web Risk; paid calls happen only in the signed-in scan request, under a reservation.
+      const providers = withoutPaidProviders(
+        target.normalizedUrl
+          ? getFastProviders("url")
+          : getAsyncProviders(input_type as "email" | "header")
+      )
 
       // If no providers available, complete as unknown
       if (providers.length === 0) {

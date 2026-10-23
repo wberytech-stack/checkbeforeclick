@@ -1,5 +1,12 @@
 ﻿import { createServerClient } from "@supabase/ssr"
 import { type NextRequest, NextResponse } from "next/server"
+import {
+  checkLoginAllowed,
+  clientIpFromForwardedFor,
+  loginEmailLimiter,
+  loginIpLimiter,
+  rateLimitHeaders,
+} from "@/lib/security/rateLimit"
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,6 +26,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Email and password are required." },
         { status: 400 }
+      )
+    }
+
+    // Gate 007A: per-IP and per-email attempt limits before Supabase is called (Supabase sees this server's
+    // address, not the user's, so its own per-IP limits cannot tell users apart).
+    const limit = checkLoginAllowed({
+      ip: clientIpFromForwardedFor(request.headers.get("x-forwarded-for")),
+      email,
+      byIp: loginIpLimiter,
+      byEmail: loginEmailLimiter,
+    })
+
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: "Too many sign-in attempts. Please wait and try again." },
+        { status: 429, headers: rateLimitHeaders(limit) }
       )
     }
 

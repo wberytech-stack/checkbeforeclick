@@ -55,7 +55,8 @@ Usage (founder, ordinary PowerShell window):
   powershell -NoProfile -ExecutionPolicy Bypass -File cbc-codex-trial.ps1 -Mode Proof  -ConfirmModelCall
   powershell -NoProfile -ExecutionPolicy Bypass -File cbc-codex-trial.ps1 -Mode Review -ConfirmModelCall
   ... -Target Gate007A -InputManifestSha256 <64 hex>   (both modes)
-  ... -Target Loop -InputManifestSha256 <64 hex> -InputBaseSha <40 hex>   (both modes)
+  ... -Target Loop -InputManifestSha256 <64 hex> -InputBaseSha <40 hex> [-LoopRepo Main|Sandbox]   (both modes)
+  -LoopRepo Sandbox swaps the working repository for the fixed disposable clone %USERPROFILE%\Documents\GitHub\cbc-loop-sandbox.
 #>
 [CmdletBinding()]
 param(
@@ -64,6 +65,7 @@ param(
   [ValidateSet('PR43', 'Gate007A', 'Loop')][string]$Target = 'PR43',
   [string]$InputManifestSha256 = '',   # Gate007A and Loop: pins the frozen input (64 hex); not a path or command
   [string]$InputBaseSha = '',          # Loop only: the base commit (40 hex); must equal the working repository HEAD
+  [ValidateSet('Main', 'Sandbox')][string]$LoopRepo = 'Main',   # Loop only: one of two FIXED working repositories (not a path)
   [switch]$LoadOnly    # defines the functions only (used by tests\offline-entry.ps1); runs nothing
 )
 $ErrorActionPreference = 'Stop'
@@ -79,6 +81,7 @@ $CanaryDir = Join-Path $env:USERPROFILE 'cbc-codex-canary'
 $RunDir = Join-Path $env:USERPROFILE 'cbc-codex-run'
 $TempCanary = Join-Path $env:TEMP 'cbc-codex-canary.txt'
 $RepoDir = Join-Path $env:USERPROFILE 'Documents\GitHub\checkbeforeclick'
+$SandboxRepoDir = Join-Path $env:USERPROFILE 'Documents\GitHub\cbc-loop-sandbox'   # disposable clone for loop tests (Loop -LoopRepo Sandbox)
 $ReviewDir = Join-Path ([Environment]::GetFolderPath('Desktop')) 'chatgpt-review'
 $SourceRepo = 'https://github.com/wberytech-stack/checkbeforeclick.git'
 $Targets = @{
@@ -558,7 +561,9 @@ function Invoke-TrialMain {
   if (-not $ConfirmModelCall) { Write-Host "Refusing: -Mode $Mode makes ONE Codex model call. Re-run with -ConfirmModelCall after the founder's approval."; return 3 }
   if ($TestMode) { Write-Host 'OFFLINE TEST MODE (fake Codex): not a trial.' }
   $script:Kind = $Targets[$Target].Kind
+  if ($LoopRepo -ne 'Main' -and $Target -ne 'Loop') { Write-Host "Refusing: -LoopRepo applies only to -Target Loop."; return 3 }
   if ($Target -eq 'Loop') { $script:BaseSha = $InputBaseSha; $script:HeadSha = $InputBaseSha }   # validated in Test-LoopSet
+  if ($Target -eq 'Loop' -and $LoopRepo -eq 'Sandbox') { $script:RepoDir = $SandboxRepoDir }
   Write-Host "Target: $Target ($($script:Kind))"
   try { if ($Mode -eq 'Proof') { $null = Invoke-ProofMode } else { $null = Invoke-ReviewMode } } catch { Add-Check 'runner completed without an unexpected error' $false ($_.Exception.GetType().FullName + ': ' + $_.Exception.Message) }
   $ok = @(Write-Report)[-1]   # last value only: stray pipeline output can never become the exit code

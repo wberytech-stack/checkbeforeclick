@@ -118,7 +118,11 @@ Check 'Review FAIL without a passed proof' ($r.Code -eq 1 -and $r.Out -match '\[
 # ===== 2b. production lock: no test overrides reachable from the trial command line =====
 $tok = $null; $perr = $null; $ast = [System.Management.Automation.Language.Parser]::ParseFile($Runner, [ref]$tok, [ref]$perr)
 $pnames = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath } | Sort-Object)
-Check 'production runner parameters are exactly ConfirmModelCall, InputBaseSha, InputManifestSha256, LoadOnly, Mode, Target' (($pnames -join ',') -ceq 'ConfirmModelCall,InputBaseSha,InputManifestSha256,LoadOnly,Mode,Target') ($pnames -join ',')
+Check 'production runner parameters are exactly ConfirmModelCall, InputBaseSha, InputManifestSha256, LoadOnly, LoopRepo, Mode, Target' (($pnames -join ',') -ceq 'ConfirmModelCall,InputBaseSha,InputManifestSha256,LoadOnly,LoopRepo,Mode,Target')
+$lrp = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'LoopRepo' })[0]
+Check 'LoopRepo accepts only Main and Sandbox (default Main); the sandbox path is a fixed constant' (((@($lrp.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { $_.Value } }) | Sort-Object) -join ',') -ceq 'Main,Sandbox' -and $lrp.DefaultValue.Value -ceq 'Main' -and [IO.File]::ReadAllText($Runner).Contains("`$SandboxRepoDir = Join-Path `$env:USERPROFILE 'Documents\GitHub\cbc-loop-sandbox'")) ''
+$ErrorActionPreference = 'Continue'; $o = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Runner -Mode Proof -ConfirmModelCall -Target PR43 -LoopRepo Sandbox 2>&1 | Out-String; $ErrorActionPreference = 'Stop'
+Check 'LoopRepo Sandbox with a non-Loop target is refused (exit 3) before any preflight' ($LASTEXITCODE -eq 3 -and $o -match 'applies only to -Target Loop' -and -not ($o -match '\[1\] Preflight')) $o ($pnames -join ',')
 $tparam = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Target' })[0]
 $tset = @($tparam.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { $_.Value } })
 Check 'Target accepts only PR43, Gate007A and Loop (default PR43)' ((($tset | Sort-Object) -join ',') -ceq 'Gate007A,Loop,PR43' -and $tparam.DefaultValue.Value -ceq 'PR43') ($tset -join ',')

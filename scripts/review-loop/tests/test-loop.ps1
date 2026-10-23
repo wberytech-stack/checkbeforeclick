@@ -117,6 +117,18 @@ $c = New-LoopCase 'fix-untracked'; $r = Run-Loop $c @($A, $A, $A, $A) 'finding,c
 $d = $(if ($r.Session) { Get-Content -Raw (Join-Path $r.Session 'round-1\fix\diff.patch') } else { '' })
 Check 'fix on an untracked (new) file: the diff shows the edit and the loop completes' ($r.Code -eq 0 -and $d -match '### lib/new/thing.ts' -and $d -match '\+// fixed by fake claude') (Tail $r.Out)
 
+# ===== 2c. keystrokes typed before a prompt appeared are discarded (live Stage 3: a stray Enter answered RUN TESTS) =====
+$c = New-LoopCase 'typeahead-empty'; $r = Run-Loop $c @($A, '<typeahead>', $A, $A, $A) 'finding,clean' 'fix' 3
+Check 'type-ahead: a stray Enter before RUN TESTS is discarded and the prompt waits for the real answer' ($r.Code -eq 0 -and $r.Out -match 'discarded 1 keystroke\(s\) typed before this prompt appeared') (Tail $r.Out)
+$c = New-LoopCase 'typeahead-phrase'; $r = Run-Loop $c @('<typeahead><auto>') 'clean' 'fix' 1
+Check 'type-ahead: a correct phrase typed before the prompt appeared is not accepted (stop, no runner call)' ($r.Code -eq 1 -and $r.Summary.reason -match 'approval not given' -and $r.Out -match 'discarded 1' -and -not (Test-Path $c.Run)) (Tail $r.Out)
+$c = New-LoopCase 'typeahead-many'; $r = Run-Loop $c @('<typeahead>x', '<typeahead>', '<typeahead>y', $A) 'clean' 'fix' 1
+Check 'type-ahead: several pending lines are all discarded before the real answer' ($r.Code -eq 0 -and $r.Out -match 'discarded 3 keystroke') (Tail $r.Out)
+$c = New-LoopCase 'typeahead-none'; $r = Run-Loop $c @($A) 'clean' 'fix' 1
+Check 'type-ahead: nothing pending, nothing reported' ($r.Code -eq 0 -and -not ($r.Out -match 'discarded')) ''
+$ls0 = [IO.File]::ReadAllText($Loop)
+Check 'static: every approval clears pending input right before reading; production drains KeyAvailable with ReadKey' ($ls0 -match '\$dropped = Clear-ConsoleInput[\s\S]{0,200}\$ans = Read-ApprovalLine' -and $ls0.Contains('while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true)') -and ([regex]::Matches($ls0, 'Read-ApprovalLine')).Count -eq 2) ''
+
 # ===== 3. stops =====
 function Stopped([string]$Label, $R, [string]$Why) { Check "stop: $Label (exit 1, reason)" ($R.Code -eq 1 -and $R.Summary.result -in @('stopped', 'open-findings') -and $R.Summary.reason -match $Why) ("exit $($R.Code); reason: $($R.Summary.reason)`n" + (Tail $R.Out 600)) }
 $c = New-LoopCase 'limit'; $r = Run-Loop $c @($A, $A, $A, $A) 'finding,finding' 'fix' 2
@@ -212,7 +224,11 @@ foreach ($f in @('cbc-review-loop.ps1', 'loop-common.ps1', 'archive.ps1', 'freez
 $ls = [IO.File]::ReadAllText($Loop)
 Check 'loop assigns TestMode only once, to false' (([regex]::Matches($ls, '\$TestMode\s*=')).Count -eq 1 -and $ls.Contains('$TestMode = $false')) ''
 Check 'loop has no permission-bypass or --bare flags' (-not ($ls -match '(?i)dangerously|bypassPermissions|acceptEdits|''--bare''|--add-dir')) ''
-Check 'loop production parameters are exactly Gate, LoadOnly, MaxRounds' ((@(([System.Management.Automation.Language.Parser]::ParseFile($Loop, [ref]$null, [ref]$null)).ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath } | Sort-Object) -join ',') -ceq 'Gate,LoadOnly,MaxRounds') ''
+Check 'loop production parameters are exactly Gate, LoadOnly, MaxRounds, Repo' ((@(([System.Management.Automation.Language.Parser]::ParseFile($Loop, [ref]$null, [ref]$null)).ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath } | Sort-Object) -join ',') -ceq 'Gate,LoadOnly,MaxRounds,Repo') ''
+Check 'loop -Repo maps only to the fixed main checkout or the fixed sandbox, and is passed to the runner as -LoopRepo' ($ls.Contains("`$SandboxRepoDir = Join-Path `$env:USERPROFILE 'Documents\GitHub\cbc-loop-sandbox'") -and $ls.Contains("[ValidateSet('Main', 'Sandbox')][string]`$Repo = 'Main'") -and $ls.Contains("'-LoopRepo', `$Repo)") -and $ls.Contains("if (`$Repo -eq 'Sandbox' -and -not `$TestMode) { `$script:RepoDir = `$SandboxRepoDir }")) ''
+Check 'loop and runner use the identical sandbox path' ([regex]::Match($ls, "(?m)^\`$SandboxRepoDir = .+$").Value.Split('#')[0].Trim() -ceq [regex]::Match($runnerSrc, "(?m)^\`$SandboxRepoDir = .+$").Value.Split('#')[0].Trim()) ''
+$gt2 = Get-Content -Raw (Join-Path $Kit 'gate-tests.json') | ConvertFrom-Json
+Check 'gate-tests.json has the sandbox gate 999Z with its one test script' ((@(@($gt2.gates.'999Z') | ForEach-Object { [string]@($_)[0] }) -join ',') -ceq 'scripts/loop-sandbox/test-redirect.ts') ''
 $cfg = Get-Content -Raw (Join-Path $Kit 'claude-settings.json') | ConvertFrom-Json
 Check 'claude-settings.json denies Bash, Write, network, .env reads and hooks' ((@($cfg.permissions.deny) -ccontains 'Bash') -and (@($cfg.permissions.deny) -ccontains 'Write') -and (@($cfg.permissions.deny) -ccontains 'WebFetch') -and (@($cfg.permissions.deny) -ccontains 'Read(**/.env*)') -and $cfg.disableAllHooks -eq $true -and -not (@($cfg.PSObject.Properties.Name) -contains 'allow')) ''
 $gt = Get-Content -Raw (Join-Path $Kit 'gate-tests.json') | ConvertFrom-Json

@@ -6,6 +6,9 @@
       ["scripts/rate-limit/test-rate-limit.ts"],
       ["scripts/rate-limit/test-provider-budget.ts"],
       ["node_modules/typescript/bin/tsc", "--noEmit", "-p", "."]
+    ],
+    "999Z": [
+      ["scripts/loop-sandbox/test-redirect.ts"]
     ]
   }
 }

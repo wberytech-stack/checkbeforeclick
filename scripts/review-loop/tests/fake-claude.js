@@ -14,6 +14,28 @@ const paths = [...prompt.matchAll(/"path":\s*"([^"]+)"/g)].map((m) => m[1]);
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const append = (rel, text) => fs.appendFileSync(path.join(process.cwd(), ...rel.split('/')), text);
 
+// ---- probe-claude.ps1 mode: the prompt is the permission self-test ----
+if (prompt.includes('permission self-test')) {
+  const outside = (prompt.match(/A8 Edit: in the file (.+?), add the line/) || [])[1];
+  const tools = has('probe-extra-tool') ? ['Read', 'Grep', 'Glob', 'Edit', 'Bash'] : ['Read', 'Grep', 'Glob', 'Edit'];
+  out({ type: 'system', subtype: 'init', cwd: process.cwd(), tools, permissionMode: has('probe-bypass-mode') ? 'bypassPermissions' : 'dontAsk', mcp_servers: [] });
+  let n = 0;
+  const call = (name, input, ok, content) => { n++; out({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't' + n, name, input }] } });
+    out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't' + n, is_error: !ok, content: content || (ok ? 'done' : 'Permission to use ' + name + ' has been denied.') }] } }); };
+  const edit = (rel, text, prepend) => { const f = path.join(process.cwd(), ...rel.split('/')); const old = fs.readFileSync(f, 'utf8'); fs.writeFileSync(f, prepend ? text + '\n' + old : old + text + '\n'); };
+  if (!has('probe-no-edit')) { edit('scripts/loop-sandbox/redirect.ts', '// probe-edit-ok', true); call('Edit', { file_path: 'scripts/loop-sandbox/redirect.ts' }, true); }
+  if (has('probe-edit-readme')) { edit('README.md', 'probe'); call('Edit', { file_path: 'README.md' }, true); } else call('Edit', { file_path: 'README.md' }, false);
+  if (has('probe-new-file')) fs.writeFileSync(path.join(process.cwd(), 'scripts', 'loop-sandbox', 'probe-new.ts'), 'x');
+  if (has('probe-env-leak')) call('Read', { file_path: '.env.probe' }, true, fs.readFileSync(path.join(process.cwd(), '.env.probe'), 'utf8'));
+  else call('Read', { file_path: '.env.probe' }, false);
+  if (has('probe-bash-ok')) call('Bash', { command: 'whoami' }, true, 'user');
+  call('Read', { file_path: '~/.claude/settings.json' }, has('probe-claude-read-ok'));
+  if (has('probe-outside-edit')) { fs.appendFileSync(outside, 'probe\n'); call('Edit', { file_path: outside }, true); } else call('Edit', { file_path: outside }, false);
+  call('Read', { file_path: outside }, true, fs.readFileSync(outside, 'utf8'));
+  if (has('probe-commit')) execFileSync('git', ['branch', 'probe-sneaky'], { cwd: process.cwd() });
+  out({ type: 'result', subtype: 'success', is_error: false, result: 'A1 ok; A2-A8 denied or unavailable; A9 read.' });
+  process.exit(0);
+}
 out({ type: 'system', subtype: 'init', cwd: process.cwd(), tools: ['Read', 'Grep', 'Glob', 'Edit'] });
 if (has('exit1')) { process.stderr.write('fake: simulated crash\n'); process.exit(1); }
 let decisions = ids.map((id, i) => ({ finding_id: id, decision: 'fixed', files: [paths[i]], rationale: 'Validated the empty input before returning.' }));

@@ -2,7 +2,8 @@
 CheckBeforeClick Gate 005H - Claude -> Codex -> Claude review loop. FOUNDER-OPERATED. Windows PowerShell 5.1.
 
 Run by the founder in an ordinary, interactive PowerShell window:
-  powershell -NoProfile -ExecutionPolicy Bypass -File cbc-review-loop.ps1 -Gate 007A [-MaxRounds 1..3]
+  powershell -NoProfile -ExecutionPolicy Bypass -File cbc-review-loop.ps1 -Gate 007A [-MaxRounds 1..3] [-Repo Main|Sandbox]
+  -Repo Sandbox uses the fixed disposable clone %USERPROFILE%\Documents\GitHub\cbc-loop-sandbox instead of the main checkout.
 
 Per review round (at most -MaxRounds, never more than 3):
   1. If the four trial paths are occupied, they are cleared only when every file in them is byte-identical to an
@@ -28,6 +29,7 @@ Exit codes: 0 clean review, 1 stopped or findings left open, 3 refused (usage or
 param(
   [string]$Gate = '',
   [ValidateRange(1, 3)][int]$MaxRounds = 3,
+  [ValidateSet('Main', 'Sandbox')][string]$Repo = 'Main',   # one of two FIXED working repositories (not a path)
   [switch]$LoadOnly    # defines the functions only (used by tests\loop-offline-entry.ps1); runs nothing
 )
 $ErrorActionPreference = 'Stop'
@@ -39,6 +41,7 @@ $LoopHere = $PSScriptRoot
 # ---- fixed configuration: NOT overridable from the command line ------------------------------------
 $TestMode = $false
 $RepoDir = Join-Path $env:USERPROFILE 'Documents\GitHub\checkbeforeclick'
+$SandboxRepoDir = Join-Path $env:USERPROFILE 'Documents\GitHub\cbc-loop-sandbox'   # disposable clone for loop tests (-Repo Sandbox)
 $ReviewDir = Join-Path ([Environment]::GetFolderPath('Desktop')) 'chatgpt-review'
 $KitDir = Join-Path $ReviewDir 'codex-trial'
 $InputDir = Join-Path $KitDir 'inputs\loop-current'
@@ -61,8 +64,23 @@ function Write-LoopLog([string]$Msg) {
   if ($script:Session) { [IO.File]::AppendAllText((Join-Path $script:Session 'loop-log.txt'), ((Get-Date -Format 'HH:mm:ss') + ' ' + $Msg + "`n"), (New-Object System.Text.UTF8Encoding($false))) }
 }
 function Stop-Loop([string]$Reason) { throw ('LOOPSTOP: ' + $Reason) }
+function Clear-ConsoleInput {
+  # Discards keystrokes typed before the prompt was shown (live Stage 3: a stray Enter answered RUN TESTS instantly).
+  # Returns how many keys (offline tests: buffered lines) were discarded.
+  if ($TestMode) {
+    # Offline tests model type-ahead as answers prefixed '<typeahead>': lines already waiting before this prompt.
+    $n = 0; while ($script:AnswerIdx -lt $script:Answers.Count -and ([string]$script:Answers[$script:AnswerIdx]).StartsWith('<typeahead>')) { $script:AnswerIdx++; $n++ }
+    return $n
+  }
+  $n = 0
+  try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true); $n++ } } catch { Stop-Loop "could not clear pending console input: $($_.Exception.Message)" }
+  return $n
+}
 function Read-ApprovalLine {
-  if ($TestMode) { if ($script:AnswerIdx -lt $script:Answers.Count) { return $script:Answers[$script:AnswerIdx++] }; return $null }
+  if ($TestMode) {
+    if ($script:AnswerIdx -lt $script:Answers.Count) { $a = [string]$script:Answers[$script:AnswerIdx++]; if ($a.StartsWith('<typeahead>')) { return $a.Substring(11) }; return $a }
+    return $null
+  }
   return [Console]::ReadLine()
 }
 function Request-Approval([string]$Phrase, [string[]]$Lines) {
@@ -70,6 +88,8 @@ function Request-Approval([string]$Phrase, [string[]]$Lines) {
   Write-LoopLog ''
   foreach ($l in $Lines) { Write-LoopLog ('  ' + $l) }
   Write-LoopLog "Type exactly:  $Phrase"
+  $dropped = Clear-ConsoleInput
+  if ($dropped) { Write-LoopLog "  (discarded $dropped keystroke(s) typed before this prompt appeared)" }
   $ans = Read-ApprovalLine
   if ($TestMode -and $ans -ceq '<auto>') { $ans = $Phrase }   # offline tests only; TestMode is never set in production
   Write-LoopLog ('  answer: ' + $(if ($null -eq $ans) { '<none>' } else { $ans }))
@@ -80,7 +100,7 @@ function Request-Approval([string]$Phrase, [string[]]$Lines) {
 function Invoke-Runner([string]$Mode, [string]$Manifest, [string]$Base, [string]$RoundDir) {
   $ps = Join-Path $PSHOME 'powershell.exe'
   if ($TestMode) { $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:TestRunnerEntry, '-TrialMode', $Mode, '-Confirm') + $script:TestRunnerArgs + @('-TTarget', 'Loop', '-TManifest', $Manifest, '-TInputBase', $Base) }
-  else { $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $script:Tools 'cbc-codex-trial.ps1'), '-Mode', $Mode, '-ConfirmModelCall', '-Target', 'Loop', '-InputManifestSha256', $Manifest, '-InputBaseSha', $Base) }
+  else { $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $script:Tools 'cbc-codex-trial.ps1'), '-Mode', $Mode, '-ConfirmModelCall', '-Target', 'Loop', '-InputManifestSha256', $Manifest, '-InputBaseSha', $Base, '-LoopRepo', $Repo) }
   Write-LoopLog "[runner] $Mode (target Loop, manifest $($Manifest.Substring(0, 12))...)"
   $r = Invoke-LoopProc $ps $a $env:TEMP $RunnerTimeoutSec
   Write-LoopUtf8 (Join-Path $RoundDir "runner-$Mode-console.txt") ($r.StdOut + "`n--- stderr ---`n" + $r.StdErr)
@@ -267,7 +287,7 @@ function Invoke-Round([int]$N, [string[]]$PrevSummary) {
   $script:Frozen = @($fz.Paths)
   $lines = @()
   if ($PrevSummary) { $lines += $PrevSummary; $lines += '' }
-  $lines += @("Gate $Gate - review round $N of max $MaxRounds - base $($script:Base.Substring(0, 7)) - branch $($script:Branch)",
+  $lines += @("Gate $Gate - review round $N of max $MaxRounds - repository $Repo ($RepoDir) - base $($script:Base.Substring(0, 7)) - branch $($script:Branch)",
     "Frozen set: $($fz.Paths.Count) files - manifest $($fz.ManifestSha) - runner $($script:RunnerSha.Substring(0, 12))... (pinned)")
   $lines += @($fz.Paths | ForEach-Object { "  $_" })
   $lines += ('This round: 1 Codex Proof call + 1 Codex Review call' + $(if ($N -lt $MaxRounds) { '; if findings, 1 headless Claude fix session.' } else { '; last round (no fix session).' }))
@@ -298,6 +318,7 @@ function Invoke-LoopMain {
   if ($Gate -cnotmatch '^[0-9]{3}[A-Z]$') { Write-Host 'Usage: cbc-review-loop.ps1 -Gate <NNNX, e.g. 007A> [-MaxRounds 1..3]'; return 3 }
   if (-not $TestMode -and [Console]::IsInputRedirected) { Write-Host 'Refusing: run this in an interactive PowerShell window; every approval is typed by the founder.'; return 3 }
   $script:ExpectedTrial = @{ Trial = $TrialPaths.Trial; Canary = $TrialPaths.Canary; Run = $TrialPaths.Run; Temp = $TrialPaths.Temp }
+  if ($Repo -eq 'Sandbox' -and -not $TestMode) { $script:RepoDir = $SandboxRepoDir }
   $name = "loop-$Gate-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
   $script:Session = Join-Path $ResultsDir $name
   if (Test-Path -LiteralPath $script:Session) { Write-Host "Refusing: $($script:Session) already exists"; $script:Session = $null; return 3 }

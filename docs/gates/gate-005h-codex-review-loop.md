@@ -37,7 +37,8 @@ for fixes, for at most two fix rounds (three review rounds). Every step is archi
 | `scripts/review-loop/claude-fix-prompt.md` | New: the fixed prompt for the headless fix session |
 | `scripts/review-loop/claude-settings.json` | New: deny rules and `disableAllHooks` for the headless session |
 | `scripts/review-loop/gate-tests.json` | New: the local tests run after each fix, per gate (only `007A` so far) |
-| `scripts/review-loop/tests/*` | Runner, parser and loop offline suites, fake Codex and fake Claude, offline entries, parser fixtures |
+| `scripts/review-loop/probe-claude.ps1` | New: founder-run live permission probe of the headless Claude fix session, against the sandbox clone only |
+| `scripts/review-loop/tests/*` | Runner, parser, loop and probe offline suites, fake Codex and fake Claude, offline entries, parser fixtures |
 | `docs/gates/gate-005h-codex-review-loop.md` | This document |
 | `.agents/state.yaml`, `.agents/claude-handoff.yaml` | Gate state and checkpoint handoff |
 
@@ -88,6 +89,12 @@ Every other runner protection applies unchanged:
 
 ### Loop flow (`cbc-review-loop.ps1 -Gate <NNNX> [-MaxRounds 1..3]`)
 
+0. **Repository choice.** `-Repo Main` (default) is the main checkout. `-Repo Sandbox` is the fixed disposable clone
+   `%USERPROFILE%\Documents\GitHub\cbc-loop-sandbox`, which is passed to the runner as `-LoopRepo Sandbox`. Neither is
+   a path you type. The approval prompt names the repository in use.
+   **Approvals:** before each typed approval, any keystrokes already waiting in the console are discarded, and the
+   number is logged. A stray Enter, or a phrase typed before the prompt appeared, can no longer answer a prompt; this
+   happened in the first live sandbox run.
 1. **Refusals at start.** The loop refuses to run without an interactive console. It then pins copies of the runner,
    the parser, the helper scripts, the prompt, the settings and `gate-tests.json` into the session archive, and runs
    only those copies.
@@ -170,9 +177,10 @@ All suites run offline (PowerShell 5.1, Node 24.14.0):
 
 | Command | Result |
 | --- | --- |
-| `powershell -File scripts/review-loop/tests/cbc-codex-trial-test.ps1` | `offline tests: 296 checks, 0 failed` (the 208 existing checks, 2 of them with updated labels, plus 88 for `Loop`) |
+| `powershell -File scripts/review-loop/tests/cbc-codex-trial-test.ps1` | `offline tests: 298 checks, 0 failed` (the 208 existing checks, some with updated labels, plus 88 for `Loop` and 2 for `-LoopRepo`) |
+| `powershell -File scripts/review-loop/tests/test-probe.ps1` | `probe tests: 35 checks, 0 failed` |
 | `powershell -File scripts/review-loop/tests/test-review-parse.ps1` | `review-parse tests: 47 checks, 0 failed` |
-| `powershell -File scripts/review-loop/tests/test-loop.ps1` | `loop tests: 123 checks, 0 failed` |
+| `powershell -File scripts/review-loop/tests/test-loop.ps1` | `loop tests: 131 checks, 0 failed` (includes 4 type-ahead cases and a static check of the input flush) |
 | `powershell -File scripts/review-loop/verify-archive.ps1 -All <Desktop>\chatgpt-review\codex-trial\results` | `archives: 9, failed: 0` (read-only, all existing archives) |
 
 **What the loop suite covers:**
@@ -224,9 +232,47 @@ All suites run offline (PowerShell 5.1, Node 24.14.0):
   - there are no permission-bypass or `--bare` flags;
   - the loop and the runner use the identical forbidden list.
 
-**Not exercised:** any real Codex or Claude call. That includes how real headless Claude 2.1.185 enforces
-`dontAsk`, `--setting-sources project` and the per-file `Edit(./path)` rules. The offline tests verify that the flags
-are passed; the live behaviour is checked at the first founder-approved live run.
+### Live validation (founder-run, 2026-10-23, sandbox gate `999Z`, Claude Code 2.1.185, Codex 0.163.0)
+
+All runs targeted the disposable clone `cbc-loop-sandbox`, never the main checkout. The input was a planted
+open-redirect defect in `scripts/loop-sandbox/redirect.ts`. Each archive below verifies with `verify-archive.ps1`.
+
+| Run | Archive `MANIFEST.sha256` | Result |
+| --- | --- | --- |
+| Stage 1: prompt dry run, `loop-999Z-20261023-064812` | `77f4f35b...` | `CLEAR` accepted (the archived trial paths were recognized); stopped at `APPROVE ROUND 1`; no model call |
+| Stage 2: permission probe, `probe-claude-20261023-064549` | `37f67701...` | PASS (details below). An earlier attempt failed only because the CLI sign-in had expired (401), so no tool call was made |
+| Stage 3a: `loop-999Z-20261023-065711` | `3c2ff6f2...` | Codex P2 (`//`, `/\` bypass); Claude fixed it; stopped at `RUN TESTS`, which a stray Enter answered. This led to the input-flush fix |
+| Stage 3b: `loop-999Z-20261023-075020` | `c67f0108...` | From the original files: Codex P2; Claude fixed it; flush discarded 2 keystrokes; `RUN TESTS` approved; test PASS; stopped at `APPROVE ROUND 2` (the answer had a leading space, and exact match is required) |
+| Stage 3c: `loop-999Z-20261023-090041` | `4acfb354eb7491cf8d8db74f5b8acc6a3d81f18f23fde30466354d6d2f7acdc5` | Round 1, starting from the 3b fix: Codex P2 (tab/CR/LF smuggling); Claude fixed it; flush discarded 1 keystroke; `RUN TESTS` approved; test PASS. Round 2: Proof and Review PASS, outcome **clean** (0 findings) |
+
+**Confirmed live:**
+
+- **The headless Claude session:**
+  - its tool list was exactly Read/Grep/Glob/Edit, in `dontAsk` mode;
+  - it had no MCP servers, skills or plugins;
+  - `apiKeySource: none`, so the founder's sign-in was used and no API key.
+- **Edits:**
+  - the per-file `Edit(./path)` rules permitted edits to the frozen files;
+  - editing `README.md` was denied (don't-ask mode);
+  - editing a file outside the repository was denied.
+- **Reads:**
+  - reading `~/.claude/settings.json` was denied by the deny rules;
+  - reading a file outside the repository that no rule covers was possible (a known limit).
+- **The loop's own controls:**
+  - the parser classified real Codex output correctly in all three outcomes (findings, findings, clean);
+  - every typed approval worked, including the input flush (3 keystrokes discarded across two runs);
+  - exact-match approvals failed closed;
+  - archives verified at every stop.
+
+**Not exercised live:**
+
+- **The `.env` read deny rule.** The probe session never attempted A4.
+- **Bash, Write and web calls.** These tools were absent from the session, so they could not be attempted.
+- **`disableAllHooks`.**
+- **A fix round on the main checkout or a real gate.**
+
+**Note on the round limit:** it applies per session. The final clean result took two sessions (3b and 3c), so three
+Codex reviews and two Claude fixes in all.
 
 ## Out of scope
 

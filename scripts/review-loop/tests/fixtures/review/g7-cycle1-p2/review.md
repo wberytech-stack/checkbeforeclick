@@ -1,0 +1,6 @@
+The new limiter introduces an unauthenticated resource-exhaustion path under sustained login traffic. The offline test suite passes all 51 checks, but does not verify bounded storage or processing under rejected traffic.
+
+Review comment:
+
+- [P2] Bound retained attempts and keys in the in-memory limiter — C:\Users\GN User\cbc-codex-trial\lib\security\rateLimit.ts:61-64
+  When an attacker repeatedly calls the unauthenticated login endpoint, rejected requests still append timestamps, and each subsequent request filters the entire accumulated array. This permits unbounded memory growth within the 15-minute window and quadratic processing for a hot key. Rotating email addresses also grows the map beyond `MAX_TRACKED_KEYS`, because pruning removes only expired entries and then scans all live keys on every request. Retain only the timestamps necessary to enforce the limit and enforce a real bound on tracked keys so the abuse-protection path cannot itself exhaust the server.

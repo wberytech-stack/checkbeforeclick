@@ -2,20 +2,50 @@
 schema_version: 4
 project: cbc
 status: in_progress    # in_progress | ready_for_review (Gate 005A orchestrator); ready_for_review only after head_commit is pushed
-gate: ""
-branch: ""
-base_commit: ""
-head_commit: ""
-date: ""
-summary: ""
-changed_files: []
-commands_run: []
+gate: "005H"
+branch: gate-005h-codex-review-loop   # local only, worktree ../cbc-005h; upstream unset; not pushed
+base_commit: 1810aeb4c2d13782a192a302cc0b6cd9bad5d2d9   # origin/master, verified by git fetch + ls-remote 2026-10-23
+head_commit: 1810aeb4c2d13782a192a302cc0b6cd9bad5d2d9   # no commits yet (founder: commits only after Checkpoint 2 approval)
+date: "2026-10-23"
+summary: "Checkpoint 2: founder-run review loop complete offline. Loop state machine (typed approvals CLEAR/APPROVE ROUND, max 3 rounds, Proof every round), freeze, write-once SHA-256 archives with trial-path recognition and guarded clear, read-only git wrapper, verify-archive (also legacy MANIFEST.md archives), headless Claude fix session (no Bash/Write/network/MCP, dontAsk, project settings only, Edit only on frozen files, JSON decisions validated against actual changes). Security-review follow-up (founder 2026-10-23): gate tests run only after the founder sees Claude's diff and types RUN TESTS <n> <diff.patch sha prefix>, with a re-check that the repo still matches the shown diff. Gate doc and state.yaml entry. No model calls, no commits."
+changed_files:
+  - scripts/review-loop/cbc-codex-trial.ps1      (Checkpoint 1: kit runner copy + Loop target)
+  - scripts/review-loop/review-parse.ps1         (Checkpoint 1)
+  - scripts/review-loop/cbc-review-loop.ps1      (new)
+  - scripts/review-loop/loop-common.ps1          (new)
+  - scripts/review-loop/freeze.ps1               (new)
+  - scripts/review-loop/archive.ps1              (new)
+  - scripts/review-loop/verify-archive.ps1       (new)
+  - scripts/review-loop/claude-fix-prompt.md     (new)
+  - scripts/review-loop/claude-settings.json     (new)
+  - scripts/review-loop/gate-tests.json          (new)
+  - scripts/review-loop/tests/cbc-codex-trial-test.ps1, offline-entry.ps1, fake-codex.js (copies, extended)
+  - scripts/review-loop/tests/test-review-parse.ps1, fixtures/review/** (Checkpoint 1)
+  - scripts/review-loop/tests/test-loop.ps1, loop-offline-entry.ps1, fake-claude.js (new)
+  - docs/gates/gate-005h-codex-review-loop.md   (new)
+  - .agents/state.yaml                          (gates."005H" entry)
+  - .agents/claude-handoff.yaml                 (this checkpoint)
+commands_run:
+  - git fetch origin master; git ls-remote origin refs/heads/master   # 1810aeb
+  - git worktree add -b gate-005h-codex-review-loop ../cbc-005h origin/master; git branch --unset-upstream
+  - powershell -File scripts/review-loop/tests/cbc-codex-trial-test.ps1
+  - powershell -File scripts/review-loop/tests/test-review-parse.ps1
+  - powershell -File scripts/review-loop/tests/test-loop.ps1
+  - powershell -File scripts/review-loop/verify-archive.ps1 -All <Desktop>/chatgpt-review/codex-trial/results   # read-only
+  - claude --help   # read-only flag check
 validation:
-  build: ""
-  results: []          # full PASS/FAIL lines
-  not_exercised: []
-git_status_short: ""
-git_diff_stat: ""
+  build: "not applicable (PowerShell/Node tooling and docs only; no app code changed)"
+  results:             # full PASS/FAIL lines
+    - "offline tests: 296 checks, 0 failed"
+    - "review-parse tests: 47 checks, 0 failed"
+    - "loop tests: 123 checks, 0 failed"
+    - "archives: 9, failed: 0"      # verify-archive over every existing Desktop archive, read-only
+  not_exercised:
+    - any real Codex or Claude model call (out of scope; first live run needs separate founder approval)
+    - live enforcement by Claude Code 2.1.185 of dontAsk, --setting-sources project and per-file Edit(./path) rules (flags verified offline only)
+    - state-reconcile --check on the edited state.yaml (worktree has no node_modules; CI runs it on a PR)
+git_status_short: " M .agents/claude-handoff.yaml /  M .agents/state.yaml / ?? docs/gates/gate-005h-codex-review-loop.md / ?? scripts/review-loop/"
+git_diff_stat: ".agents/claude-handoff.yaml and .agents/state.yaml (tracked); new files untracked"
 delegated_actions:     # AGENTS.md section 6.2 - report every one
   local_commits: []    # SHAs
   pushed_branch: ""    # the gate branch only; never master
@@ -24,10 +54,18 @@ delegated_actions:     # AGENTS.md section 6.2 - report every one
     number: ""
     url: ""
     is_draft: true     # must stay true; ready-for-review is founder-only
-founder_only_actions_requested: []   # AGENTS.md section 6.3 - asked, not taken
+founder_only_actions_requested:   # AGENTS.md section 6.3 - asked, not taken
+  - "Approve commit + push of gate-005h-codex-review-loop and a draft PR (founder rule for this gate: only after Checkpoint 2 approval)"
+  - "Later, separately: first live loop run (Codex Proof/Review calls and possibly a headless Claude session)"
 review_changes: []        # AGENTS.md section 6.4 - each: { id: "", status: addressed | deferred, commit: "", note: "" }
 deferred_review_items: [] # out of scope, founder-only, or ambiguous - not implemented
 state_yaml_discrepancies: []   # conflicts with repository evidence (AGENTS.md section 1)
 could_not_do: []
-risks_or_findings: []
-decision_needed_from_founder: ""
+risks_or_findings:
+  - "Loop base must equal repo HEAD and be pushed to origin; unpushed local commits cannot be reviewed (fails closed)."
+  - "Gates touching forbidden paths (.claude/, AGENTS.md, package*.json, .env*, keys) cannot use the loop."
+  - "Fix rounds need a gate-tests.json entry (only 007A today); without it use -MaxRounds 1."
+  - "Approved gate tests still run unsandboxed with the founder's rights (now only after the founder approves the shown diff); if a gate's own tests are frozen the prompt flags it and Codex re-reviews."
+  - "Headless Claude can read files outside the repo except denied paths; it has no Bash or network tools; transcript archived."
+  - "Main checkout (gate-007a, uncommitted) and the Desktop kit verified unchanged by hash."
+decision_needed_from_founder: "Review Checkpoint 2; approve (or not) committing and pushing the 005H branch and opening a draft PR."

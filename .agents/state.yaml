@@ -414,6 +414,11 @@ gates:
   "004B": {status: docs_on_master, evidence: [{type: gate_doc, ref: docs/gates/gate-004b-browser-extension-mvp-requirements.md}], verified_at: 2026-10-15}
   "004C": {status: docs_on_master, evidence: [{type: gate_doc, ref: docs/gates/gate-004c-dependency-vulnerability-audit-plan.md}], verified_at: 2026-10-15}
   "004D": {status: docs_on_master, evidence: [{type: gate_doc, ref: docs/gates/gate-004d-postcss-blocked-remediation-note.md}], verified_at: 2026-10-15}
+  "005H":
+    status: in_progress_local
+    note: "Codex review loop (scripts/review-loop). Founder-started 2026-10-23; Checkpoint 2 reached. Local worktree branch gate-005h-codex-review-loop from origin/master 1810aeb; NO commits or pushes yet (founder: only after Checkpoint 2 approval). Offline suites: runner 296/0, parser 47/0, loop 123/0 (gate tests behind a typed approval of the shown diff); no model call made. First live loop run needs a separate founder approval."
+    evidence: [{type: gate_doc, ref: docs/gates/gate-005h-codex-review-loop.md}, {type: branch, ref: gate-005h-codex-review-loop}]
+    verified_at: 2026-10-23
 
 blockers:
   - id: tls-unverified-on-master

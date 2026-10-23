@@ -1,0 +1,16 @@
+Derived parser fixtures (Gate 005H). review.md is verbatim; review-events.jsonl keeps only the final agent_message event; report-Review.md keeps only its first line. Source archive files (SHA-256):
+pr43-attempt04-clean/review.md <- attempt-04-review-PASS-20261022-1038/run/review.md 9ced4b0d7875ed32b9c8d89b9e02911044befd437354b7fa9985b196f787dbd1
+pr43-attempt04-clean/review-events.jsonl <- attempt-04-review-PASS-20261022-1038/run/review-events.jsonl 6c0f08d0dab4b7acb5f9af1291a30aa49d9faaa2b50bfffe8a01ebed97d261a6
+pr43-attempt04-clean/report-Review.md <- attempt-04-review-PASS-20261022-1038/run/report-Review.md 3d4c4dfb9a58936c01a9d64b1a80eb398b7debd4994f23049c688e7aa9cb3268
+g7-cycle1-p2/review.md <- gate007a-cycle1-proof-review-PASS-20261022-1357/run/review.md a4ef2c3a6f80f23fe9fa057d4452498a213262e576bef7c82ec0155ac8ee9b90
+g7-cycle1-p2/review-events.jsonl <- gate007a-cycle1-proof-review-PASS-20261022-1357/run/review-events.jsonl cc586b5a8e558f0b9c70133f9f1f0b3ac5ab8fa78c2af65b8631fca2cd23ebfc
+g7-cycle1-p2/report-Review.md <- gate007a-cycle1-proof-review-PASS-20261022-1357/run/report-Review.md fa093c2f68b446f003c7b8e6cd7c80ad26a2d6d525f79bf5089c55ef4bdaf69e
+g7-cycle2-p1/review.md <- gate007a-cycle2-proof-review-PASS-P1-20261022-1530/run/review.md 159fbce5d4f23a2b849f712b97074f5ec8fd96fb30c33582ca3d6473f68ae769
+g7-cycle2-p1/review-events.jsonl <- gate007a-cycle2-proof-review-PASS-P1-20261022-1530/run/review-events.jsonl b1815bd98a734ba76c066d78de3ee02cf6f95226bca4a1f93bed10ada711f658
+g7-cycle2-p1/report-Review.md <- gate007a-cycle2-proof-review-PASS-P1-20261022-1530/run/report-Review.md 7d8d0ea3bc252b5bac7114b34a5fcbaaee5bc3e6bdd0f5061c3aa1c48d35be20
+g7-cycle3-p2/review.md <- gate007a-cycle3-proof-review-PASS-P2-20261022-1715/run/review.md 979f78186d88f5f6d7c3eb81bde2458d1cf12a3fb8839609f29962bc0a25e099
+g7-cycle3-p2/review-events.jsonl <- gate007a-cycle3-proof-review-PASS-P2-20261022-1715/run/review-events.jsonl 9744739c50288952382ef6beebeb95c979ebcfe008529f6567f368e392292f0f
+g7-cycle3-p2/report-Review.md <- gate007a-cycle3-proof-review-PASS-P2-20261022-1715/run/report-Review.md c61596a5599e1c4458a8d2d3b2d99d2b4a208a0a15fdda0e7c1e5433ab649119
+g7-full15-clean/review.md <- gate007a-full15-proof-review-PASS-20261023-0231/run/review.md 1d6a70dfb70b53e7cac8adf2c4129e3a642dcba80ab79bd1210491dece89c2fc
+g7-full15-clean/review-events.jsonl <- gate007a-full15-proof-review-PASS-20261023-0231/run/review-events.jsonl e1c737e05390ecb0df37299ecba3e852bdbbda3a2beae6e759b583b7bc423329
+g7-full15-clean/report-Review.md <- gate007a-full15-proof-review-PASS-20261023-0231/run/report-Review.md 919a9a3a160823ef41cb55bac0b5307148bd403533dc3a09d2b489339714ae6f

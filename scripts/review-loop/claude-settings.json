@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.claude/**)",
+      "Read(~/.codex/**)",
+      "Read(~/.config/**)",
+      "Read(~/AppData/**)",
+      "Edit(**/.env*)",
+      "Edit(./.git/**)",
+      "Edit(./.claude/**)",
+      "Edit(./.agents/**)",
+      "Edit(./scripts/review-loop/**)",
+      "Bash",
+      "Write",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Task"
+    ]
+  },
+  "disableAllHooks": true
+}

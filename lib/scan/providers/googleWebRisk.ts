@@ -6,6 +6,7 @@ import { guardedPaidCall, WEB_RISK_PROVIDER, type GuardedOutcome } from "@/lib/s
 // reserves exactly one unit of the execution-time budget (cbc_reserve_provider_call) and then makes exactly one
 // request. fetchWebRisk is deliberately not exported, and the provider's run() never makes a request.
 const TIMEOUT_MS = 7000
+const MAX_ERROR_BODY_CHARS = 500
 
 function notConfiguredResult(): ScanProviderResult {
   return {
@@ -43,20 +44,23 @@ async function fetchWebRisk(url: string): Promise<ScanProviderResult> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
-    const params = new URLSearchParams({ key: apiKey, uri: url })
+    // The API key travels in the X-Goog-Api-Key header, never in the URL, so it cannot leak through URL logging
+    // or error messages (AGENTS.md section 11).
+    const params = new URLSearchParams({ uri: url })
     params.append("threatTypes", "MALWARE")
     params.append("threatTypes", "SOCIAL_ENGINEERING")
     params.append("threatTypes", "UNWANTED_SOFTWARE")
 
     const response = await fetch(
       `https://webrisk.googleapis.com/v1/uris:search?${params.toString()}`,
-      { method: "GET", headers: { "Content-Type": "application/json" }, signal: controller.signal }
+      { method: "GET", headers: { "X-Goog-Api-Key": apiKey }, redirect: "error", signal: controller.signal }
     )
 
     const responseTimeMs = Date.now() - startTime
 
     if (!response.ok) {
-      const errorText = await response.text()
+      // Stored in vendor_results: keep only a bounded excerpt of Google's error body.
+      const errorText = (await response.text()).slice(0, MAX_ERROR_BODY_CHARS)
       return {
         verdict: "error",
         error: `API error ${response.status}: ${errorText}`,

@@ -212,21 +212,25 @@ check("G07 missing header -> shared 'unknown' bucket", clientIpFromForwardedFor(
 const h = rateLimitHeaders({ allowed: false, status: 429, reason: "x", retryAfterSeconds: 42 });
 check("G08 rejection headers carry Retry-After and no-store", h["Retry-After"] === "42" && h["Cache-Control"] === "no-store" && Object.keys(rateLimitHeaders({ allowed: true })).length === 0);
 
-// ---- static wiring checks ---------------------------------------------------------------------------
+// ---- static wiring checks (the flow lives in lib/scan/scanFlow.ts; the route only wires effects) ----------
 const scanRoute = read("app/api/scan/route.ts");
-const iAdmit = scanRoute.indexOf("await admitScan(");
-const iCreate = scanRoute.indexOf("await createScan(");
-const iValidate = scanRoute.indexOf("MAX_INPUT_LENGTH)");
-check("R01 scan route: admission runs after input validation and before the scan row is created", iAdmit > 0 && iCreate > iAdmit && iValidate > 0 && iValidate < iAdmit);
-check("R02 scan route: admission uses the user's session client RPC cbc_admit_scan", /authClient\.rpc\("cbc_admit_scan", \{ p_input_type: inputType \}\)/.test(scanRoute));
-check("R03 scan route: rejection returns admission.status with rate-limit headers", /status: admission\.status, headers: rateLimitHeaders\(admission\)/.test(scanRoute));
-check("R04 scan route: only one createScan call (no path around the admission)", scanRoute.split("await createScan(").length === 2);
+const scanFlow = read("lib/scan/scanFlow.ts");
+const iAdmit = scanFlow.indexOf("await deps.admit(");
+const iCreate = scanFlow.indexOf("await deps.createScan(");
+const iValidate = scanFlow.indexOf("cleanInput.length > MAX_INPUT_LENGTH");
+check("R01 scan flow: admission runs after input validation and before the scan row is created", iAdmit > 0 && iCreate > iAdmit && iValidate > 0 && iValidate < iAdmit);
+check("R02 scan route: admission uses the user's session client RPC cbc_admit_scan through admitScan with the burst limiter",
+  /await \(await session\(\)\)\.rpc\("cbc_admit_scan", \{ p_input_type: t \}\)/.test(scanRoute) && /admitScan\(\{\s*userId,\s*inputType,\s*burst: scanBurstLimiter,/.test(scanRoute));
+check("R03 scan flow: rejection returns admission.status with rate-limit headers", /return \{ status: admission\.status, body: \{ error: message, reason: admission\.reason \}, headers: deps\.retryHeaders\(admission\) \}/.test(scanFlow) && /retryHeaders: rateLimitHeaders/.test(scanRoute));
+check("R04 only one createScan call (no path around the admission); the route never calls it directly",
+  scanFlow.split("deps.createScan(").length === 2 && !/createScan\(/.test(scanRoute));
 const rl = read("lib/security/rateLimit.ts");
 check("R05 rate-limit module has no imports, env access, or service-role use", !/^\s*import\s/m.test(rl) && !rl.includes("process.env") && !/service.?role|createPrivilegedClient/i.test(rl));
-check("R06 admission path never touches the service-role client", !/createPrivilegedClient|SUPABASE_SERVICE_ROLE_KEY/.test(scanRoute.slice(scanRoute.indexOf("5b."), iCreate)));
+check("R06 admission path never touches the service-role client", !/createPrivilegedClient|SUPABASE_SERVICE_ROLE_KEY/.test(scanRoute + scanFlow));
 const login = read("app/api/auth/login/route.ts");
-check("R07 login route: limits checked before Supabase sign-in", login.indexOf("checkLoginAllowed(") > 0 && login.indexOf("checkLoginAllowed(") < login.indexOf("signInWithPassword("));
-check("R08 login route: 429 with rate-limit headers", /status: 429, headers: rateLimitHeaders\(limit\)/.test(login));
+const loginFlow = read("lib/security/loginFlow.ts");
+check("R07 login: limits checked before Supabase sign-in", loginFlow.indexOf("deps.checkAllowed(") > 0 && loginFlow.indexOf("deps.checkAllowed(") < loginFlow.indexOf("deps.signIn(") && /checkAllowed: \(email\) =>\s*checkLoginAllowed\(/.test(login));
+check("R08 login: 429 with rate-limit headers", /status: 429,/.test(loginFlow) && /headers: \{ \.\.\.NO_STORE, \.\.\.deps\.retryHeaders\(limit\) \}/.test(loginFlow) && /retryHeaders: rateLimitHeaders/.test(login));
 const sql = read("infra/supabase/migrations/001_scan_admission.sql");
 check("D01 migration: SECURITY DEFINER with pinned search_path", /SECURITY DEFINER\s+SET search_path = pg_catalog, public/.test(sql));
 check("D02 migration: execute granted to authenticated only (revoked from PUBLIC and anon)",

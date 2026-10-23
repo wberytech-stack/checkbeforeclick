@@ -6,9 +6,11 @@
 //   1. Per-user burst limit, in memory (per instance): 5 scans/minute.
 //   2. Shared, atomic scan admission in Supabase Postgres (public.cbc_admit_scan, called with the user's own
 //      session; infra/supabase/migrations/001_scan_admission.sql). Rolling 24 hours: 500 global, 200 per
-//      organization, 50 per user. Each admission reserves its worst-case Web Risk calls (1 or 2), bounding paid
-//      provider calls at 1000 per 24 hours. The database is the authority for these numbers.
-//   3. Login attempts per client IP and per email, in memory (per instance).
+//      organization, 50 per user. Paid Web Risk calls are budgeted separately at execution time
+//      (lib/security/providerBudget.ts: one reservation per admission). The database is the authority for these numbers.
+//   3. Login attempts per client IP and per email, in memory (per instance), applied by POST /api/auth/login,
+//      the only sign-in path the login page uses (lib/security/loginFlow.ts). Direct calls to Supabase Auth with
+//      the public anon key bypass it; only Supabase Auth's own limits apply to those.
 // An admission that cannot be confirmed fails closed: no scan row and no provider call.
 
 export const SCAN_BURST_PER_USER_PER_MINUTE = 5

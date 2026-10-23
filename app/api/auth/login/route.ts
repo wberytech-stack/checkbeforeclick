@@ -7,86 +7,49 @@ import {
   loginIpLimiter,
   rateLimitHeaders,
 } from "@/lib/security/rateLimit"
+import { handleLoginRequest } from "@/lib/security/loginFlow"
 
+// Gate 007A: the login page signs in through this route, so every UI sign-in passes the attempt limits first.
+// The request flow lives in lib/security/loginFlow.ts (pure, tested offline); this route only wires the effects.
+// Session cookies set by Supabase are collected here and copied onto the final response only on success.
 export async function POST(request: NextRequest) {
-  try {
-    let body: { email?: string; password?: string }
-    try {
-      body = await request.json()
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid request format." },
-        { status: 400 }
-      )
-    }
+  const sessionCookies: { name: string; value: string; options: Parameters<NextResponse["cookies"]["set"]>[2] }[] = []
 
-    const { email, password } = body
-
-    if (!email || typeof email !== "string" || !password || typeof password !== "string") {
-      return NextResponse.json(
-        { error: "Email and password are required." },
-        { status: 400 }
-      )
-    }
-
-    // Gate 007A: per-IP and per-email attempt limits before Supabase is called (Supabase sees this server's
-    // address, not the user's, so its own per-IP limits cannot tell users apart).
-    const limit = checkLoginAllowed({
-      ip: clientIpFromForwardedFor(request.headers.get("x-forwarded-for")),
-      email,
-      byIp: loginIpLimiter,
-      byEmail: loginEmailLimiter,
-    })
-
-    if (!limit.allowed) {
-      return NextResponse.json(
-        { error: "Too many sign-in attempts. Please wait and try again." },
-        { status: 429, headers: rateLimitHeaders(limit) }
-      )
-    }
-
-    const response = NextResponse.json(
-      { ok: true, target: "/dashboard" },
-      { status: 200 }
-    )
-    response.headers.set("Cache-Control", "no-store, private")
-
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return request.cookies.getAll()
+  const result = await handleLoginRequest({
+    readBody: () => request.json(),
+    checkAllowed: (email) =>
+      checkLoginAllowed({
+        ip: clientIpFromForwardedFor(request.headers.get("x-forwarded-for")),
+        email,
+        byIp: loginIpLimiter,
+        byEmail: loginEmailLimiter,
+      }),
+    signIn: async (email, password) => {
+      const supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          cookies: {
+            getAll() {
+              return request.cookies.getAll()
+            },
+            setAll(cookiesToSet) {
+              cookiesToSet.forEach((c) => sessionCookies.push(c))
+            },
           },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              response.cookies.set(name, value, options)
-            })
-          },
-        },
-      }
-    )
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-
-    if (error) {
-      return NextResponse.json(
-        { error: "Invalid email or password." },
-        { status: 401 }
+        }
       )
-    }
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      return !error
+    },
+    retryHeaders: rateLimitHeaders,
+  })
 
-    return response
-  } catch {
-    return NextResponse.json(
-      { error: "An unexpected error occurred. Please try again." },
-      { status: 500 }
-    )
+  const response = NextResponse.json(result.body, { status: result.status, headers: result.headers })
+  if (result.status === 200) {
+    sessionCookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
   }
+  return response
 }
 
 export async function GET() {

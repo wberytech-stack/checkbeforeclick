@@ -117,18 +117,38 @@ check("S08 the request is cancelled after 7 s (AbortController + signal)", /new 
 const importers = appFiles.filter((f) => /callWebRiskGuarded/.test(readFileSync(f, "utf8"))).map(rel).sort();
 check("S09 only the scan route (and the provider module) reference callWebRiskGuarded", importers.join(",") === "app/api/scan/route.ts,lib/scan/providers/googleWebRisk.ts", importers.join(","));
 const runCallers = appFiles.filter((f) => /\bprovider\.run\(/.test(readFileSync(f, "utf8"))).map(rel).sort();
-check("S10 provider.run( is used only by the scan route and the worker", runCallers.join(",") === "app/api/scan/route.ts,inngest/functions/processScan.ts", runCallers.join(","));
+check("S10 provider.run( is used only by the scan flow and the worker", runCallers.join(",") === "inngest/functions/processScan.ts,lib/scan/scanFlow.ts", runCallers.join(","));
 const worker = read("inngest/functions/processScan.ts");
 check("S11 the worker filters out paid providers and never imports the Web Risk module", /withoutPaidProviders\(/.test(worker) && !/googleWebRisk|callWebRiskGuarded/.test(worker));
 check("S12 withoutPaidProviders removes every provider marked paid", /providers\.filter\(\(p\) => p\.paid !== true\)/.test(read("lib/scan/providers/index.ts")));
 const route = read("app/api/scan/route.ts");
-check("S13 the scan route no longer queues scans to Inngest", !/inngest/.test(route));
+const flow = read("lib/scan/scanFlow.ts");
+check("S13 neither the scan route nor the scan flow queues scans to Inngest", !/inngest/i.test(route) && !/inngest\.|\.send\(/.test(flow));
 check("S14 the scan route sets maxDuration = 30", /export const maxDuration = 30/.test(route));
-check("S15 paid providers in the route go only through the guard", /if \(provider\.paid !== true\) return provider\.run\(/.test(route) && /callWebRiskGuarded\(\{ admissionId: admission_id, url: providerInput, reserve \}\)/.test(route));
-check("S16 the reservation uses the user's session RPC cbc_reserve_provider_call (never the service role)", /authClient\.rpc\("cbc_reserve_provider_call"/.test(route) && !/createPrivilegedClient|SUPABASE_SERVICE_ROLE_KEY/.test(route));
-const iRef = route.indexOf("if (budget.refused)");
+check("S15 paid providers go only through the guard: flow uses deps.callPaid, route maps it to callWebRiskGuarded for google_web_risk only",
+  /if \(provider\.paid !== true\) return provider\.run\(/.test(flow) && /await deps\.callPaid\(provider, s\.admissionId, providerInput\)/.test(flow)
+  && /if \(provider\.name !== "google_web_risk"\) throw new Error\("No guarded entry point for this paid provider"\)\s*return callWebRiskGuarded\(\{/.test(route));
+check("S16 the reservation uses the user's session RPC cbc_reserve_provider_call (never the service role)",
+  /await \(await session\(\)\)\.rpc\("cbc_reserve_provider_call"/.test(route) && !/createPrivilegedClient|SUPABASE_SERVICE_ROLE_KEY/.test(route + flow));
+const iRef = flow.indexOf("if (budget.refused)");
 check("S17 a refused budget fails the scan and returns 503 before any verdict is computed",
-  iRef > 0 && route.indexOf("await failScan(", iRef) > iRef && route.indexOf("status: 503", iRef) > iRef && route.indexOf("calculateConfidenceFromProviders", iRef) > route.indexOf("status: 503", iRef));
+  iRef > 0 && flow.indexOf("await deps.failScan(", iRef) > iRef && flow.indexOf("status: 503", iRef) > iRef && flow.indexOf("deps.scoring.confidence(", iRef) > flow.indexOf("status: 503", iRef));
+check("S18 scan flow is pure (type-only imports, no env, no fetch)", !/^import (?!type )/m.test(flow) && !/process\.env|fetch\(/.test(flow));
+
+// ---- Web Risk request hygiene and every code path that can reach the paid API ---------------------------------------
+check("K01 the API key is sent in the X-Goog-Api-Key header, never in the URL",
+  /headers: \{ "X-Goog-Api-Key": apiKey \}/.test(wr) && !/key: apiKey/.test(wr) && !/[?&]key=/.test(wr));
+check("K02 redirects are refused (the key header is never forwarded to another host)", /redirect: "error"/.test(wr));
+check("K03 Google's error body is stored only as a bounded excerpt", /const MAX_ERROR_BODY_CHARS = 500/.test(wr) && /\(await response\.text\(\)\)\.slice\(0, MAX_ERROR_BODY_CHARS\)/.test(wr));
+const keyReaders = appFiles.filter((f) => /process\.env(\.GOOGLE_WEB_RISK_API_KEY|\[\s*["']GOOGLE_WEB_RISK_API_KEY)/.test(readFileSync(f, "utf8"))).map(rel).sort();
+check("K04 only lib/scan/providers/googleWebRisk.ts reads GOOGLE_WEB_RISK_API_KEY in application code", keyReaders.join(",") === "lib/scan/providers/googleWebRisk.ts", keyReaders.join(","));
+const scriptsUsingHost = walk(path.join(root, "scripts")).filter((f) => !/[\\/]rate-limit[\\/]test-/.test(f) && readFileSync(f, "utf8").includes("webrisk.googleapis.com")).map(rel);
+check("K05 no script or tool outside these tests calls the Web Risk API", scriptsUsingHost.length === 0, scriptsUsingHost.join(","));
+check("K06 the provider honours the WEB_RISK_PROVIDER_ENABLED kill switch and the registry filters disabled providers",
+  /enabled: process\.env\.WEB_RISK_PROVIDER_ENABLED !== "false"/.test(wr) && /p\.enabled &&/.test(read("lib/scan/providers/index.ts")));
+check("K07 the Inngest endpoint still serves only processScan (paid providers filtered)", /functions: \[processScan\]/.test(read("app/api/inngest/route.ts")));
+const senders = appFiles.filter((f) => /inngest\.send\(|\.send\(\s*\{\s*name:\s*"scan\/requested"/.test(readFileSync(f, "utf8"))).map(rel);
+check("K08 nothing in this code base sends scan/requested any more", senders.length === 0, senders.join(","));
 const sql = read("infra/supabase/migrations/001_scan_admission.sql");
 check("D01 reservation function: SECURITY DEFINER, pinned search_path, execute for authenticated only",
   /cbc_reserve_provider_call\(p_provider text, p_admission_id bigint\)[\s\S]*SECURITY DEFINER\s+SET search_path = pg_catalog, public/.test(sql)

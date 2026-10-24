@@ -51,6 +51,8 @@ var secretMap = [
 // The Web Risk key is dropped from both the Container Apps secrets and the env, so a
 // staging app never holds a reference to it.
 var activeSecrets = filter(secretMap, s => injectWebRiskKey || s.vaultKey != 'googleWebRiskApiKey')
+// Nor can a plain variable of that name reach it through plainEnv.
+var activePlainEnv = filter(plainEnv, e => injectWebRiskKey || e.name != 'GOOGLE_WEB_RISK_API_KEY')
 
 // Bicep allows for-expressions only as declaration or property values, not as
 // function arguments (BCP138), so the secret env list is built here and then
@@ -109,7 +111,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               { name: 'PORT', value: '3000' }
               { name: 'HOSTNAME', value: '0.0.0.0' }
             ],
-            plainEnv
+            activePlainEnv
           )
           probes: [
             {

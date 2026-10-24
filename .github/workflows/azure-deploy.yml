@@ -29,6 +29,14 @@
 # Environment variables (in azure-staging and azure-production):
 #   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
 #   AZURE_RESOURCE_GROUP, AZURE_ACR_NAME, AZURE_CONTAINERAPP_NAME
+#
+# Staging (Gate 006C, single dispatch, one azure-staging approval): build, then the
+#   staging job pushes the image and pins its digest, runs a what-if of
+#   infra/azure/hosting/staging-app.bicep that scripts/azure-hosting/staging-guard.mjs
+#   must pass (fail closed), deploys that template with the same digest, waits for the
+#   new revision and health, and re-checks the live configuration (no Web Risk key).
+#   The same run creates the app the first time and updates it later. No retries.
+# Production keeps the image-only update in the deploy job and never touches Bicep.
 name: azure-deploy
 
 on:
@@ -156,7 +164,7 @@ jobs:
 
   deploy:
     needs: build
-    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master'
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'production'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: azure-${{ inputs.environment }}
@@ -244,3 +252,143 @@ jobs:
           done
           echo "::error::new revision with $want did not become ready and healthy; previous revision keeps serving. Investigate or roll back (founder runbook step R)"
           exit 1
+
+  staging:
+    needs: build
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: azure-staging
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # The template and guard come from the commit this workflow runs from (master,
+      # the reviewed definition); only the image is built from the requested commit.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Require Azure environment configuration matching the template (fail closed)
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+          AZURE_CONTAINERAPP_NAME: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP AZURE_ACR_NAME AZURE_CONTAINERAPP_NAME; do
+            if [ -z "${!v}" ]; then echo "::error::environment variable $v is not set"; missing=1; fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          params=infra/azure/hosting/main.parameters.json
+          if [ "$AZURE_CONTAINERAPP_NAME" != "$(jq -r .parameters.stagingAppName.value "$params")" ] ||
+             [ "$AZURE_ACR_NAME" != "$(jq -r .parameters.registryName.value "$params")" ]; then
+            echo "::error::azure-staging AZURE_CONTAINERAPP_NAME / AZURE_ACR_NAME do not match the staging app and registry in main.parameters.json"; exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cbc-web-image
+          path: ${{ runner.temp }}
+
+      - name: Azure sign-in (OIDC, no client secret)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # The digest is read from the image this job pushed (RepoDigests), not looked up by
+      # tag, so the what-if, the deployment and the checks all use exactly the built image.
+      - name: Push the built image and pin its digest
+        id: push
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+        run: |
+          set -euo pipefail
+          gunzip -c "$RUNNER_TEMP/cbc-web.tar.gz" | docker load
+          server="$(az acr show --name "$ACR" --query loginServer -o tsv)"
+          az acr login --name "$ACR"
+          docker tag "cbc-web:$IMAGE_TAG" "$server/cbc-web:$IMAGE_TAG"
+          docker push "$server/cbc-web:$IMAGE_TAG"
+          ref="$(docker inspect --format '{{index .RepoDigests 0}}' "$server/cbc-web:$IMAGE_TAG")"
+          if ! [[ "$ref" =~ ^"$server"/cbc-web@sha256:[0-9a-f]{64}$ ]]; then echo "::error::could not pin the pushed image digest"; exit 1; fi
+          echo "image_ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "pushed $server/cbc-web:$IMAGE_TAG as $ref"
+
+      # Fail closed before any infrastructure change: the only allowed change is a Create
+      # or Modify of the staging app with no Web Risk key, the flag "false", scale 0..1
+      # and the pinned image. Anything else, including ambiguous output, stops the run.
+      - name: What-if of the staging template (changes nothing; checked)
+        shell: bash
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          az deployment group what-if --resource-group "$RG" \
+            --template-file infra/azure/hosting/staging-app.bicep \
+            --parameters image="$IMAGE_REF" \
+            --no-pretty-print --output json > "$RUNNER_TEMP/whatif.json"
+          node scripts/azure-hosting/staging-guard.mjs whatif "$RUNNER_TEMP/whatif.json" "$APP" "$IMAGE_REF"
+
+      # One attempt only. On failure the run stops with the deployment name; running it
+      # again is a new dispatch with its own approval.
+      - name: Deploy the staging template with the pinned image digest
+        shell: bash
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          name="cbc-stg-${COMMIT:0:12}-${GITHUB_RUN_ID}"
+          echo "deployment $name"
+          az deployment group create --resource-group "$RG" --name "$name" \
+            --template-file infra/azure/hosting/staging-app.bicep \
+            --parameters image="$IMAGE_REF" --output none
+
+      - name: Wait for the NEW revision to be ready and healthy
+        shell: bash
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          want="$IMAGE_REF"
+          for i in $(seq 1 40); do
+            latest="$(az containerapp show --name "$APP" --resource-group "$RG" --query properties.latestRevisionName -o tsv)"
+            ready="$(az containerapp show --name "$APP" --resource-group "$RG" --query properties.latestReadyRevisionName -o tsv)"
+            image="$(az containerapp show --name "$APP" --resource-group "$RG" --query 'properties.template.containers[0].image' -o tsv)"
+            if [ "$image" = "$want" ] && [ -n "$latest" ] && [ "$latest" = "$ready" ]; then
+              fqdn="$(az containerapp show --name "$APP" --resource-group "$RG" --query properties.configuration.ingress.fqdn -o tsv)"
+              code="$(curl -s -o /dev/null -w '%{http_code}' "https://$fqdn/api/healthz" || true)"
+              if [ "$code" = "200" ]; then echo "revision $latest ready with $want; https://$fqdn/api/healthz 200"; exit 0; fi
+              echo "attempt $i: revision $latest ready, healthz $code"
+            else
+              echo "attempt $i: latest=$latest ready=$ready"
+            fi
+            sleep 10
+          done
+          echo "::error::staging revision with $want did not become ready and healthy. Check the revision system logs (Key Vault reference resolution, image pull) before a new dispatch"
+          exit 1
+
+      - name: Post-deploy configuration check (read-only; no Web Risk key)
+        shell: bash
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          az containerapp show --name "$APP" --resource-group "$RG" --output json > "$RUNNER_TEMP/app.json"
+          node scripts/azure-hosting/staging-guard.mjs config "$RUNNER_TEMP/app.json" "$IMAGE_REF"

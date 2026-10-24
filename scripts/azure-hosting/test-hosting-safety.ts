@@ -141,9 +141,26 @@ noSecrets("workflow", wfText);
   check("staging: the configuration check is the last step", order[6] === steps.length - 1);
   check("staging: what-if and create each appear once in the workflow",
     (wfText.match(/az deployment group what-if/g) ?? []).length === 1 && (wfText.match(/az deployment group create/g) ?? []).length === 1);
-  check("staging: both Bicep commands use staging-app.bicep only",
-    (wfText.match(/--template-file \S+/g) ?? []).every((m) => m === "--template-file infra/azure/hosting/staging-app.bicep") &&
+  // Compiled once from staging-app.bicep with the pinned Bicep CLI; the template check,
+  // what-if and deployment all use that one ARM JSON file.
+  check("staging: staging-app.bicep is compiled once, with the pinned Bicep CLI",
+    (wfText.match(/az bicep build --file infra\/azure\/hosting\/staging-app\.bicep --outfile "\$RUNNER_TEMP\/staging-app\.json"/g) ?? []).length === 1 &&
+    (wfText.match(/az bicep build/g) ?? []).length === 1 && wfText.includes("az bicep install --version v0.48.1"));
+  check("staging: what-if and create both use the compiled template only",
+    (wfText.match(/--template-file \S+/g) ?? []).every((m) => m === '--template-file "$RUNNER_TEMP/staging-app.json"') &&
     (wfText.match(/--template-file/g) ?? []).length === 2);
+  {
+    const step = steps[order[2]] ?? "";
+    const pos = ["az bicep install --version v0.48.1", "az bicep build", "staging-guard.mjs template", "az deployment group what-if", "staging-guard.mjs whatif"]
+      .map((t) => step.indexOf(t));
+    check("staging: one step pins Bicep, compiles, checks the template, runs what-if, checks what-if (in that order)",
+      pos.every((p, k) => p >= 0 && (k === 0 || p > pos[k - 1])), pos.join(","));
+    check("staging: the template check uses the compiled file, the app and the pinned image",
+      step.includes('staging-guard.mjs template \\"$RUNNER_TEMP/staging-app.json\\" \\"$APP\\" \\"$IMAGE_REF\\"'));
+    check("staging: the deployment step comes after the step with both checks", order[4] > order[2]);
+  }
+  check("staging: the compiled-template fixture was generated with the pinned Bicep CLI",
+    /^0\.48\.1\./.test(JSON.parse(read("scripts/azure-hosting/fixtures/staging-app.compiled.json")).metadata?._generator?.version ?? ""));
   check("staging: workflow never deploys main.bicep, production flags, complete mode or role assignments",
     !/main\.bicep|deployProductionApp|deployApps|--mode\s+Complete|az role|roleAssignments/i.test(wfText));
   check("staging: digest pinned from the pushed image (RepoDigests), not looked up by tag",
@@ -472,17 +489,19 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
   type Guard = {
     checkWhatIf: (r: unknown, app: string, image: string) => { problems: string[] };
     checkConfig: (a: unknown, image: string) => { problems: string[] };
+    checkTemplate: (t: unknown, app: string, image: string) => { problems: string[] };
   };
   const guard = (await import(pathToFileURL(path.join(ROOT, "scripts/azure-hosting/staging-guard.mjs")).href)) as Guard;
   const APP = "ca-cbc-web-stg-cc-001";
   const IMG = `crcbcprodcc001.azurecr.io/cbc-web@sha256:${"a".repeat(64)}`;
   const RG = "/subscriptions/0/resourceGroups/rg-cbc-prod-canadacentral-001/providers";
   const KV = "https://kv-cbc-prod-cc-001.vault.azure.net/secrets/";
+  const ID = "/subscriptions/0/resourceGroups/rg-cbc-prod-canadacentral-001/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-cbc-web-cc-001";
   const props = () => ({
     configuration: { secrets: [
-      { name: "supabase-service-role-key", keyVaultUrl: `${KV}cbc-stg-supabase-service-role-key`, identity: "/id" },
-      { name: "inngest-event-key", keyVaultUrl: `${KV}cbc-stg-inngest-event-key`, identity: "/id" },
-      { name: "inngest-signing-key", keyVaultUrl: `${KV}cbc-stg-inngest-signing-key`, identity: "/id" },
+      { name: "supabase-service-role-key", keyVaultUrl: `${KV}cbc-stg-supabase-service-role-key`, identity: ID },
+      { name: "inngest-event-key", keyVaultUrl: `${KV}cbc-stg-inngest-event-key`, identity: ID },
+      { name: "inngest-signing-key", keyVaultUrl: `${KV}cbc-stg-inngest-signing-key`, identity: ID },
     ] as Array<{ name: string; keyVaultUrl: string; identity: string }> },
     template: {
       containers: [{ name: "web", image: IMG, env: [
@@ -515,10 +534,10 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
     ok(guard.checkWhatIf(whatIf([appChange(props(), "Modify"), change("Ignore", `${RG}/Microsoft.App/containerApps/ca-cbc-web-prod-cc-001`)],
       { diagnostics: [{ level: "Info", code: "X", message: "m" }] }), APP, IMG)));
   for (const [name, doc] of [
-    ["Web Risk secret", whatIf([appChange(mutate((p) => p.configuration.secrets.push({ name: "google-web-risk-api-key", keyVaultUrl: `${KV}cbc-shared-google-web-risk-api-key`, identity: "/id" })))])],
+    ["Web Risk secret", whatIf([appChange(mutate((p) => p.configuration.secrets.push({ name: "google-web-risk-api-key", keyVaultUrl: `${KV}cbc-shared-google-web-risk-api-key`, identity: ID })))])],
     ["Web Risk key via a plain variable", whatIf([appChange(mutate((p) => env0(p).push({ name: "GOOGLE_WEB_RISK_API_KEY", value: "x" })))])],
     ["Web Risk Key Vault URL behind an allowed secret name", whatIf([appChange(mutate((p) => { p.configuration.secrets[0].keyVaultUrl = `${KV}cbc-shared-google-web-risk-api-key`; }))])],
-    ["secret not on the allowlist", whatIf([appChange(mutate((p) => p.configuration.secrets.push({ name: "prod-key", keyVaultUrl: `${KV}cbc-prod-supabase-service-role-key`, identity: "/id" })))])],
+    ["secret not on the allowlist", whatIf([appChange(mutate((p) => p.configuration.secrets.push({ name: "prod-key", keyVaultUrl: `${KV}cbc-prod-supabase-service-role-key`, identity: ID })))])],
     ["unevaluated Key Vault URL", whatIf([appChange(mutate((p) => { p.configuration.secrets[0].keyVaultUrl = "[format('{0}secrets/{1}', parameters('keyVaultUri'), 'x')]"; }))])],
     ["unevaluated secret name", whatIf([appChange(mutate((p) => { p.configuration.secrets[0].name = "[variables('s')]"; }))])],
     ["secretRef bound to another variable", whatIf([appChange(mutate((p) => { env0(p)[0].name = "OTHER"; }))])],
@@ -544,13 +563,76 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
   const app = (p: Props) => ({ id: `${RG}/Microsoft.App/containerApps/${APP}`, name: APP, type: "Microsoft.App/containerApps", properties: p });
   check("guard config: compliant staging app passes", ok(guard.checkConfig(app(props()), IMG)));
   for (const [name, p] of [
-    ["Web Risk secret", mutate((p) => p.configuration.secrets.push({ name: "google-web-risk-api-key", keyVaultUrl: `${KV}cbc-shared-google-web-risk-api-key`, identity: "/id" }))],
+    ["Web Risk secret", mutate((p) => p.configuration.secrets.push({ name: "google-web-risk-api-key", keyVaultUrl: `${KV}cbc-shared-google-web-risk-api-key`, identity: ID }))],
     ["Web Risk key via a plain variable", mutate((p) => env0(p).push({ name: "GOOGLE_WEB_RISK_API_KEY", value: "x" }))],
     ["provider flag missing", mutate((p) => { p.template.containers[0].env = env0(p).filter((e) => e.name !== "WEB_RISK_PROVIDER_ENABLED"); })],
     ["maxReplicas 2", mutate((p) => { p.template.scale.maxReplicas = 2; })],
     ["other image", mutate((p) => { p.template.containers[0].image = "crcbcprodcc001.azurecr.io/cbc-web:latest"; })],
   ] as const) check(`guard config: rejects ${name}`, !ok(guard.checkConfig(app(p), IMG)));
   check("guard config: rejects a missing properties object", !ok(guard.checkConfig({ name: APP }, IMG)));
+
+  // Observed on the first staging run (2026-10-24): what-if masks the three secret names
+  // and the env secretRef that point at them as "*******"; everything else is concrete.
+  const MASK = "*******";
+  const masked = () => mutate((p) => {
+    p.configuration.secrets.forEach((s) => { s.name = MASK; });
+    env0(p).slice(0, 3).forEach((e) => { e.secretRef = MASK; });
+  });
+  type MaskedProps = ReturnType<typeof masked>;
+  const mmutate = (f: (p: MaskedProps) => void) => { const p = masked(); f(p); return p; };
+  check("guard whatif: observed Azure output (names and secretRefs masked) passes",
+    ok(guard.checkWhatIf(whatIf([appChange(masked()), change("Ignore", `${RG}/Microsoft.DBforPostgreSQL/flexibleServers/pg-cbc-prod-cc-001`)]), APP, IMG)));
+  for (const [name, p] of [
+    ["masked extra secret", mmutate((p) => p.configuration.secrets.push({ name: MASK, keyVaultUrl: `${KV}cbc-prod-supabase-service-role-key`, identity: ID }))],
+    ["masked secret missing", mmutate((p) => { p.configuration.secrets.pop(); })],
+    ["masked secrets in another order", mmutate((p) => { p.configuration.secrets.reverse(); })],
+    ["masked secret pointing at a production Key Vault secret", mmutate((p) => { p.configuration.secrets[0].keyVaultUrl = `${KV}cbc-prod-supabase-service-role-key`; })],
+    ["masked secret pointing at the Web Risk Key Vault secret", mmutate((p) => { p.configuration.secrets[1].keyVaultUrl = `${KV}cbc-shared-google-web-risk-api-key`; })],
+    ["masked secret with an extra field", mmutate((p) => { (p.configuration.secrets[0] as Record<string, unknown>).value = MASK; })],
+    ["masked secret read through another identity", mmutate((p) => { p.configuration.secrets[2].identity = ID.replace("id-cbc-web-cc-001", "id-cbc-deploy-cc-001"); })],
+    ["masked env mapped to the wrong variable", mmutate((p) => { env0(p)[0].name = "INNGEST_EVENT_KEY"; env0(p)[1].name = "SUPABASE_SERVICE_ROLE_KEY"; })],
+    ["masked secretRef on an extra variable", mmutate((p) => env0(p).push({ name: "EXTRA", secretRef: MASK }))],
+    ["masked env entry missing", mmutate((p) => { p.template.containers[0].env = env0(p).slice(1); })],
+    ["a different mask token", mmutate((p) => { p.configuration.secrets[0].name = "******"; })],
+    ["a masked token elsewhere (provider flag)", mmutate((p) => { env0(p)[4].value = MASK; })],
+    ["unresolved expression among masked names", mmutate((p) => { p.configuration.secrets[1].name = "[variables('activeSecrets')[copyIndex('secrets')].name]"; })],
+    ["Web Risk plain variable with masked names", mmutate((p) => env0(p).push({ name: "GOOGLE_WEB_RISK_API_KEY", value: "x" }))],
+  ] as const) check(`guard whatif: rejects ${name}`, !ok(guard.checkWhatIf(whatIf([appChange(p)]), APP, IMG)));
+  check("guard whatif: rejects masked output alongside an unexpected change",
+    !ok(guard.checkWhatIf(whatIf([appChange(masked()), change("Modify", `${RG}/Microsoft.App/containerApps/ca-cbc-web-prod-cc-001`)]), APP, IMG)));
+  check("guard config: rejects masked names (the live app must show them concrete)", !ok(guard.checkConfig(app(masked()), IMG)));
+
+  // The compiled-template check, against the real compiled staging-app.bicep (fixture
+  // generated with the pinned Bicep CLI) and mutations of it.
+  const compiled = () => JSON.parse(read("scripts/azure-hosting/fixtures/staging-app.compiled.json"));
+  type T = ReturnType<typeof compiled>;
+  const tmut = (f: (t: T) => void) => { const t = compiled(); f(t); return t; };
+  const modP = (t: T) => t.resources[0].properties.parameters;
+  const innerOf = (t: T) => t.resources[0].properties.template;
+  const appOf = (t: T) => innerOf(t).resources[0];
+  const cfgOf = (t: T) => t.variables["$fxv#0"].parameters;
+  noSecrets("staging-app.compiled.json", read("scripts/azure-hosting/fixtures/staging-app.compiled.json"));
+  check("guard template: fixture embeds the current main.parameters.json",
+    JSON.stringify(cfgOf(compiled())) === JSON.stringify(params.parameters));
+  check("guard template: the reviewed compiled template with the pinned digest passes", ok(guard.checkTemplate(compiled(), APP, IMG)));
+  for (const [name, t, image] of [
+    ["an image tag instead of a digest", compiled(), "crcbcprodcc001.azurecr.io/cbc-web:latest"],
+    ["an image from another registry", compiled(), `other.azurecr.io/cbc-web@sha256:${"a".repeat(64)}`],
+    ["injectWebRiskKey true", tmut((t) => { modP(t).injectWebRiskKey.value = true; }), IMG],
+    ["an extra secretMap entry", tmut((t) => { innerOf(t).variables.secretMap.push({ name: "x", vaultKey: "x", envName: "X" }); }), IMG],
+    ["a changed secret filter", tmut((t) => { innerOf(t).variables.activeSecrets = "[variables('secretMap')]"; }), IMG],
+    ["the secrets loop over the unfiltered secretMap", tmut((t) => { appOf(t).properties.configuration.copy[0].count = "[length(variables('secretMap'))]"; }), IMG],
+    ["literal secrets beside the loop", tmut((t) => { appOf(t).properties.configuration.secrets = [{ name: "x" }]; }), IMG],
+    ["env using unfiltered plainEnv", tmut((t) => { appOf(t).properties.template.containers[0].env = "[concat(variables('secretEnv'), parameters('plainEnv'))]"; }), IMG],
+    ["an init container", tmut((t) => { appOf(t).properties.template.initContainers = []; }), IMG],
+    ["maxReplicas 2", tmut((t) => { modP(t).maxReplicas.value = 2; }), IMG],
+    ["a conditional module", tmut((t) => { t.resources[0].condition = "[true()]"; }), IMG],
+    ["an extra resource", tmut((t) => { t.resources.push({ type: "Microsoft.App/containerApps", name: "ca-cbc-web-prod-cc-001" }); }), IMG],
+    ["a staging secret pointing at a production Key Vault secret", tmut((t) => { cfgOf(t).stagingSecretNames.value.inngestEventKey = "cbc-prod-inngest-event-key"; }), IMG],
+    ["GOOGLE_WEB_RISK_API_KEY in stagingPlainEnv", tmut((t) => { cfgOf(t).stagingPlainEnv.value.push({ name: "GOOGLE_WEB_RISK_API_KEY", value: "x" }); }), IMG],
+    ["provider flag not \"false\"", tmut((t) => { cfgOf(t).stagingPlainEnv.value.find((e: { name: string }) => e.name === "WEB_RISK_PROVIDER_ENABLED").value = "true"; }), IMG],
+    ["another target app", tmut((t) => { cfgOf(t).stagingAppName.value = "ca-cbc-web-prod-cc-001"; }), IMG],
+  ] as const) check(`guard template: rejects ${name}`, !ok(guard.checkTemplate(t, APP, image)));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

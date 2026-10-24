@@ -31,9 +31,10 @@
 #   AZURE_RESOURCE_GROUP, AZURE_ACR_NAME, AZURE_CONTAINERAPP_NAME
 #
 # Staging (Gate 006C, single dispatch, one azure-staging approval): build, then the
-#   staging job pushes the image and pins its digest, runs a what-if of
-#   infra/azure/hosting/staging-app.bicep that scripts/azure-hosting/staging-guard.mjs
-#   must pass (fail closed), deploys that template with the same digest, waits for the
+#   staging job pushes the image and pins its digest, compiles
+#   infra/azure/hosting/staging-app.bicep once, and requires scripts/azure-hosting/
+#   staging-guard.mjs to pass on both that compiled template and its what-if (fail
+#   closed), deploys that compiled template with the same digest, waits for the
 #   new revision and health, and re-checks the live configuration (no Web Risk key).
 #   The same run creates the app the first time and updates it later. No retries.
 # Production keeps the image-only update in the deploy job and never touches Bicep.
@@ -323,10 +324,13 @@ jobs:
           echo "image_ref=$ref" >> "$GITHUB_OUTPUT"
           echo "pushed $server/cbc-web:$IMAGE_TAG as $ref"
 
-      # Fail closed before any infrastructure change: the only allowed change is a Create
-      # or Modify of the staging app with no Web Risk key, the flag "false", scale 0..1
-      # and the pinned image. Anything else, including ambiguous output, stops the run.
-      - name: What-if of the staging template (changes nothing; checked)
+      # Fail closed before any infrastructure change. The template is compiled once with
+      # the pinned Bicep CLI; that exact ARM JSON is checked, what-if'd and deployed.
+      # The template check proves the three approved secrets and their env mapping (what-if
+      # masks secret names as "*******"); the what-if check allows only a Create or Modify
+      # of the staging app with those secrets at their Key Vault URLs, no Web Risk key,
+      # the flag "false", scale 0..1 and the pinned image. Either failing stops the run.
+      - name: Compile and check the staging template, then what-if (changes nothing; checked)
         shell: bash
         env:
           RG: ${{ vars.AZURE_RESOURCE_GROUP }}
@@ -334,8 +338,12 @@ jobs:
           IMAGE_REF: ${{ steps.push.outputs.image_ref }}
         run: |
           set -euo pipefail
+          az bicep install --version v0.48.1
+          az bicep version
+          az bicep build --file infra/azure/hosting/staging-app.bicep --outfile "$RUNNER_TEMP/staging-app.json"
+          node scripts/azure-hosting/staging-guard.mjs template "$RUNNER_TEMP/staging-app.json" "$APP" "$IMAGE_REF"
           az deployment group what-if --resource-group "$RG" \
-            --template-file infra/azure/hosting/staging-app.bicep \
+            --template-file "$RUNNER_TEMP/staging-app.json" \
             --parameters image="$IMAGE_REF" \
             --no-pretty-print --output json > "$RUNNER_TEMP/whatif.json"
           node scripts/azure-hosting/staging-guard.mjs whatif "$RUNNER_TEMP/whatif.json" "$APP" "$IMAGE_REF"
@@ -353,7 +361,7 @@ jobs:
           name="cbc-stg-${COMMIT:0:12}-${GITHUB_RUN_ID}"
           echo "deployment $name"
           az deployment group create --resource-group "$RG" --name "$name" \
-            --template-file infra/azure/hosting/staging-app.bicep \
+            --template-file "$RUNNER_TEMP/staging-app.json" \
             --parameters image="$IMAGE_REF" --output none
 
       - name: Wait for the NEW revision to be ready and healthy

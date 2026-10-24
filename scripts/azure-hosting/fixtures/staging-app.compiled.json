@@ -1,0 +1,368 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.48.1.52935",
+      "templateHash": "11496089709726721570"
+    }
+  },
+  "parameters": {
+    "image": {
+      "type": "string",
+      "metadata": {
+        "description": "Exact image reference by digest, <registry>/cbc-web@sha256:<64 hex>, pushed by the same workflow run"
+      }
+    }
+  },
+  "variables": {
+    "$fxv#0": {
+      "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "keyVaultName": {
+          "value": "kv-cbc-prod-cc-001"
+        },
+        "registryName": {
+          "value": "crcbcprodcc001"
+        },
+        "logAnalyticsName": {
+          "value": "log-cbc-prod-cc-001"
+        },
+        "environmentName": {
+          "value": "cae-cbc-prod-cc-001"
+        },
+        "identityName": {
+          "value": "id-cbc-web-cc-001"
+        },
+        "stagingAppName": {
+          "value": "ca-cbc-web-stg-cc-001"
+        },
+        "productionAppName": {
+          "value": "ca-cbc-web-prod-cc-001"
+        },
+        "productionMinReplicas": {
+          "value": 0
+        },
+        "stagingSecretNames": {
+          "value": {
+            "supabaseServiceRoleKey": "cbc-stg-supabase-service-role-key",
+            "googleWebRiskApiKey": "cbc-shared-google-web-risk-api-key",
+            "inngestEventKey": "cbc-stg-inngest-event-key",
+            "inngestSigningKey": "cbc-stg-inngest-signing-key"
+          }
+        },
+        "productionSecretNames": {
+          "value": {
+            "supabaseServiceRoleKey": "cbc-prod-supabase-service-role-key",
+            "googleWebRiskApiKey": "cbc-shared-google-web-risk-api-key",
+            "inngestEventKey": "cbc-prod-inngest-event-key",
+            "inngestSigningKey": "cbc-prod-inngest-signing-key"
+          }
+        },
+        "stagingPlainEnv": {
+          "value": [
+            {
+              "name": "INNGEST_ENV",
+              "value": "audit/azure-current-state"
+            },
+            {
+              "name": "INNGEST_SERVE_ORIGIN",
+              "value": "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io"
+            },
+            {
+              "name": "WEB_RISK_PROVIDER_ENABLED",
+              "value": "false"
+            }
+          ]
+        },
+        "productionPlainEnv": {
+          "value": [
+            {
+              "name": "INNGEST_SERVE_ORIGIN",
+              "value": "https://checkbeforeclick.com"
+            }
+          ]
+        }
+      }
+    },
+    "cfg": "[variables('$fxv#0').parameters]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "web-staging",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "name": {
+            "value": "[variables('cfg').stagingAppName.value]"
+          },
+          "location": {
+            "value": "[resourceGroup().location]"
+          },
+          "environmentId": {
+            "value": "[resourceId('Microsoft.App/managedEnvironments', variables('cfg').environmentName.value)]"
+          },
+          "identityId": {
+            "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('cfg').identityName.value)]"
+          },
+          "registryServer": {
+            "value": "[format('{0}{1}', variables('cfg').registryName.value, environment().suffixes.acrLoginServer)]"
+          },
+          "image": {
+            "value": "[parameters('image')]"
+          },
+          "keyVaultUri": {
+            "value": "[format('https://{0}{1}/', variables('cfg').keyVaultName.value, environment().suffixes.keyvaultDns)]"
+          },
+          "secretNames": {
+            "value": "[variables('cfg').stagingSecretNames.value]"
+          },
+          "plainEnv": {
+            "value": "[variables('cfg').stagingPlainEnv.value]"
+          },
+          "injectWebRiskKey": {
+            "value": false
+          },
+          "minReplicas": {
+            "value": 0
+          },
+          "maxReplicas": {
+            "value": 1
+          },
+          "tags": {
+            "value": {
+              "project": "checkbeforeclick",
+              "gate": "006B",
+              "environment": "staging"
+            }
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.48.1.52935",
+              "templateHash": "13930020535216106574"
+            }
+          },
+          "parameters": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Container App name, e.g. ca-cbc-web-prod-cc-001"
+              }
+            },
+            "location": {
+              "type": "string"
+            },
+            "environmentId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource id of the Container Apps managed environment"
+              }
+            },
+            "identityId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource id of the user-assigned identity (AcrPull + Key Vault Secrets User)"
+              }
+            },
+            "registryServer": {
+              "type": "string",
+              "metadata": {
+                "description": "Registry login server, e.g. crcbcprodcc001.azurecr.io"
+              }
+            },
+            "image": {
+              "type": "string",
+              "metadata": {
+                "description": "Image ref <registry>/cbc-web:<sha>-<env>. Later deploys change it via azure-deploy.yml."
+              }
+            },
+            "keyVaultUri": {
+              "type": "string",
+              "metadata": {
+                "description": "Key Vault URI, e.g. https://kv-cbc-prod-cc-001.vault.azure.net/"
+              }
+            },
+            "secretNames": {
+              "type": "object",
+              "metadata": {
+                "description": "Key Vault secret NAMES (never values) for this environment"
+              }
+            },
+            "plainEnv": {
+              "type": "array",
+              "metadata": {
+                "description": "Plain (non-secret) environment variables for this environment"
+              }
+            },
+            "injectWebRiskKey": {
+              "type": "bool",
+              "metadata": {
+                "description": "Inject GOOGLE_WEB_RISK_API_KEY from Key Vault. Staging passes false (Gate 006C): with no key the Web Risk provider cannot make a paid request, whatever WEB_RISK_PROVIDER_ENABLED says."
+              }
+            },
+            "minReplicas": {
+              "type": "int",
+              "minValue": 0,
+              "maxValue": 1,
+              "metadata": {
+                "description": "Minimum replicas: 0 allows scale to zero (staging; production before cutover), 1 keeps one replica running."
+              }
+            },
+            "maxReplicas": {
+              "type": "int",
+              "minValue": 1
+            },
+            "tags": {
+              "type": "object"
+            }
+          },
+          "variables": {
+            "copy": [
+              {
+                "name": "secretEnv",
+                "count": "[length(variables('activeSecrets'))]",
+                "input": {
+                  "name": "[variables('activeSecrets')[copyIndex('secretEnv')].envName]",
+                  "secretRef": "[variables('activeSecrets')[copyIndex('secretEnv')].name]"
+                }
+              }
+            ],
+            "secretMap": [
+              {
+                "name": "supabase-service-role-key",
+                "vaultKey": "supabaseServiceRoleKey",
+                "envName": "SUPABASE_SERVICE_ROLE_KEY"
+              },
+              {
+                "name": "google-web-risk-api-key",
+                "vaultKey": "googleWebRiskApiKey",
+                "envName": "GOOGLE_WEB_RISK_API_KEY"
+              },
+              {
+                "name": "inngest-event-key",
+                "vaultKey": "inngestEventKey",
+                "envName": "INNGEST_EVENT_KEY"
+              },
+              {
+                "name": "inngest-signing-key",
+                "vaultKey": "inngestSigningKey",
+                "envName": "INNGEST_SIGNING_KEY"
+              }
+            ],
+            "activeSecrets": "[filter(variables('secretMap'), lambda('s', or(parameters('injectWebRiskKey'), not(equals(lambdaVariables('s').vaultKey, 'googleWebRiskApiKey')))))]",
+            "activePlainEnv": "[filter(parameters('plainEnv'), lambda('e', or(parameters('injectWebRiskKey'), not(equals(lambdaVariables('e').name, 'GOOGLE_WEB_RISK_API_KEY')))))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[parameters('name')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('identityId'))]": {}
+                }
+              },
+              "properties": {
+                "managedEnvironmentId": "[parameters('environmentId')]",
+                "configuration": {
+                  "copy": [
+                    {
+                      "name": "secrets",
+                      "count": "[length(variables('activeSecrets'))]",
+                      "input": {
+                        "name": "[variables('activeSecrets')[copyIndex('secrets')].name]",
+                        "keyVaultUrl": "[format('{0}secrets/{1}', parameters('keyVaultUri'), parameters('secretNames')[variables('activeSecrets')[copyIndex('secrets')].vaultKey])]",
+                        "identity": "[parameters('identityId')]"
+                      }
+                    }
+                  ],
+                  "activeRevisionsMode": "Single",
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 3000,
+                    "transport": "auto",
+                    "allowInsecure": false
+                  },
+                  "registries": [
+                    {
+                      "server": "[parameters('registryServer')]",
+                      "identity": "[parameters('identityId')]"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "web",
+                      "image": "[parameters('image')]",
+                      "resources": {
+                        "cpu": "[json('0.5')]",
+                        "memory": "1Gi"
+                      },
+                      "env": "[concat(variables('secretEnv'), createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'HOSTNAME', 'value', '0.0.0.0')), variables('activePlainEnv'))]",
+                      "probes": [
+                        {
+                          "type": "Liveness",
+                          "httpGet": {
+                            "path": "/api/healthz",
+                            "port": 3000
+                          },
+                          "initialDelaySeconds": 10,
+                          "periodSeconds": 30
+                        },
+                        {
+                          "type": "Readiness",
+                          "httpGet": {
+                            "path": "/api/healthz",
+                            "port": 3000
+                          },
+                          "initialDelaySeconds": 5,
+                          "periodSeconds": 10
+                        }
+                      ]
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": "[parameters('minReplicas')]",
+                    "maxReplicas": "[parameters('maxReplicas')]"
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "fqdn": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2024-03-01').configuration.ingress.fqdn]"
+            },
+            "name": {
+              "type": "string",
+              "value": "[parameters('name')]"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "stagingFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'web-staging'), '2025-04-01').outputs.fqdn.value]"
+    }
+  }
+}

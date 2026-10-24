@@ -17,6 +17,10 @@
     2026-10-24): **recommend_changes**, with two in-scope required changes
     (CBC-007A-R1-01, CBC-007A-R1-02). The response is in "Review round 2
     response".
+  - **Review round 3:** ChatGPT review of `74baf27` (founder-relayed,
+    2026-10-24): **recommend_changes**, with one in-scope required change
+    (CBC-007A-R2-01). The paid-provider cancellation contract was assessed as
+    "materially improved". The response is in "Review round 3 response".
 - **Not merged and not deployed.** Merging into `master` is a Vercel production
   deployment.
 - **Migrations:**
@@ -310,6 +314,52 @@ What the code does now:
 **Not addressed by code:** the reviewer's third finding (live release
 prerequisites unverified) is correct and unchanged. Release dossier R1–R11 stays
 open.
+
+## Review round 3 response (2026-10-24)
+
+**CBC-007A-R2-01: an abortable RDAP timeout in `lib/scan/providers/domainAge.ts`.**
+
+The finding was correct. `Promise.race` against a 7 s timer returned the timeout
+result but never aborted `fetch`, and it never cleared the timer.
+
+What the code does now:
+- **`lookupDomainAge()`** (exported for tests) creates an `AbortController`,
+  passes its signal to `fetch`, and aborts it after 7 s. The signal also covers
+  reading the response body.
+- **The timer is cleared in `finally`.**
+- **An abort is reported as the provider's existing error,** "Domain age check
+  timed out" (`verdict: "error"`, `error: "Timeout"`). It can never make a scan
+  `safe`, because domain age is a required provider.
+- **Other network errors** stay "could not complete".
+- **`run()`** calls `lookupDomainAge(domain)`. `Promise.race` is gone.
+- **Privacy is unchanged:** only the registerable domain is sent.
+
+**Tests: `scripts/rate-limit/test-domain-age.ts`, 13 checks.** Fake `fetch`
+implementations reject when their signal aborts, like the real `fetch`. They
+cover:
+- a hanging request receives the abort and returns at the timeout (A01–A04);
+- a slow response body is aborted (A05);
+- the timer is cleared on success, so there is no late abort (A06);
+- a non-abort network error is not misreported (A07);
+- `run()` uses the abortable path and sends only the domain (A08–A09);
+- static checks (S01–S04).
+
+The suite runs in CI as the eighth suite (`--conditions=react-server`), and
+`test-hosting-safety.ts` enforces it (130 checks).
+
+**Mutation check:** 6/6 mutants killed (signal not passed, timer not cleared,
+abort misreported, timer never aborting, option ignored, `run()` bypassing the
+lookup).
+
+**Harness defect found and fixed.** The first mutation run let two mutants
+survive. A promise that never settles made Node exit with **code 0** before
+`main()` reached `process.exit(1)`.
+- The four suites with an async `main()` (scan flow, login flow, worker flow,
+  domain age) now fail any run that does not finish ("harness did not finish").
+- The provider-budget suite uses top-level await, which Node already fails (exit
+  13) when unsettled.
+
+**Also unchanged:** dossier R1–R11 and FCR-007A-1 remain open.
 
 ## Goal
 
@@ -690,6 +740,8 @@ section 16).
 | `lib/data/index.ts` | **Round 1:** `loadScanForProcessing` also returns `status` |
 | `lib/security/rateLimit.ts` | **Round 1:** `normalizeIp`, documented platform evidence |
 | `scripts/rate-limit/test-worker-flow.ts` | **Round 1, new:** worker contract tests |
+| `lib/scan/providers/domainAge.ts` | Commit 1: 7 s timeout; **round 3:** `AbortController`-backed RDAP timeout (`lookupDomainAge`) |
+| `scripts/rate-limit/test-domain-age.ts` | **Round 3, new:** RDAP cancellation tests |
 | `docs/gates/gate-007a-scanner-rate-limiting.md` | This document |
 | `.github/workflows/pr-validate.yml` | **CI, new:** read-only pull-request validation |
 | `scripts/azure-hosting/test-hosting-safety.ts` | **CI:** invariants for `pr-validate.yml` (19 after round 1) |
@@ -708,9 +760,10 @@ section 16).
   1. Node 24.14.0;
   2. `npm ci --ignore-scripts --no-audit --no-fund`;
   3. `tsc --noEmit -p tsconfig.json`;
-  4. the seven offline suites (rate limit, provider budget, scan flow and worker
-     flow with `--conditions=react-server`, login flow, tenant guard, hosting and
-     workflow safety; worker flow added in round 1);
+  4. the eight offline suites (rate limit, provider budget, scan flow, worker
+     flow and domain age with `--conditions=react-server`, login flow, tenant
+     guard, hosting and workflow safety; worker flow added in round 1, domain age
+     in round 3);
   5. **round 1:** `next build` (no secrets, telemetry off).
 - **What it never does:** it deploys nothing and makes no database, Supabase,
   Google, Vercel or Azure call. The disposable-database validators and the smoke
@@ -762,9 +815,10 @@ PR #45 and `.agents/claude-handoff.yaml`, since a commit cannot cite its own run
 | `test-scan-flow.ts` | 85 passed, 0 failed (73 before round 2, 68 before round 1) |
 | `test-login-flow.ts` | 30 passed, 0 failed |
 | `test-worker-flow.ts` | 34 passed, 0 failed (new in round 1) |
+| `test-domain-age.ts` | 13 passed, 0 failed (new in round 3) |
 | `test-tenant-guard.ts` | 21 passed, 0 failed |
-| `test-hosting-safety.ts` | 129 passed, 0 failed (125 before round 1, 110 before CI) |
-| Mutation checks | Revision 2: 13/13; CI: 10/10; round 1 (worker, deadline, IP, workflow): 13/13; round 2 (cancellation): 9/9 |
+| `test-hosting-safety.ts` | 130 passed, 0 failed (129 before round 3, 125 before round 1, 110 before CI) |
+| Mutation checks | Revision 2: 13/13; CI: 10/10; round 1 (worker, deadline, IP, workflow): 13/13; round 2 (cancellation): 9/9; round 3 (RDAP timeout): 6/6 |
 | `tsc --noEmit` | exit 0 |
 | `next build` | exit 0 locally, and exit 0 in a clean worktree with no `.env*` file and no Supabase variables |
 | `eslint` on the changed application files | exit 0 |

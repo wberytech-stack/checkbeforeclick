@@ -38,7 +38,38 @@ function getDomainAgeDays(registrationDate: Date): number {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24))
 }
 
-async function fetchDomainAge(domain: string): Promise<ScanProviderResult> {
+function timeoutResult(responseTimeMs: number): ScanProviderResult {
+  return {
+    verdict: "error",
+    error: "Timeout",
+    scoreImpact: 0,
+    confidenceImpact: -10,
+    evidenceTitle: "Domain age check timed out",
+    evidenceDetail: "Registration data lookup did not complete in time.",
+    evidenceSeverity: "info",
+    rawResponse: null,
+    responseTimeMs,
+  }
+}
+
+// Gate 007A review CBC-007A-R2-01: the timeout ABORTS the RDAP request (an AbortController passed to fetch, which
+// also covers reading the body), instead of racing it and leaving it running. The timer is always cleared. An
+// abort is reported as the provider's "timed out" error, so it can never make a scan "safe".
+// Exported for scripts/rate-limit/test-domain-age.ts; run() uses the defaults.
+export async function lookupDomainAge(
+  domain: string,
+  options: { timeoutMs?: number; fetchImpl?: typeof fetch } = {}
+): Promise<ScanProviderResult> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? TIMEOUT_MS)
+  try {
+    return await fetchDomainAge(domain, controller.signal, options.fetchImpl ?? fetch)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function fetchDomainAge(domain: string, signal: AbortSignal, fetchImpl: typeof fetch): Promise<ScanProviderResult> {
   const startTime = Date.now()
   const registerable = getRegisterableDomain(domain)
 
@@ -47,12 +78,13 @@ async function fetchDomainAge(domain: string): Promise<ScanProviderResult> {
     // ICANN RDAP lookup service
     const rdapUrl = `https://rdap.org/domain/${registerable}`
 
-    const response = await fetch(rdapUrl, {
+    const response = await fetchImpl(rdapUrl, {
       method: "GET",
       headers: {
         "Accept": "application/rdap+json",
         "User-Agent": "CheckBeforeClick-SecurityScanner/1.0",
       },
+      signal,
     })
 
     const responseTimeMs = Date.now() - startTime
@@ -150,6 +182,7 @@ async function fetchDomainAge(domain: string): Promise<ScanProviderResult> {
     }
 
   } catch (error) {
+    if (signal.aborted) return timeoutResult(Date.now() - startTime)
     return {
       verdict: "error",
       error: String(error),
@@ -194,23 +227,7 @@ export const domainAgeProvider: ScanProvider = {
         domain = input.toLowerCase().trim()
       }
 
-      const timeoutFallback: ScanProviderResult = {
-        verdict: "error",
-        error: "Timeout",
-        scoreImpact: 0,
-        confidenceImpact: -10,
-        evidenceTitle: "Domain age check timed out",
-        evidenceDetail: "Registration data lookup did not complete in time.",
-        evidenceSeverity: "info",
-        rawResponse: null,
-        responseTimeMs: TIMEOUT_MS,
-      }
-
-      const timeout = new Promise<ScanProviderResult>((resolve) =>
-        setTimeout(() => resolve(timeoutFallback), TIMEOUT_MS)
-      )
-
-      return await Promise.race([fetchDomainAge(domain), timeout])
+      return await lookupDomainAge(domain)
 
     } catch (error) {
       return {

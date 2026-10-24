@@ -61,6 +61,9 @@ jobs:
       - name: Gate 007A worker flow (react-server condition for the server-only marker)
         run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-worker-flow.ts
 
+      - name: Gate 007A domain age (react-server condition for the server-only marker)
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-domain-age.ts
+
       - name: Gate 007A tenant guard
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-tenant-guard.ts
 

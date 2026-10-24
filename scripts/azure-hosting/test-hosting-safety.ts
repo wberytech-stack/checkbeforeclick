@@ -358,10 +358,11 @@ check("bicep main: every symbol used with .id/.properties/.outputs is a declared
   check("pr-validate: installs with npm ci --ignore-scripts, no npx", runs.some((r) => /^npm ci --ignore-scripts\b/.test(r)) && !/\bnpx\b|npm (install|i|update|audit)\b/.test(prCode));
   check("pr-validate: runs tsc --noEmit", runs.some((r) => r === "./node_modules/.bin/tsc --noEmit -p tsconfig.json"));
   const suites = ["scripts/rate-limit/test-rate-limit.ts", "scripts/rate-limit/test-provider-budget.ts", "scripts/rate-limit/test-scan-flow.ts",
-    "scripts/rate-limit/test-login-flow.ts", "scripts/rate-limit/test-worker-flow.ts", "scripts/rate-limit/test-tenant-guard.ts",
+    "scripts/rate-limit/test-login-flow.ts", "scripts/rate-limit/test-worker-flow.ts", "scripts/rate-limit/test-domain-age.ts", "scripts/rate-limit/test-tenant-guard.ts",
     "scripts/azure-hosting/test-hosting-safety.ts"];
-  check("pr-validate: runs all seven offline Gate 007A suites", suites.every((s) => runs.some((r) => r.endsWith(" " + s))), suites.filter((s) => !runs.some((r) => r.endsWith(" " + s))).join(","));
+  check("pr-validate: runs all eight offline Gate 007A suites", suites.every((s) => runs.some((r) => r.endsWith(" " + s))), suites.filter((s) => !runs.some((r) => r.endsWith(" " + s))).join(","));
   check("pr-validate: worker-flow suite runs with --conditions=react-server", runs.some((r) => r === "node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-worker-flow.ts"));
+  check("pr-validate: domain-age suite runs with --conditions=react-server", runs.some((r) => r === "node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-domain-age.ts"));
   const build = steps.filter((s) => s.run === "./node_modules/.bin/next build");
   check("pr-validate: runs next build exactly once, after every test suite", build.length === 1 && steps.indexOf(build[0]) === steps.length - 1);
   check("pr-validate: the build step's only environment is NEXT_TELEMETRY_DISABLED=1 (no Supabase, key or URL values)",

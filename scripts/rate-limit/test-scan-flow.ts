@@ -520,7 +520,15 @@ async function main() {
   }
 
   console.log(`\n=== Gate 007A scan flow: ${passed} passed, ${failed} failed ===`);
+  finished = true;
   process.exit(failed === 0 ? 0 : 1);
 }
+
+// A promise that never settles must not end the run silently: Node would exit with code 0 once the event loop is
+// empty, without reaching process.exit above. Any run that did not finish fails.
+let finished = false;
+process.on("exit", () => {
+  if (!finished) { console.log("FAIL: harness did not finish (a pending promise never settled)"); process.exitCode = 1; }
+});
 
 main().catch((e) => { console.log(`FAIL: harness error ${(e as Error).stack}`); process.exit(1); });

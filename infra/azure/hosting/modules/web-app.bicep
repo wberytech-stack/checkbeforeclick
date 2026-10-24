@@ -28,6 +28,9 @@ param secretNames object
 @description('Plain (non-secret) environment variables for this environment')
 param plainEnv array
 
+@description('Inject GOOGLE_WEB_RISK_API_KEY from Key Vault. Staging passes false (Gate 006C): with no key the Web Risk provider cannot make a paid request, whatever WEB_RISK_PROVIDER_ENABLED says.')
+param injectWebRiskKey bool
+
 @description('Minimum replicas: 0 allows scale to zero (staging; production before cutover), 1 keeps one replica running.')
 @minValue(0)
 @maxValue(1)
@@ -45,10 +48,14 @@ var secretMap = [
   { name: 'inngest-signing-key', vaultKey: 'inngestSigningKey', envName: 'INNGEST_SIGNING_KEY' }
 ]
 
+// The Web Risk key is dropped from both the Container Apps secrets and the env, so a
+// staging app never holds a reference to it.
+var activeSecrets = filter(secretMap, s => injectWebRiskKey || s.vaultKey != 'googleWebRiskApiKey')
+
 // Bicep allows for-expressions only as declaration or property values, not as
 // function arguments (BCP138), so the secret env list is built here and then
 // passed to concat() below.
-var secretEnv = [for s in secretMap: {
+var secretEnv = [for s in activeSecrets: {
   name: s.envName
   secretRef: s.name
 }]
@@ -79,7 +86,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           identity: identityId
         }
       ]
-      secrets: [for s in secretMap: {
+      secrets: [for s in activeSecrets: {
         name: s.name
         keyVaultUrl: '${keyVaultUri}secrets/${secretNames[s.vaultKey]}'
         identity: identityId

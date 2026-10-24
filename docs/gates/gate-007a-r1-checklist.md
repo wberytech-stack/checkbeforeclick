@@ -13,7 +13,8 @@
 | --- | --- |
 | One environment variable, `GOOGLE_WEB_RISK_API_KEY`, holding the **production** key, **shared by Production and Preview**. Documented as a cost and quota risk, not a tenant risk | `docs/ENVIRONMENTS.md` §11 and its variable table |
 | Only server code reads it (`lib/scan/providers/googleWebRisk.ts`). It is sent in the `X-Goog-Api-Key` header, never in a URL, never in browser code | repo (Gate 007A) |
-| A copy may also exist in Azure Key Vault as secret `google-web-risk-api-key` (Gate 006C, founder-reported) | `infra/azure/hosting/modules/web-app.bicep`, Gate 006C doc |
+| A copy exists in Azure Key Vault `kv-cbc-prod-cc-001` as secret **`cbc-shared-google-web-risk-api-key`**, created 2026-10-19T19:02:55Z (founder-reported). `google-web-risk-api-key` is only the Container Apps secret *reference* name in the Bicep, not the Key Vault secret | `docs/gates/gate-006c-p5b-key-vault-secrets.md` (secret 4), `infra/azure/hosting/main.parameters.json`, `infra/azure/hosting/modules/web-app.bicep` |
+| The Google Cloud project `checkbeforeclick` has **two API keys, both named `checkbeforeclick-webrisk`**, both created 2026-05-25 (founder-reported, 2026-10-24). The repository does not record which one Vercel or Key Vault holds, nor either key's restrictions | founder report; no repository record |
 | Ceiling the **current code** can make: about 500 Web Risk requests per day per Supabase project (one reservation per admission, 500 admissions per day). Staging and production together: about 1,000 per day | gate doc, "Effective Web Risk ceiling" |
 | **Not capped by code:** older Preview deployments built before Gate 007A, current production (`master`), and any other holder of the key | gate doc, "Google Web Risk: every execution path" |
 | Planned staging test spend: **at most 7** paid requests (runbook section 1) | `docs/gates/gate-007a-staging-runbook.md` |
@@ -45,7 +46,14 @@ staging request.
    - the key's **creation date**;
    - the key's **ID**: open the key; the ID is in the page URL. **Do not click "Show key".**
 3. **How many keys:** record how many API keys that project has, and their display names.
-   - If more than one could be the CheckBeforeClick key, step 6 decides which one is actually used.
+   - **Two keys share the display name `checkbeforeclick-webrisk`** (both created 2026-05-25, founder-reported).
+     The name cannot tell them apart. Identify each by its **key ID** (the identifier in the console URL, not
+     the key string) and record **both**: ID, creation time, API restrictions and application restrictions.
+   - **Which of the two is in use is not documented anywhere** in the repository or the local evidence.
+     Step 6b decides it from usage metrics by credential, without revealing either key. Until then, record
+     "unknown".
+   - **Do not delete, disable, rename or rotate either key** during this checklist. If one turns out to be
+     unused, deciding what to do with it is a separate founder decision (section 8).
 4. **APIs & Services → Enabled APIs & services:** confirm **Web Risk API** is enabled in this project. Record
    yes or no.
 
@@ -154,7 +162,8 @@ This step only reads metrics produced by the already-approved test requests. It 
 
 ### 6c. Other holders of the key (record only)
 
-- **Azure Key Vault:** if the secret `google-web-risk-api-key` exists, record its **name** and **last updated**
+- **Azure Key Vault:** if the secret `cbc-shared-google-web-risk-api-key` exists in `kv-cbc-prod-cc-001`, record its
+  **name** and **last updated**
   date (no value). The Gate 006C record says you wrote it.
   - Whether it holds the same key cannot be checked without revealing it. Record "same key per my records" or
     "unknown".
@@ -170,7 +179,9 @@ Gate 007A R1 - Google Web Risk controls - checked by: founder        Date (UTC):
 No "Show key", no key value copied or screenshotted: confirmed
 
 Project:   project ID=____  number=____  Web Risk API enabled: yes/no
-Key:       display name=____  key ID=____ (not the key)  created=____  keys in project=__ (names: ____)
+Key A:     display name=checkbeforeclick-webrisk  key ID=____ (not the key)  created=____  API restr=____  app restr=____
+Key B:     display name=checkbeforeclick-webrisk  key ID=____ (not the key)  created=____  API restr=____  app restr=____
+           keys in project=__   key used by the Preview (from 6b metrics): A / B / unknown
 Restrict:  API restrictions=____ (exp: Web Risk API only)  application restrictions=____ (exp: none, acceptable)
 Quotas:    [name | unit | value | default/override | usage]
            ____ | ____ | ____ | ____ | ____
@@ -182,7 +193,7 @@ Budget:    name=____  scope=project/services ____  amount/month=____
            thresholds=____ (exp >= 50/90/100% actual + 100% forecast)  recipients reach me: yes/no
            automated budget action: none / ____   alerts fired recently: yes/no
 Vercel:    GOOGLE_WEB_RISK_API_KEY entries=__  scopes=____  branch-specific=____  sensitive=yes/no  last updated=____
-Azure KV:  google-web-risk-api-key exists: yes/no/not checked  last updated=____  same key per my records: yes/no/unknown
+Azure KV:  cbc-shared-google-web-risk-api-key exists: yes/no/not checked  last updated=____  same key per my records: yes/no/unknown
 Old previews still reachable: __ / unknown
 Usage before tests (last hour, per key): ____
 Findings:  ____
@@ -191,7 +202,7 @@ R1 verdict (founder): controls adequate for the 7-request staging run: yes / no 
 
 During the staging run, also fill in the 6b lines and add them to the runbook's evidence sheet:
 ```text
-Metrics by credential: before ST2=__  after ST2=__ (exp +4)  after ST6=__ (exp +7 total); other keys unchanged: yes/no
+Metrics by credential (key A / key B): before ST2=__/__  after ST2=__/__ (exp +4 on the key in use)  after ST6=__/__ (exp +7 total); the other key unchanged: yes/no
 Matches ledger reservations_since: yes/no (excess explained by production traffic: ____)
 ```
 

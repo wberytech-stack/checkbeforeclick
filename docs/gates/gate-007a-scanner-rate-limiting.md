@@ -4,9 +4,13 @@
 
 - **Branch and PR:** `gate-007a-scanner-rate-limiting`, draft PR #45 into `master`.
   - First commit: `b0961bf` (base `master@1810aeb`).
-  - **Revision 2** (this document's changes: login path, scan-flow extraction, Web
-    Risk hardening, tenant guard, regression tests) is local until the founder
-    approves a commit.
+  - **Revision 2:** `061e4e6` (login path, scan-flow extraction, Web Risk
+    hardening, tenant guard, regression tests), committed and pushed with founder
+    approval on 2026-10-23.
+  - **CI:** `f040dd1` adds the read-only pull-request validation workflow (see
+    "Continuous validation"). Founder instruction, 2026-10-24.
+  - **Not yet reviewed by ChatGPT.** An independent review of the complete
+    Revision 2 diff has been requested.
 - **Not merged and not deployed.** Merging into `master` is a Vercel production
   deployment.
 - **Migrations:**
@@ -393,6 +397,57 @@ section 16).
 | `scripts/rate-limit/validate-admission-db.ts` | Disposable-database validation of 001 (commit 1) |
 | `scripts/rate-limit/validate-users-guard-db.ts` | **Rev 2, new:** disposable validation of 002, not yet run |
 | `docs/gates/gate-007a-scanner-rate-limiting.md` | This document |
+| `.github/workflows/pr-validate.yml` | **CI, new:** read-only pull-request validation |
+| `scripts/azure-hosting/test-hosting-safety.ts` | **CI:** 15 invariants for `pr-validate.yml` |
+
+## Continuous validation (`.github/workflows/pr-validate.yml`)
+
+- **Trigger:** `pull_request` into `master` only. Never `pull_request_target`,
+  `push` or dispatch.
+- **Permissions:** `contents: read`, at the workflow level and the job level.
+- **No secrets:** no secrets, repository variables, GitHub environment or cloud
+  credentials.
+- **Checkout:** `persist-credentials: false`. Only `actions/checkout@v4` and
+  `actions/setup-node@v4` are used.
+- **Steps:**
+  1. Node 24.14.0;
+  2. `npm ci --ignore-scripts --no-audit --no-fund`;
+  3. `tsc --noEmit -p tsconfig.json`;
+  4. the six offline suites (rate limit, provider budget, scan flow with
+     `--conditions=react-server`, login flow, tenant guard, hosting and workflow
+     safety).
+- **What it never does:** it deploys nothing and makes no database, Supabase,
+  Google, Vercel or Azure call. The disposable-database validators and the smoke
+  test are excluded, and a test asserts this.
+- **Guarded by `test-hosting-safety.ts`:** 15 invariants, covering the trigger,
+  permissions, absence of secrets and tokens, allowed actions, credentials, the
+  Node pin, `--ignore-scripts`, `tsc`, all six suites, the `react-server`
+  condition, and no deploy, cloud, database or network commands.
+  - A mutation check ran 10 workflow mutants against them (for example
+    `pull_request_target`, `contents: write`, a secret reference, a dropped suite,
+    a deploy step, an unpinned Node): **10/10 killed**.
+
+### Actual run (2026-10-24)
+
+| Item | Value |
+| --- | --- |
+| Run | [40072932680](https://github.com/wberytech-stack/checkbeforeclick/actions/runs/40072932680), event `pull_request`, head `f040dd13031952004019dd062e1d016ffccc5e57` |
+| Conclusion | `success`, first attempt; job `offline` 31 s |
+| Token permissions (from the log) | `Contents: read`, `Metadata: read` |
+| Runtime | `node: v24.14.0` (linux-x64); `npm ci` added 836 packages |
+| Steps 1–11 | all `success` (checkout, setup-node, install, tsc, six suites) |
+| Suite output | `=== Gate 007A rate limit: 75 passed, 0 failed ===`; `=== Gate 007A provider budget: 54 passed, 0 failed ===`; `=== Gate 007A scan flow: 68 passed, 0 failed ===`; `=== Gate 007A login flow: 30 passed, 0 failed ===`; `=== Gate 007A tenant guard: 21 passed, 0 failed ===`; `125 passed, 0 failed` (hosting and workflow safety) |
+| Log lines matching `FAIL` | 0 |
+
+- **Failures found and fixed before the push:**
+  1. Two of the new workflow assertions failed locally, because their text
+     patterns matched the workflow's own explanatory comments ("Never
+     pull_request_target", "No `npx <package>`"). Fix: the text checks now ignore
+     YAML comment lines.
+  2. An edit script wrote literal newlines into a TypeScript string, and the
+     suite failed to parse (`ERR_INVALID_TYPESCRIPT_SYNTAX`). Fix: the line was
+     corrected and the suite re-run (125/0).
+- **The CI run itself had no failures.**
 
 ## Validation (local, offline)
 
@@ -405,7 +460,7 @@ Run with `node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKA
 | `test-scan-flow.ts` | 68 passed, 0 failed |
 | `test-login-flow.ts` | 30 passed, 0 failed |
 | `test-tenant-guard.ts` | 21 passed, 0 failed |
-| `test-hosting-safety.ts` | 110 passed, 0 failed |
+| `test-hosting-safety.ts` | 125 passed, 0 failed (110 before the CI invariants) |
 | Mutation check (13 hand-written mutants of the flow, login, Web Risk and guard code) | 13/13 killed |
 | `tsc --noEmit` | exit 0 |
 | `eslint` on the changed application files | exit 0 |

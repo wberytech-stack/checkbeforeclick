@@ -5,6 +5,9 @@
 // same web-app.bicep module as main.bicep. Everything else is referenced as existing,
 // so the deploying identity needs no role-assignment rights and cannot reach production.
 // Names and staging values come from main.parameters.json (single source of truth).
+// Registry and Key Vault addresses are derived from their names, not read with
+// reference(): what-if cannot evaluate references to resources outside the template, and
+// the guard needs every secret's Key Vault URL as a concrete value.
 
 targetScope = 'resourceGroup'
 
@@ -21,14 +24,6 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   name: cfg.identityName.value
 }
 
-resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: cfg.registryName.value
-}
-
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
-  name: cfg.keyVaultName.value
-}
-
 module staging 'modules/web-app.bicep' = {
   name: 'web-staging'
   params: {
@@ -36,9 +31,9 @@ module staging 'modules/web-app.bicep' = {
     location: resourceGroup().location
     environmentId: env.id
     identityId: identity.id
-    registryServer: registry.properties.loginServer
+    registryServer: '${cfg.registryName.value}${environment().suffixes.acrLoginServer}'
     image: image
-    keyVaultUri: keyVault.properties.vaultUri
+    keyVaultUri: 'https://${cfg.keyVaultName.value}${environment().suffixes.keyvaultDns}/'
     secretNames: cfg.stagingSecretNames.value
     plainEnv: cfg.stagingPlainEnv.value
     // Fixed here: staging never receives the Web Risk key (Gate 006C).

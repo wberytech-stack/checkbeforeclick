@@ -172,7 +172,14 @@ noSecrets("workflow", wfText);
     /^var cfg = loadJsonContent\('main\.parameters\.json'\)\.parameters$/m.test(code));
   const resources = [...code.matchAll(/^resource \w+ '([^']+)'(.*)$/gm)];
   check("staging-app.bicep: every resource is existing (creates nothing but the app module)",
-    resources.length === 4 && resources.every((m) => m[2].includes(" existing = {")), resources.map((m) => m[1]).join(","));
+    resources.length === 2 && resources.every((m) => m[2].includes(" existing = {")), resources.map((m) => m[1]).join(","));
+  // what-if cannot evaluate reference() to resources outside the template, so every value
+  // the guard inspects must be derivable without reading Azure.
+  check("staging-app.bicep: reads no runtime property of an existing resource (no reference())",
+    !/\b\w+\.properties\./.test(code));
+  check("staging-app.bicep: registry and Key Vault addresses derived from names and environment()",
+    /^    registryServer: '\$\{cfg\.registryName\.value\}\$\{environment\(\)\.suffixes\.acrLoginServer\}'$/m.test(code) &&
+    /^    keyVaultUri: 'https:\/\/\$\{cfg\.keyVaultName\.value\}\$\{environment\(\)\.suffixes\.keyvaultDns\}\/'$/m.test(code));
   const modules = [...code.matchAll(/^module (\w+) '([^']+)'(.*)$/gm)];
   check("staging-app.bicep: exactly one module, web-app.bicep, unconditional, named web-staging",
     modules.length === 1 && modules[0][2] === "modules/web-app.bicep" && modules[0][3] === " = {" && /\n  name: 'web-staging'\n/.test(code));
@@ -431,7 +438,11 @@ check("Web Risk key: web-app.bicep drops googleWebRiskApiKey from secretMap unle
   const code = stripBicep(modSrc);
   check("Web Risk key: secretMap is used only in its declaration and the filter",
     (code.match(/\bsecretMap\b/g) ?? []).length === 2);
-  check("Web Risk key: both the Container Apps secrets and the env loop over activeSecrets",
+  check("Web Risk key: web-app.bicep drops a GOOGLE_WEB_RISK_API_KEY plain variable unless injectWebRiskKey",
+  /^var activePlainEnv = filter\(plainEnv, e => injectWebRiskKey \|\| e\.name != 'GOOGLE_WEB_RISK_API_KEY'\)$/m.test(modSrc) &&
+  /\n            activePlainEnv\n          \)/.test(modSrc) &&
+  (stripBicep(modSrc).match(/\bplainEnv\b/g) ?? []).length === 2);
+check("Web Risk key: both the Container Apps secrets and the env loop over activeSecrets",
     (code.match(/\[for s in activeSecrets:/g) ?? []).length === 2 && !/\[for s in secretMap\b/.test(code));
 }
 for (const [name, want] of [["staging", "false"], ["production", "true"]] as const) {
@@ -453,8 +464,10 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
 }
 
 // ---------------------------------------------------------------- staging-guard.mjs behaviour
-// Synthetic what-if and `az containerapp show` documents (no Azure). Each broken
-// variant must be rejected; the good ones must pass.
+// Synthetic documents in the Azure CLI shapes (no Azure): what-if as the CLI serializes
+// azure-mgmt-resource WhatIfOperationResult (status, error, changes, potentialChanges,
+// diagnostics; each change with resourceId, deploymentId, changeType, before, after, delta),
+// and `az containerapp show` as the ARM resource. Broken variants must be rejected.
 {
   type Guard = {
     checkWhatIf: (r: unknown, app: string, image: string) => { problems: string[] };
@@ -464,56 +477,80 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
   const APP = "ca-cbc-web-stg-cc-001";
   const IMG = `crcbcprodcc001.azurecr.io/cbc-web@sha256:${"a".repeat(64)}`;
   const RG = "/subscriptions/0/resourceGroups/rg-cbc-prod-canadacentral-001/providers";
+  const KV = "https://kv-cbc-prod-cc-001.vault.azure.net/secrets/";
   const props = () => ({
     configuration: { secrets: [
-      { name: "supabase-service-role-key", keyVaultUrl: "https://kv/secrets/cbc-stg-supabase-service-role-key" },
-      { name: "inngest-event-key", keyVaultUrl: "https://kv/secrets/cbc-stg-inngest-event-key" },
-    ] },
+      { name: "supabase-service-role-key", keyVaultUrl: `${KV}cbc-stg-supabase-service-role-key`, identity: "/id" },
+      { name: "inngest-event-key", keyVaultUrl: `${KV}cbc-stg-inngest-event-key`, identity: "/id" },
+      { name: "inngest-signing-key", keyVaultUrl: `${KV}cbc-stg-inngest-signing-key`, identity: "/id" },
+    ] as Array<{ name: string; keyVaultUrl: string; identity: string }> },
     template: {
-      containers: [{ image: IMG, env: [
+      containers: [{ name: "web", image: IMG, env: [
         { name: "SUPABASE_SERVICE_ROLE_KEY", secretRef: "supabase-service-role-key" },
+        { name: "INNGEST_EVENT_KEY", secretRef: "inngest-event-key" },
+        { name: "INNGEST_SIGNING_KEY", secretRef: "inngest-signing-key" },
+        { name: "PORT", value: "3000" },
         { name: "WEB_RISK_PROVIDER_ENABLED", value: "false" },
-      ] }],
+      ] as Array<{ name: string; value?: string; secretRef?: string }> }],
+      initContainers: null as unknown[] | null,
       scale: { minReplicas: 0, maxReplicas: 1 },
     },
   });
   type Props = ReturnType<typeof props>;
-  const whatIf = (p: Props, extra: unknown[] = [], changeType = "Create") => ({
-    status: "Succeeded",
-    changes: [{ changeType, resourceId: `${RG}/Microsoft.App/containerApps/${APP}`, after: { properties: p } }, ...extra],
+  const change = (changeType: string, resourceId: string | null, after: unknown = null) => ({
+    additionalProperties: {}, resourceId, deploymentId: null, symbolicName: null, identifiers: null, extension: null,
+    changeType, unsupportedReason: null, before: null, after, delta: null,
   });
+  const appChange = (p: unknown, changeType = "Create") =>
+    change(changeType, `${RG}/Microsoft.App/containerApps/${APP}`, p === undefined ? null : { name: APP, properties: p });
+  const whatIf = (changes: unknown[], extra: Record<string, unknown> = {}) =>
+    ({ additionalProperties: {}, status: "Succeeded", error: null, changes, potentialChanges: null, diagnostics: null, ...extra });
   const mutate = (f: (p: Props) => void) => { const p = props(); f(p); return p; };
-  const webRiskSecret = (p: Props) => p.configuration.secrets.push({ name: "google-web-risk-api-key", keyVaultUrl: "https://kv/secrets/cbc-shared-google-web-risk-api-key" });
-  const webRiskEnv = (p: Props) => p.template.containers[0].env.push({ name: "GOOGLE_WEB_RISK_API_KEY", secretRef: "x" });
+  const env0 = (p: Props) => p.template.containers[0].env;
   const ok = (r: { problems: string[] }) => r.problems.length === 0;
 
-  check("guard whatif: first-time Create of the staging app passes", ok(guard.checkWhatIf(whatIf(props()), APP, IMG)));
-  check("guard whatif: Modify of the staging app with Ignore elsewhere passes",
-    ok(guard.checkWhatIf(whatIf(props(), [{ changeType: "Ignore", resourceId: `${RG}/Microsoft.App/containerApps/ca-cbc-web-prod-cc-001` }], "Modify"), APP, IMG)));
+  check("guard whatif: first-time Create of the staging app (CLI shape) passes",
+    ok(guard.checkWhatIf(whatIf([appChange(props())]), APP, IMG)));
+  check("guard whatif: Modify with Ignore elsewhere and an Info diagnostic passes",
+    ok(guard.checkWhatIf(whatIf([appChange(props(), "Modify"), change("Ignore", `${RG}/Microsoft.App/containerApps/ca-cbc-web-prod-cc-001`)],
+      { diagnostics: [{ level: "Info", code: "X", message: "m" }] }), APP, IMG)));
   for (const [name, doc] of [
-    ["Web Risk secret", whatIf(mutate(webRiskSecret))],
-    ["GOOGLE_WEB_RISK_API_KEY env", whatIf(mutate(webRiskEnv))],
-    ["provider flag missing", whatIf(mutate((p) => { p.template.containers[0].env = p.template.containers[0].env.filter((e) => e.name !== "WEB_RISK_PROVIDER_ENABLED"); }))],
-    ["provider flag \"False\"", whatIf(mutate((p) => { p.template.containers[0].env[1].value = "False"; }))],
-    ["maxReplicas 2", whatIf(mutate((p) => { p.template.scale.maxReplicas = 2; }))],
-    ["minReplicas 1", whatIf(mutate((p) => { p.template.scale.minReplicas = 1; }))],
-    ["other image", whatIf(mutate((p) => { p.template.containers[0].image = IMG.replace("@sha256:a", "@sha256:b"); }))],
-    ["Create of another resource", whatIf(props(), [{ changeType: "Create", resourceId: `${RG}/Microsoft.App/containerApps/ca-cbc-web-prod-cc-001` }])],
-    ["Modify of another resource", whatIf(props(), [{ changeType: "Modify", resourceId: `${RG}/Microsoft.KeyVault/vaults/kv-cbc-prod-cc-001` }])],
-    ["Delete of the staging app", whatIf(props(), [], "Delete")],
-    ["status Failed", { ...whatIf(props()), status: "Failed" }],
-    ["no change for the staging app", { status: "Succeeded", changes: [] }],
+    ["Web Risk secret", whatIf([appChange(mutate((p) => p.configuration.secrets.push({ name: "google-web-risk-api-key", keyVaultUrl: `${KV}cbc-shared-google-web-risk-api-key`, identity: "/id" })))])],
+    ["Web Risk key via a plain variable", whatIf([appChange(mutate((p) => env0(p).push({ name: "GOOGLE_WEB_RISK_API_KEY", value: "x" })))])],
+    ["Web Risk Key Vault URL behind an allowed secret name", whatIf([appChange(mutate((p) => { p.configuration.secrets[0].keyVaultUrl = `${KV}cbc-shared-google-web-risk-api-key`; }))])],
+    ["secret not on the allowlist", whatIf([appChange(mutate((p) => p.configuration.secrets.push({ name: "prod-key", keyVaultUrl: `${KV}cbc-prod-supabase-service-role-key`, identity: "/id" })))])],
+    ["unevaluated Key Vault URL", whatIf([appChange(mutate((p) => { p.configuration.secrets[0].keyVaultUrl = "[format('{0}secrets/{1}', parameters('keyVaultUri'), 'x')]"; }))])],
+    ["unevaluated secret name", whatIf([appChange(mutate((p) => { p.configuration.secrets[0].name = "[variables('s')]"; }))])],
+    ["secretRef bound to another variable", whatIf([appChange(mutate((p) => { env0(p)[0].name = "OTHER"; }))])],
+    ["provider flag missing", whatIf([appChange(mutate((p) => { p.template.containers[0].env = env0(p).filter((e) => e.name !== "WEB_RISK_PROVIDER_ENABLED"); }))])],
+    ["provider flag masked or \"False\"", whatIf([appChange(mutate((p) => { env0(p)[4].value = "False"; }))])],
+    ["init container", whatIf([appChange(mutate((p) => { p.template.initContainers = [{ name: "i", image: IMG }]; }))])],
+    ["maxReplicas 2", whatIf([appChange(mutate((p) => { p.template.scale.maxReplicas = 2; }))])],
+    ["minReplicas 1", whatIf([appChange(mutate((p) => { p.template.scale.minReplicas = 1; }))])],
+    ["other image", whatIf([appChange(mutate((p) => { p.template.containers[0].image = IMG.replace("@sha256:a", "@sha256:b"); }))])],
+    ["missing after", whatIf([appChange(undefined)])],
+    ["Create of another resource", whatIf([appChange(props()), change("Create", `${RG}/Microsoft.App/containerApps/ca-cbc-web-prod-cc-001`)])],
+    ["Modify of another resource", whatIf([appChange(props()), change("Modify", `${RG}/Microsoft.KeyVault/vaults/kv-cbc-prod-cc-001`)])],
+    ["Create without a resource id", whatIf([appChange(props()), change("Create", null)])],
+    ["Deploy or Unsupported for the app", whatIf([appChange(props(), "Unsupported")])],
+    ["Delete of the staging app", whatIf([appChange(props(), "Delete")])],
+    ["potential changes", whatIf([appChange(props())], { potentialChanges: [change("Modify", `${RG}/Microsoft.App/containerApps/${APP}`)] })],
+    ["warning diagnostic (module short-circuited, app absent)", whatIf([], { diagnostics: [{ level: "Warning", code: "W", message: "m" }] })],
+    ["warning diagnostic alongside a clean app change", whatIf([appChange(props())], { diagnostics: [{ level: "Warning", code: "W", message: "m" }] })],
+    ["status Failed", whatIf([appChange(props())], { status: "Failed" })],
+    ["no change for the staging app", whatIf([])],
   ] as const) check(`guard whatif: rejects ${name}`, !ok(guard.checkWhatIf(doc, APP, IMG)));
 
-  const app = (p: Props) => ({ name: APP, properties: p });
+  const app = (p: Props) => ({ id: `${RG}/Microsoft.App/containerApps/${APP}`, name: APP, type: "Microsoft.App/containerApps", properties: p });
   check("guard config: compliant staging app passes", ok(guard.checkConfig(app(props()), IMG)));
   for (const [name, p] of [
-    ["Web Risk secret", mutate(webRiskSecret)],
-    ["GOOGLE_WEB_RISK_API_KEY env", mutate(webRiskEnv)],
-    ["provider flag missing", mutate((p) => { p.template.containers[0].env.pop(); })],
+    ["Web Risk secret", mutate((p) => p.configuration.secrets.push({ name: "google-web-risk-api-key", keyVaultUrl: `${KV}cbc-shared-google-web-risk-api-key`, identity: "/id" }))],
+    ["Web Risk key via a plain variable", mutate((p) => env0(p).push({ name: "GOOGLE_WEB_RISK_API_KEY", value: "x" }))],
+    ["provider flag missing", mutate((p) => { p.template.containers[0].env = env0(p).filter((e) => e.name !== "WEB_RISK_PROVIDER_ENABLED"); })],
     ["maxReplicas 2", mutate((p) => { p.template.scale.maxReplicas = 2; })],
     ["other image", mutate((p) => { p.template.containers[0].image = "crcbcprodcc001.azurecr.io/cbc-web:latest"; })],
   ] as const) check(`guard config: rejects ${name}`, !ok(guard.checkConfig(app(p), IMG)));
+  check("guard config: rejects a missing properties object", !ok(guard.checkConfig({ name: APP }, IMG)));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

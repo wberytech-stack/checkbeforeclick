@@ -1,0 +1,208 @@
+// Gate 007A - offline tests for the execution-time Web Risk budget (Codex cycle 3 P2 fix).
+// No network, no database, no new dependency. Behaviour is tested on the pure guard with counting mocks; the
+// "only one guarded path reaches Web Risk" property is tested statically over the application source.
+// Run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-provider-budget.ts
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { guardedPaidCall, interpretReservation, PROVIDER_BUDGET_24H, WEB_RISK_PROVIDER } from "../../lib/security/providerBudget.ts";
+import { interpretAdmission } from "../../lib/security/rateLimit.ts";
+
+let passed = 0;
+let failed = 0;
+function check(label: string, ok: boolean, info = ""): void {
+  if (ok) { passed++; console.log(`PASS: ${label}`); }
+  else { failed++; console.log(`FAIL: ${label}${info ? `  [${info}]` : ""}`); }
+}
+const root = path.resolve(import.meta.dirname, "..", "..");
+const read = (p: string) => readFileSync(path.join(root, p), "utf8");
+
+// counting mocks
+function mocks(reserveResult: () => Promise<{ data: unknown; error: unknown }>) {
+  const n = { reserve: 0, call: 0 };
+  return {
+    n,
+    reserve: async (_p: string, _a: string) => { n.reserve++; return reserveResult(); },
+    call: async () => { n.call++; return "RESULT"; },
+  };
+}
+const grant = (id: number | string = 41) => async () => ({ data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: id }], error: null });
+const refuse = (reason: string, retry = 0) => async () => ({ data: [{ granted: false, reason, retry_after_seconds: retry, reservation_id: null }], error: null });
+
+// ---- one reservation -> at most one request ----------------------------------------------------------------
+{
+  const m = mocks(grant());
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "7", reserve: m.reserve, call: m.call });
+  check("B01 granted reservation -> exactly one reservation and exactly one request", o.called && m.n.reserve === 1 && m.n.call === 1 && o.called === true && o.result === "RESULT" && o.reservationId === "41");
+}
+{
+  const m = mocks(refuse("provider_budget_exhausted", 4321));
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "7", reserve: m.reserve, call: m.call });
+  check("B02 budget exhausted -> NO request, 503 provider_budget_exhausted with Retry-After from the database",
+    !o.called && m.n.call === 0 && o.decision.status === 503 && o.decision.reason === "provider_budget_exhausted" && o.decision.retryAfterSeconds === 4321);
+}
+for (const [label, fn] of [
+  ["B03 reservation RPC error (e.g. function not deployed)", async () => ({ data: null, error: { message: "function does not exist" } })],
+  ["B04 reservation call throws", async () => { throw new Error("network down"); }],
+  ["B05 null data", async () => ({ data: null, error: null })],
+  ["B06 empty array", async () => ({ data: [], error: null })],
+  ["B07 granted:true without reservation_id", async () => ({ data: [{ granted: true, reason: "granted", reservation_id: null }], error: null })],
+  ["B08 granted:true with an unexpected reason", async () => ({ data: [{ granted: true, reason: "ok", reservation_id: 5 }], error: null })],
+  ["B09 granted as a string", async () => ({ data: [{ granted: "true", reason: "granted", reservation_id: 5 }], error: null })],
+  ["B10 already_reserved (duplicate for this admission)", refuse("already_reserved")],
+  ["B11 admission_not_valid (foreign or older than 10 minutes)", refuse("admission_not_valid")],
+  ["B12 unauthenticated", refuse("unauthenticated")],
+  ["B13 unknown_provider", refuse("unknown_provider")],
+  ["B14 unknown future reason", refuse("something_new", 9)],
+] as Array<[string, () => Promise<{ data: unknown; error: unknown }>]>) {
+  const m = mocks(fn);
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "7", reserve: m.reserve, call: m.call });
+  check(`${label} -> NO request, fail closed with 503`, !o.called && m.n.call === 0 && o.decision.status === 503);
+}
+for (const bad of [undefined, "", "abc", "1; drop table x", "-5", "12345678901234567890123"]) {
+  const m = mocks(grant());
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: bad as string | undefined, reserve: m.reserve, call: m.call });
+  check(`B15 invalid admission id ${JSON.stringify(bad)} -> no reservation attempt and no request`, !o.called && m.n.reserve === 0 && m.n.call === 0);
+}
+{
+  const m = mocks(grant());
+  let threw = false;
+  try { await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "7", reserve: m.reserve, call: async () => { m.n.call++; throw new Error("aborted"); } }); } catch { threw = true; }
+  check("B16 a failing/aborted request is NOT retried (1 reservation, 1 request)", threw && m.n.reserve === 1 && m.n.call === 1);
+}
+{
+  // Duplicate execution inside one request: a fake ledger enforcing one reservation per admission.
+  const used = new Set<string>(); let requests = 0;
+  const reserve = async (_p: string, a: string) => (used.has(a) ? { data: [{ granted: false, reason: "already_reserved" }], error: null } : (used.add(a), { data: [{ granted: true, reason: "granted", reservation_id: used.size }], error: null }));
+  const call = async () => { requests++; return "R"; };
+  const o1 = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "99", reserve, call });
+  const o2 = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "99", reserve, call });
+  check("B17 a second guarded call for the same admission makes NO second request", o1.called && !o2.called && requests === 1);
+}
+{
+  // Atomic budget under concurrency: a fake ledger with the 1000 cap; 1300 parallel guarded calls.
+  let reserved = 0; let requests = 0;
+  const reserve = async () => { await Promise.resolve(); if (reserved >= PROVIDER_BUDGET_24H) return { data: [{ granted: false, reason: "provider_budget_exhausted", retry_after_seconds: 60 }], error: null }; reserved++; return { data: [{ granted: true, reason: "granted", reservation_id: reserved }], error: null }; };
+  const call = async () => { requests++; return "R"; };
+  const all = await Promise.all(Array.from({ length: 1300 }, (_, i) => guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: String(i + 1), reserve, call })));
+  check("B18 1300 parallel calls against a 1000 budget -> exactly 1000 requests, 300 refused with 503", requests === 1000 && all.filter((o) => !o.called).length === 300);
+}
+check("B19 interpretReservation: granted row -> reservation id", (() => { const d = interpretReservation({ granted: true, reason: "granted", reservation_id: 8 }, null); return d.granted && d.reservationId === "8"; })());
+check("B20 admission decision now carries the admission id that funds the reservation", (() => { const d = interpretAdmission([{ admitted: true, reason: "admitted", retry_after_seconds: 0, provider_calls_reserved: 1, admission_id: 123 }], null); return d.allowed && d.admissionId === "123"; })());
+
+// ---- deadline signal (review CBC-007A-R1-01): no reservation, no late request, cancellation reaches the call ----
+{
+  const GRANTED = { data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 9 }], error: null };
+  const n = { reserve: 0, call: 0 };
+  const ac = new AbortController(); ac.abort();
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "5", signal: ac.signal,
+    reserve: async () => { n.reserve++; return GRANTED; }, call: async () => { n.call++; return "x"; } });
+  check("B21 signal already aborted -> no reservation, no request, 503 deadline_exceeded",
+    !o.called && n.reserve === 0 && n.call === 0 && o.decision.status === 503 && o.decision.reason === "deadline_exceeded");
+}
+{
+  const n = { call: 0 }; const ac = new AbortController();
+  let seen: AbortSignal | undefined; let release!: (v: { data: unknown; error: unknown }) => void;
+  const p = guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "6", signal: ac.signal,
+    reserve: (_p, _a, sig) => { seen = sig; return new Promise((r) => { release = r; }); },
+    call: async () => { n.call++; return "x"; } });
+  ac.abort();                                                     // deadline while the reservation is in flight
+  release({ data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 10 }], error: null });   // late grant
+  const o = await p;
+  check("B22 the signal is handed to reserve() (the RPC can be cancelled in flight)", seen === ac.signal);
+  check("B23 a grant that arrives after the deadline never starts the request (deadline_exceeded)", !o.called && n.call === 0 && o.decision.reason === "deadline_exceeded");
+}
+{
+  const ac = new AbortController(); let callSig: AbortSignal | undefined;
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "7", signal: ac.signal,
+    reserve: async () => ({ data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 11 }], error: null }),
+    call: async (sig) => { callSig = sig; return "ok"; } });
+  check("B24 on a timely grant the request runs once and receives the same signal (abortable)", o.called && callSig === ac.signal);
+}
+{
+  const n = { call: 0 };
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "8",
+    reserve: async () => ({ data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 12 }], error: null }),
+    call: async () => { n.call++; return "ok"; } });
+  check("B25 without a signal the contract is unchanged (one reservation, one request)", o.called && n.call === 1);
+}
+
+// ---- static: the only path to Google Web Risk is the guarded one ------------------------------------------
+function walk(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const p = path.join(dir, name);
+    if (statSync(p).isDirectory()) walk(p, out); else if (/\.(ts|tsx|js|mjs)$/.test(name)) out.push(p);
+  }
+  return out;
+}
+const appFiles = ["app", "lib", "src", "inngest", "components"].flatMap((d) => walk(path.join(root, d))).concat([path.join(root, "proxy.ts")]);
+const rel = (p: string) => path.relative(root, p).split(path.sep).join("/");
+const withHost = appFiles.filter((f) => readFileSync(f, "utf8").includes("webrisk.googleapis.com")).map(rel);
+check("S01 'webrisk.googleapis.com' appears only in lib/scan/providers/googleWebRisk.ts", withHost.length === 1 && withHost[0] === "lib/scan/providers/googleWebRisk.ts", withHost.join(", "));
+const wr = read("lib/scan/providers/googleWebRisk.ts");
+const fetchCalls = wr.match(/\bfetch\(/g) ?? [];
+const fnStart = wr.indexOf("async function fetchWebRisk(");
+const fnEnd = wr.indexOf("export type WebRiskReserve");
+check("S02 the module makes exactly one fetch, inside fetchWebRisk", fetchCalls.length === 1 && wr.indexOf("fetch(") > fnStart && wr.indexOf("fetch(") < fnEnd);
+check("S03 fetchWebRisk is not exported", !/export\s+(async\s+)?function\s+fetchWebRisk/.test(wr) && !/export\s*\{[^}]*fetchWebRisk/.test(wr));
+const exportsWr = [...wr.matchAll(/^export\s+(?:async\s+)?(?:function|const|type)\s+(\w+)/gm)].map((m) => m[1]).sort();
+check("S04 the module exports only callWebRiskGuarded, WebRiskReserve and googleWebRiskProvider", exportsWr.join(",") === "WebRiskReserve,callWebRiskGuarded,googleWebRiskProvider", exportsWr.join(","));
+check("S05 fetchWebRisk is called only by the guard (call: (signal) => fetchWebRisk(args.url, signal))", (wr.match(/fetchWebRisk\(/g) ?? []).length === 2 && wr.includes("call: (signal) => fetchWebRisk(args.url, signal)"));
+const runBody = wr.slice(wr.indexOf("async run()"));
+check("S06 the provider's run() makes no request", !/fetch/.test(runBody.slice(0, runBody.indexOf("},") + 2)) && /Reservation required/.test(runBody));
+check("S07 googleWebRiskProvider is marked paid", /paid: true,/.test(wr));
+check("S08 the request is cancelled after 7 s (AbortController + signal)", /new AbortController\(\)/.test(wr) && /signal: controller\.signal/.test(wr) && /const TIMEOUT_MS = 7000/.test(wr) && /const TIMEOUT_MS = 7000/.test(read("lib/scan/providers/domainAge.ts")));
+const importers = appFiles.filter((f) => /callWebRiskGuarded/.test(readFileSync(f, "utf8"))).map(rel).sort();
+check("S09 only the scan route (and the provider module) reference callWebRiskGuarded", importers.join(",") === "app/api/scan/route.ts,lib/scan/providers/googleWebRisk.ts", importers.join(","));
+const runCallers = appFiles.filter((f) => /\b(provider|p)\.run\(/.test(readFileSync(f, "utf8"))).map(rel).sort();
+check("S10 provider run() is called only by the scan flow and the worker flow", runCallers.join(",") === "lib/scan/scanFlow.ts,lib/scan/workerFlow.ts", runCallers.join(","));
+const worker = read("inngest/functions/processScan.ts");
+check("S11 the worker filters out paid providers and never imports the Web Risk module", /withoutPaidProviders\(/.test(worker) && !/googleWebRisk|callWebRiskGuarded/.test(worker));
+check("S12 withoutPaidProviders removes every provider marked paid", /providers\.filter\(\(p\) => p\.paid !== true\)/.test(read("lib/scan/providers/index.ts")));
+const route = read("app/api/scan/route.ts");
+const flow = read("lib/scan/scanFlow.ts");
+check("S13 neither the scan route nor the scan flow queues scans to Inngest", !/inngest/i.test(route) && !/inngest\.|\.send\(/.test(flow));
+check("S14 the scan route sets maxDuration = 30", /export const maxDuration = 30/.test(route));
+check("S15 paid providers go only through the guard: flow uses deps.callPaid, route maps it to callWebRiskGuarded for google_web_risk only",
+  /if \(provider\.paid !== true\) return provider\.run\(/.test(flow) && /await deps\.callPaid\(provider, s\.admissionId, providerInput, cancel\.signal\)/.test(flow)
+  && /if \(provider\.name !== "google_web_risk"\) throw new Error\("No guarded entry point for this paid provider"\)\s*return callWebRiskGuarded\(\{/.test(route));
+check("S16 the reservation uses the user's session RPC cbc_reserve_provider_call (never the service role)",
+  /const query = \(await session\(\)\)\.rpc\("cbc_reserve_provider_call"/.test(route) && !/createPrivilegedClient|SUPABASE_SERVICE_ROLE_KEY/.test(route + flow));
+check("S19 cancellation is wired end to end: deadline aborts the phase before failScan; RPC and request take the signal",
+  /if \(raced === "timed_out"\) \{\s*cancel\.abort\(\)\s*await deps\.failScan\(/.test(flow)
+  && /await \(sig \? query\.abortSignal\(sig\) : query\)/.test(route) && /signal,\s*\/\/ The deadline signal/.test(route)
+  && /deadline\?\.addEventListener\("abort", onDeadline, \{ once: true \}\)/.test(wr) && /signal: args\.signal,/.test(wr));
+const iRef = flow.indexOf("if (budget.refused)");
+check("S17 a refused budget fails the scan and returns 503 before any verdict is computed",
+  iRef > 0 && flow.indexOf("await deps.failScan(", iRef) > iRef && flow.indexOf("status: 503", iRef) > iRef && flow.indexOf("deps.scoring.confidence(", iRef) > flow.indexOf("status: 503", iRef));
+check("S18 scan flow is pure (type-only imports, no env, no fetch)", !/^import (?!type )/m.test(flow) && !/process\.env|fetch\(/.test(flow));
+
+// ---- Web Risk request hygiene and every code path that can reach the paid API ---------------------------------------
+check("K01 the API key is sent in the X-Goog-Api-Key header, never in the URL",
+  /headers: \{ "X-Goog-Api-Key": apiKey \}/.test(wr) && !/key: apiKey/.test(wr) && !/[?&]key=/.test(wr));
+check("K02 redirects are refused (the key header is never forwarded to another host)", /redirect: "error"/.test(wr));
+check("K03 Google's error body is stored only as a bounded excerpt", /const MAX_ERROR_BODY_CHARS = 500/.test(wr) && /\(await response\.text\(\)\)\.slice\(0, MAX_ERROR_BODY_CHARS\)/.test(wr));
+const keyReaders = appFiles.filter((f) => /process\.env(\.GOOGLE_WEB_RISK_API_KEY|\[\s*["']GOOGLE_WEB_RISK_API_KEY)/.test(readFileSync(f, "utf8"))).map(rel).sort();
+check("K04 only lib/scan/providers/googleWebRisk.ts reads GOOGLE_WEB_RISK_API_KEY in application code", keyReaders.join(",") === "lib/scan/providers/googleWebRisk.ts", keyReaders.join(","));
+const scriptsUsingHost = walk(path.join(root, "scripts")).filter((f) => !/[\\/]rate-limit[\\/]test-/.test(f) && readFileSync(f, "utf8").includes("webrisk.googleapis.com")).map(rel);
+check("K05 no script or tool outside these tests calls the Web Risk API", scriptsUsingHost.length === 0, scriptsUsingHost.join(","));
+check("K06 the provider honours the WEB_RISK_PROVIDER_ENABLED kill switch and the registry filters disabled providers",
+  /enabled: process\.env\.WEB_RISK_PROVIDER_ENABLED !== "false"/.test(wr) && /p\.enabled &&/.test(read("lib/scan/providers/index.ts")));
+check("K07 the Inngest endpoint still serves only processScan (paid providers filtered)", /functions: \[processScan\]/.test(read("app/api/inngest/route.ts")));
+const senders = appFiles.filter((f) => /inngest\.send\(|\.send\(\s*\{\s*name:\s*"scan\/requested"/.test(readFileSync(f, "utf8"))).map(rel);
+check("K08 nothing in this code base sends scan/requested any more", senders.length === 0, senders.join(","));
+const sql = read("infra/supabase/migrations/001_scan_admission.sql");
+check("D01 reservation function: SECURITY DEFINER, pinned search_path, execute for authenticated only",
+  /cbc_reserve_provider_call\(p_provider text, p_admission_id bigint\)[\s\S]*SECURITY DEFINER\s+SET search_path = pg_catalog, public/.test(sql)
+  && /REVOKE ALL ON FUNCTION public\.cbc_reserve_provider_call\(text, bigint\) FROM PUBLIC;/.test(sql)
+  && /REVOKE ALL ON FUNCTION public\.cbc_reserve_provider_call\(text, bigint\) FROM anon;/.test(sql)
+  && /GRANT EXECUTE ON FUNCTION public\.cbc_reserve_provider_call\(text, bigint\) TO authenticated;/.test(sql));
+check("D02 reservation ledger: RLS on, no policies, no grants (incl. service_role), one per admission",
+  /ALTER TABLE public\.provider_call_reservations ENABLE ROW LEVEL SECURITY;/.test(sql) && !/CREATE POLICY/i.test(sql)
+  && /REVOKE ALL ON TABLE public\.provider_call_reservations FROM anon, authenticated, service_role;/.test(sql)
+  && /UNIQUE \(provider, admission_id\)/.test(sql));
+check("D03 budget 1000 per rolling 24 h, admission <= 10 minutes old, caller-owned, advisory lock",
+  /c_daily_budget\s+constant integer := 1000;/.test(sql) && /c_admission_max_age constant interval := interval '10 minutes';/.test(sql)
+  && /a\.user_id = v_user/.test(sql) && /pg_advisory_xact_lock\(hashtext\('cbc_provider_budget:google_web_risk'\)\)/.test(sql));
+
+console.log(`\n=== Gate 007A provider budget: ${passed} passed, ${failed} failed ===`);
+process.exit(failed === 0 ? 0 : 1);

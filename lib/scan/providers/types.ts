@@ -48,6 +48,7 @@ export interface ScanProvider {
   displayName: string                       // shown in "What we checked"
   path: ProviderPath                        // fast = synchronous, async = Inngest
   enabled: boolean                          // runtime feature flag
+  paid?: boolean                            // Gate 007A: paid providers run ONLY via their guarded, budget-reserved entry point in the scan request; never in the worker
 
   // Input
   supportedInputTypes: ProviderInputType[]

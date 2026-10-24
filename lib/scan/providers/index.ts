@@ -35,3 +35,9 @@ export function getFastProviders(inputType: ProviderInputType): ScanProvider[] {
 export function getAsyncProviders(inputType: ProviderInputType): ScanProvider[] {
   return getProviders("async", inputType)
 }
+
+// Gate 007A: the background worker may only run UNPAID providers. Paid providers (Google Web Risk) are called
+// exclusively through their guarded, budget-reserved entry point inside the signed-in scan request.
+export function withoutPaidProviders(providers: ScanProvider[]): ScanProvider[] {
+  return providers.filter((p) => p.paid !== true)
+}

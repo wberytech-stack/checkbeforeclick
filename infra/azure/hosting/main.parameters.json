@@ -29,7 +29,8 @@
     "stagingPlainEnv": {
       "value": [
         { "name": "INNGEST_ENV", "value": "audit/azure-current-state" },
-        { "name": "INNGEST_SERVE_ORIGIN", "value": "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io" }
+        { "name": "INNGEST_SERVE_ORIGIN", "value": "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io" },
+        { "name": "WEB_RISK_PROVIDER_ENABLED", "value": "false" }
       ]
     },
     "productionPlainEnv": {

@@ -159,6 +159,8 @@ module staging 'modules/web-app.bicep' = if (deployApps) {
     keyVaultUri: keyVault.properties.vaultUri
     secretNames: stagingSecretNames
     plainEnv: stagingPlainEnv
+    // Fixed here, not in the parameters file: staging never receives the Web Risk key.
+    injectWebRiskKey: false
     minReplicas: 0
     maxReplicas: 1
     tags: union(tags, { environment: 'staging' })
@@ -181,6 +183,7 @@ module production 'modules/web-app.bicep' = if (deployApps) {
     keyVaultUri: keyVault.properties.vaultUri
     secretNames: productionSecretNames
     plainEnv: productionPlainEnv
+    injectWebRiskKey: true
     minReplicas: productionMinReplicas
     maxReplicas: 3
     tags: union(tags, { environment: 'production' })

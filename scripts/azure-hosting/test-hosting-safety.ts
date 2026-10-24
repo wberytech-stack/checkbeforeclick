@@ -197,12 +197,17 @@ for (const k of ["stagingPlainEnv", "productionPlainEnv"]) {
     /^[A-Za-z0-9._/-]+$/.test(val(stgEnv, "INNGEST_ENV") ?? ""), val(stgEnv, "INNGEST_ENV"));
   check("P6: production does not set INNGEST_ENV (defaults to the Inngest Production environment)",
     val(prodEnv, "INNGEST_ENV") === undefined);
-  // Mirrors Vercel, where both flags are unset in Production and Preview; the providers
-  // are enabled unless a flag is exactly "false" (lib/scan/providers/*.ts).
+  // Providers are enabled unless a flag is exactly "false" (lib/scan/providers/*.ts).
+  // Staging reverses the earlier P6 "mirror Vercel" choice (founder requirement, Gate 006C
+  // sprint 2026-10-24): its public URL runs master without the Gate 007A Web Risk budget,
+  // so Web Risk stays off there until 007A is merged. Production still mirrors Vercel.
+  check("P6: staging sets WEB_RISK_PROVIDER_ENABLED exactly \"false\" (no paid Web Risk calls before Gate 007A)",
+    val(stgEnv, "WEB_RISK_PROVIDER_ENABLED") === "false", val(stgEnv, "WEB_RISK_PROVIDER_ENABLED"));
+  check("P6: production does not set WEB_RISK_PROVIDER_ENABLED (mirrors Vercel Production)",
+    val(prodEnv, "WEB_RISK_PROVIDER_ENABLED") === undefined, val(prodEnv, "WEB_RISK_PROVIDER_ENABLED"));
   for (const [k, env] of [["staging", stgEnv], ["production", prodEnv]] as const) {
-    check(`P6: ${k} does not set WEB_RISK_PROVIDER_ENABLED or DOMAIN_AGE_PROVIDER_ENABLED (providers enabled by default)`,
-      !env.some((e) => e.name === "WEB_RISK_PROVIDER_ENABLED" || e.name === "DOMAIN_AGE_PROVIDER_ENABLED"),
-      env.map((e) => e.name).join(","));
+    check(`P6: ${k} does not set DOMAIN_AGE_PROVIDER_ENABLED (provider enabled by default)`,
+      !env.some((e) => e.name === "DOMAIN_AGE_PROVIDER_ENABLED"), env.map((e) => e.name).join(","));
   }
 }
 for (const t of [
@@ -329,6 +334,34 @@ const declared = new Set([...mainSrc.matchAll(/^(?:resource|module)\s+(\w+)\s/gm
 check("bicep main: every symbol used with .id/.properties/.outputs is a declared resource or module",
   [...usedSymbols].filter((s) => s !== "s").every((s) => declared.has(s)),
   [...usedSymbols].filter((s) => !declared.has(s)).join(","));
+
+// Gate 006C (founder requirement 2026-10-24): staging never receives the Web Risk key, so it
+// cannot make a paid Web Risk request even if WEB_RISK_PROVIDER_ENABLED is missing or wrong
+// (googleWebRisk.ts returns early without the key). The switch is fixed in main.bicep, not in
+// the parameters file. Production keeps the key.
+check("Web Risk key: secretMap maps googleWebRiskApiKey to GOOGLE_WEB_RISK_API_KEY (the entry the filter removes)",
+  /^  \{ name: 'google-web-risk-api-key', vaultKey: 'googleWebRiskApiKey', envName: 'GOOGLE_WEB_RISK_API_KEY' \}$/m.test(modSrc));
+check("Web Risk key: web-app.bicep declares a required bool injectWebRiskKey (no default)",
+  /^param injectWebRiskKey bool\s*$/m.test(modSrc));
+check("Web Risk key: web-app.bicep drops googleWebRiskApiKey from secretMap unless injectWebRiskKey",
+  /^var activeSecrets = filter\(secretMap, s => injectWebRiskKey \|\| s\.vaultKey != 'googleWebRiskApiKey'\)$/m.test(modSrc));
+{
+  const code = stripBicep(modSrc);
+  check("Web Risk key: secretMap is used only in its declaration and the filter",
+    (code.match(/\bsecretMap\b/g) ?? []).length === 2);
+  check("Web Risk key: both the Container Apps secrets and the env loop over activeSecrets",
+    (code.match(/\[for s in activeSecrets:/g) ?? []).length === 2 && !/\[for s in secretMap\b/.test(code));
+}
+for (const [name, want] of [["staging", "false"], ["production", "true"]] as const) {
+  const got = moduleParamBlocks.get(name)?.match(/^ {4}injectWebRiskKey:\s*(\w+)\s*$/m)?.[1];
+  check(`Web Risk key: ${name} module passes injectWebRiskKey: ${want} literally`, got === want, String(got));
+}
+check("Web Risk key: main.bicep has no injectWebRiskKey parameter (cannot be flipped from the parameters file)",
+  !mainParams.some((p) => p.name === "injectWebRiskKey") && !("injectWebRiskKey" in params.parameters));
+for (const k of ["stagingPlainEnv", "productionPlainEnv"]) {
+  check(`Web Risk key: ${k} does not set GOOGLE_WEB_RISK_API_KEY`,
+    !((pv(k) ?? []) as Array<{ name: string }>).some((e) => e.name === "GOOGLE_WEB_RISK_API_KEY"));
+}
 
 // ---------------------------------------------------------------- no stray workflows deploy
 for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {

@@ -89,6 +89,43 @@ for (const bad of [undefined, "", "abc", "1; drop table x", "-5", "1234567890123
 check("B19 interpretReservation: granted row -> reservation id", (() => { const d = interpretReservation({ granted: true, reason: "granted", reservation_id: 8 }, null); return d.granted && d.reservationId === "8"; })());
 check("B20 admission decision now carries the admission id that funds the reservation", (() => { const d = interpretAdmission([{ admitted: true, reason: "admitted", retry_after_seconds: 0, provider_calls_reserved: 1, admission_id: 123 }], null); return d.allowed && d.admissionId === "123"; })());
 
+// ---- deadline signal (review CBC-007A-R1-01): no reservation, no late request, cancellation reaches the call ----
+{
+  const GRANTED = { data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 9 }], error: null };
+  const n = { reserve: 0, call: 0 };
+  const ac = new AbortController(); ac.abort();
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "5", signal: ac.signal,
+    reserve: async () => { n.reserve++; return GRANTED; }, call: async () => { n.call++; return "x"; } });
+  check("B21 signal already aborted -> no reservation, no request, 503 deadline_exceeded",
+    !o.called && n.reserve === 0 && n.call === 0 && o.decision.status === 503 && o.decision.reason === "deadline_exceeded");
+}
+{
+  const n = { call: 0 }; const ac = new AbortController();
+  let seen: AbortSignal | undefined; let release!: (v: { data: unknown; error: unknown }) => void;
+  const p = guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "6", signal: ac.signal,
+    reserve: (_p, _a, sig) => { seen = sig; return new Promise((r) => { release = r; }); },
+    call: async () => { n.call++; return "x"; } });
+  ac.abort();                                                     // deadline while the reservation is in flight
+  release({ data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 10 }], error: null });   // late grant
+  const o = await p;
+  check("B22 the signal is handed to reserve() (the RPC can be cancelled in flight)", seen === ac.signal);
+  check("B23 a grant that arrives after the deadline never starts the request (deadline_exceeded)", !o.called && n.call === 0 && o.decision.reason === "deadline_exceeded");
+}
+{
+  const ac = new AbortController(); let callSig: AbortSignal | undefined;
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "7", signal: ac.signal,
+    reserve: async () => ({ data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 11 }], error: null }),
+    call: async (sig) => { callSig = sig; return "ok"; } });
+  check("B24 on a timely grant the request runs once and receives the same signal (abortable)", o.called && callSig === ac.signal);
+}
+{
+  const n = { call: 0 };
+  const o = await guardedPaidCall({ provider: WEB_RISK_PROVIDER, admissionId: "8",
+    reserve: async () => ({ data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 12 }], error: null }),
+    call: async () => { n.call++; return "ok"; } });
+  check("B25 without a signal the contract is unchanged (one reservation, one request)", o.called && n.call === 1);
+}
+
 // ---- static: the only path to Google Web Risk is the guarded one ------------------------------------------
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -109,7 +146,7 @@ check("S02 the module makes exactly one fetch, inside fetchWebRisk", fetchCalls.
 check("S03 fetchWebRisk is not exported", !/export\s+(async\s+)?function\s+fetchWebRisk/.test(wr) && !/export\s*\{[^}]*fetchWebRisk/.test(wr));
 const exportsWr = [...wr.matchAll(/^export\s+(?:async\s+)?(?:function|const|type)\s+(\w+)/gm)].map((m) => m[1]).sort();
 check("S04 the module exports only callWebRiskGuarded, WebRiskReserve and googleWebRiskProvider", exportsWr.join(",") === "WebRiskReserve,callWebRiskGuarded,googleWebRiskProvider", exportsWr.join(","));
-check("S05 fetchWebRisk is called only by the guard (call: () => fetchWebRisk(args.url))", (wr.match(/fetchWebRisk\(/g) ?? []).length === 2 && wr.includes("call: () => fetchWebRisk(args.url)"));
+check("S05 fetchWebRisk is called only by the guard (call: (signal) => fetchWebRisk(args.url, signal))", (wr.match(/fetchWebRisk\(/g) ?? []).length === 2 && wr.includes("call: (signal) => fetchWebRisk(args.url, signal)"));
 const runBody = wr.slice(wr.indexOf("async run()"));
 check("S06 the provider's run() makes no request", !/fetch/.test(runBody.slice(0, runBody.indexOf("},") + 2)) && /Reservation required/.test(runBody));
 check("S07 googleWebRiskProvider is marked paid", /paid: true,/.test(wr));
@@ -126,10 +163,14 @@ const flow = read("lib/scan/scanFlow.ts");
 check("S13 neither the scan route nor the scan flow queues scans to Inngest", !/inngest/i.test(route) && !/inngest\.|\.send\(/.test(flow));
 check("S14 the scan route sets maxDuration = 30", /export const maxDuration = 30/.test(route));
 check("S15 paid providers go only through the guard: flow uses deps.callPaid, route maps it to callWebRiskGuarded for google_web_risk only",
-  /if \(provider\.paid !== true\) return provider\.run\(/.test(flow) && /await deps\.callPaid\(provider, s\.admissionId, providerInput\)/.test(flow)
+  /if \(provider\.paid !== true\) return provider\.run\(/.test(flow) && /await deps\.callPaid\(provider, s\.admissionId, providerInput, cancel\.signal\)/.test(flow)
   && /if \(provider\.name !== "google_web_risk"\) throw new Error\("No guarded entry point for this paid provider"\)\s*return callWebRiskGuarded\(\{/.test(route));
 check("S16 the reservation uses the user's session RPC cbc_reserve_provider_call (never the service role)",
-  /await \(await session\(\)\)\.rpc\("cbc_reserve_provider_call"/.test(route) && !/createPrivilegedClient|SUPABASE_SERVICE_ROLE_KEY/.test(route + flow));
+  /const query = \(await session\(\)\)\.rpc\("cbc_reserve_provider_call"/.test(route) && !/createPrivilegedClient|SUPABASE_SERVICE_ROLE_KEY/.test(route + flow));
+check("S19 cancellation is wired end to end: deadline aborts the phase before failScan; RPC and request take the signal",
+  /if \(raced === "timed_out"\) \{\s*cancel\.abort\(\)\s*await deps\.failScan\(/.test(flow)
+  && /await \(sig \? query\.abortSignal\(sig\) : query\)/.test(route) && /signal,\s*\/\/ The deadline signal/.test(route)
+  && /deadline\?\.addEventListener\("abort", onDeadline, \{ once: true \}\)/.test(wr) && /signal: args\.signal,/.test(wr));
 const iRef = flow.indexOf("if (budget.refused)");
 check("S17 a refused budget fails the scan and returns 503 before any verdict is computed",
   iRef > 0 && flow.indexOf("await deps.failScan(", iRef) > iRef && flow.indexOf("status: 503", iRef) > iRef && flow.indexOf("deps.scoring.confidence(", iRef) > flow.indexOf("status: 503", iRef));

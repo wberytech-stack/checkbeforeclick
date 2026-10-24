@@ -8,6 +8,13 @@
 //   2. Anything other than an unambiguous grant (refusal, error, unexpected shape, thrown call) => the paid call is
 //      NOT made and the caller gets a 503 decision (fail closed: never a "safe" verdict from an incomplete check).
 //   3. On a grant, call() is invoked exactly once. There is no retry anywhere in this path.
+//   4. Deadline (review CBC-007A-R1-01): when the caller's AbortSignal is aborted
+//      - before the reservation: no reservation and no call;
+//      - while the reservation is in flight: the signal is passed to reserve(), which cancels the HTTP request where
+//        supported; a grant that still arrives late is NOT used (the unit is consumed, the request is never made);
+//      - after a grant: call() is not invoked;
+//      - during the call: the signal is passed to call(), which aborts the provider request.
+//      Every aborted case is a "deadline_exceeded" 503 decision, so it can never become a verdict.
 
 export const WEB_RISK_PROVIDER = "google_web_risk"
 export const PROVIDER_BUDGET_24H = 1000   // informational mirror; the SQL function enforces it
@@ -42,23 +49,29 @@ export function interpretReservation(data: unknown, error: unknown): Reservation
   return UNAVAILABLE
 }
 
+export const DEADLINE_EXCEEDED = { granted: false as const, status: 503 as const, reason: "deadline_exceeded", retryAfterSeconds: 60 }
+
 export async function guardedPaidCall<T>(args: {
   provider: string
   admissionId: string | undefined
-  reserve: (provider: string, admissionId: string) => Promise<{ data: unknown; error: unknown }>
-  call: () => Promise<T>
+  reserve: (provider: string, admissionId: string, signal?: AbortSignal) => Promise<{ data: unknown; error: unknown }>
+  call: (signal?: AbortSignal) => Promise<T>
+  signal?: AbortSignal
 }): Promise<GuardedOutcome<T>> {
   if (typeof args.admissionId !== "string" || !/^[0-9]{1,19}$/.test(args.admissionId)) {
     return { called: false, decision: UNAVAILABLE }
   }
+  if (args.signal?.aborted) return { called: false, decision: DEADLINE_EXCEEDED }
   let reservation: ReservationDecision
   try {
-    const r = await args.reserve(args.provider, args.admissionId)
+    const r = await args.reserve(args.provider, args.admissionId, args.signal)
     reservation = interpretReservation(r.data, r.error)
   } catch {
     reservation = UNAVAILABLE
   }
+  // Checked AFTER the reservation settles: a grant that arrives after the deadline never starts a request.
+  if (args.signal?.aborted) return { called: false, decision: DEADLINE_EXCEEDED }
   if (!reservation.granted) return { called: false, decision: reservation }
-  const result = await args.call()
+  const result = await args.call(args.signal)
   return { called: true, result, reservationId: reservation.reservationId }
 }

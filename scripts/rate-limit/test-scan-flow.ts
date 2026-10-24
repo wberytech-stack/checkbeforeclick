@@ -23,6 +23,11 @@ function check(label: string, ok: boolean, info = ""): void {
   else { failed++; console.log(`FAIL: ${label}${info ? `  [${info}]` : ""}`); }
 }
 
+type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void };
+function deferred<T>(): Deferred<T> { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; }
+const flush = () => new Promise<void>((r) => setTimeout(r, 0));   // lets every pending microtask and late continuation run
+const GRANT = { data: [{ granted: true, reason: "granted", retry_after_seconds: 0, reservation_id: 501 }], error: null };
+
 // ---- fakes ------------------------------------------------------------------------------------------------
 const clean = (impact = 30): ScanProviderResult => ({
   verdict: "clean", scoreImpact: 0, confidenceImpact: impact, evidenceTitle: "clean", evidenceDetail: "clean",
@@ -77,16 +82,23 @@ function makeWorld(opts: {
   getUserThrows?: boolean;
   hangReservation?: boolean;
   deadlineFires?: boolean;
+  deadline?: Deferred<void>;                                   // fired by the test, for exact ordering
+  reservationDeferred?: Deferred<{ data: unknown; error: unknown }>;
+  requestHangsUntilAbort?: boolean;                            // like fetch: rejects when its signal aborts
+  domainAgeDeferred?: Deferred<ScanProviderResult>;
 } = {}) {
-  const n = { timers: 0, timerMs: 0, cleared: 0, getUser: 0, org: 0, admitRpc: 0, createScan: 0, mark: 0, reserve: 0, webRiskRequest: 0, domainAge: 0, persist: 0, failScan: 0, errors: 0, otherPaid: 0 };
+  const sig: { reserve: AbortSignal | undefined; call: AbortSignal | undefined } = { reserve: undefined, call: undefined };
+  const n = { requestAborted: 0, timers: 0, timerMs: 0, cleared: 0, getUser: 0, org: 0, admitRpc: 0, createScan: 0, mark: 0, reserve: 0, webRiskRequest: 0, domainAge: 0, persist: 0, failScan: 0, errors: 0, otherPaid: 0 };
   const seen: { webRiskUrls: string[]; domainAgeUrls: string[]; persisted: any[]; reservedFor: string[] } = { webRiskUrls: [], domainAgeUrls: [], persisted: [], reservedFor: [] };
   const userId = opts.user === undefined ? "user-1" : opts.user?.id;
   const burst = createSlidingWindowLimiter({ limit: opts.burstLimit ?? 5, windowMs: 60_000, reason: "user_burst_limit" });
   let scanSeq = 0;
 
-  const reserve = async (_p: string, admissionId: string) => {
+  const reserve = async (_p: string, admissionId: string, signal?: AbortSignal) => {
     n.reserve++;
+    sig.reserve = signal;
     seen.reservedFor.push(admissionId);
+    if (opts.reservationDeferred) return opts.reservationDeferred.promise;
     if (opts.reservation === "throw") throw new Error("rpc down");
     if (opts.hangReservation) return new Promise<never>(() => {});
     if (opts.reservation) return opts.reservation;
@@ -108,13 +120,14 @@ function makeWorld(opts: {
   const otherPaid = provider("other_paid", true, async () => { n.otherPaid++; return clean(); });
   const domainAge = provider("domain_age", false, async (input) => {
     n.domainAge++; seen.domainAgeUrls.push(input);
+    if (opts.domainAgeDeferred) return opts.domainAgeDeferred.promise;
     if (opts.domainAge === "throw") throw new Error("whois down");
     return opts.domainAge ?? clean(10);
   });
 
   // Mirrors app/api/scan/route.ts: only google_web_risk has a guarded entry point (callWebRiskGuarded), which skips
   // when no key is configured and otherwise reserves once and requests once (guardedPaidCall).
-  const callPaid = async (p: ScanProvider, admissionId: string | undefined, url: string): Promise<PaidOutcome> => {
+  const callPaid = async (p: ScanProvider, admissionId: string | undefined, url: string, signal: AbortSignal): Promise<PaidOutcome> => {
     if (p.name !== "google_web_risk") throw new Error("No guarded entry point for this paid provider");
     if (opts.webRiskConfigured === false) {
       return { called: false, notConfigured: true, result: { ...timedOut, verdict: "skipped", skipped: true, error: undefined, confidenceImpact: -25 } };
@@ -123,8 +136,16 @@ function makeWorld(opts: {
       provider: WEB_RISK_PROVIDER,
       admissionId,
       reserve,
-      call: async () => {
+      signal,
+      call: async (callSignal) => {
         n.webRiskRequest++; seen.webRiskUrls.push(url);
+        sig.call = callSignal;
+        if (opts.requestHangsUntilAbort) {
+          return new Promise<ScanProviderResult>((_, reject) => {
+            const fail = () => { n.requestAborted++; reject(new Error("aborted")); };
+            if (callSignal?.aborted) fail(); else callSignal?.addEventListener("abort", fail, { once: true });
+          });
+        }
         if (opts.webRisk === "throw") throw new Error("socket hang up");
         return opts.webRisk ?? clean();
       },
@@ -173,11 +194,11 @@ function makeWorld(opts: {
     now: () => 1_000,
     timer: (ms) => {
       n.timers++; n.timerMs = ms;
-      return { done: opts.deadlineFires ? Promise.resolve() : new Promise<void>(() => {}), clear: () => { n.cleared++; } };
+      return { done: opts.deadline ? opts.deadline.promise : opts.deadlineFires ? Promise.resolve() : new Promise<void>(() => {}), clear: () => { n.cleared++; } };
     },
     logError: () => { n.errors++; },
   };
-  return { deps, n, seen, burst };
+  return { deps, n, seen, burst, sig };
 }
 
 const run = (w: World) => handleScanRequest(w.deps);
@@ -391,6 +412,64 @@ async function main() {
   {
     const w = makeWorld({ body: { input: "no link here", input_type: "email" } }); await run(w);
     check("D03 no deadline timer is started when there is nothing to check (no-target path)", w.n.timers === 0);
+  }
+
+  // ---- deadline cancellation (review CBC-007A-R1-01 / R1-02): exact ordering with a manually fired deadline ----------
+  {
+    // Reservation still in flight when the deadline fires; the database grants it LATE.
+    const deadline = deferred<void>(); const grant = deferred<{ data: unknown; error: unknown }>(); const late = deferred<ScanProviderResult>();
+    const w = makeWorld({ deadline, reservationDeferred: grant, domainAgeDeferred: late });
+    const pending = run(w);
+    await flush();
+    check("C10 before the deadline: one reservation in flight, no request yet", w.n.reserve === 1 && w.n.webRiskRequest === 0 && w.sig.reserve?.aborted === false);
+    deadline.resolve();
+    const r = await pending;
+    check("C11 deadline -> 504 scan_timeout with scan_id, scan marked failed once", r.status === 504 && r.body.reason === "scan_timeout" && typeof r.body.scan_id === "string" && w.n.failScan === 1);
+    check("C12 the reservation RPC received the deadline signal and it is aborted (cancellable in flight)", w.sig.reserve?.aborted === true);
+    grant.resolve(GRANT);                 // the late grant arrives
+    late.resolve(clean(10));              // a late unpaid result arrives
+    await flush(); await flush();
+    check("C13 a reservation granted AFTER the deadline never starts a paid request", w.n.webRiskRequest === 0, String(w.n.webRiskRequest));
+    check("C14 terminal status preserved: after late results, nothing is persisted and failScan is not repeated", w.n.persist === 0 && w.n.failScan === 1);
+    check("C15 no verdict anywhere: the 504 carries none and no result was stored (no false safe)", r.body.verdict === undefined && w.seen.persisted.length === 0);
+    check("C16 exactly-once: one reservation attempt, zero requests", w.n.reserve === 1 && w.n.webRiskRequest === 0);
+  }
+  {
+    // Reservation granted in time, request in flight when the deadline fires: the request is aborted, not retried.
+    const deadline = deferred<void>();
+    const w = makeWorld({ deadline, requestHangsUntilAbort: true });
+    const pending = run(w);
+    await flush();
+    check("C17 before the deadline: one reservation granted and exactly one request started", w.n.reserve === 1 && w.n.webRiskRequest === 1 && w.sig.call?.aborted === false);
+    deadline.resolve();
+    const r = await pending;
+    await flush(); await flush();
+    check("C18 deadline aborts the in-flight paid request through its signal (cancelled, not abandoned)", w.sig.call?.aborted === true && w.n.requestAborted === 1);
+    check("C19 ...504, failed once, nothing persisted, still exactly one request, no verdict",
+      r.status === 504 && w.n.failScan === 1 && w.n.persist === 0 && w.n.webRiskRequest === 1 && r.body.verdict === undefined);
+  }
+  {
+    // Deadline fires while only an unpaid provider is slow, and the paid reservation is still pending: the paid
+    // path must observe the abort even though the unpaid provider resolves first afterwards.
+    const deadline = deferred<void>(); const grant = deferred<{ data: unknown; error: unknown }>(); const slow = deferred<ScanProviderResult>();
+    const w = makeWorld({ deadline, reservationDeferred: grant, domainAgeDeferred: slow });
+    const pending = run(w);
+    await flush();
+    deadline.resolve();
+    const r = await pending;
+    slow.resolve(clean(10)); await flush();
+    grant.resolve({ data: [{ granted: false, reason: "provider_budget_exhausted", retry_after_seconds: 9, reservation_id: null }], error: null });
+    await flush(); await flush();
+    check("C20 a late refusal after the deadline changes nothing (still 504 scan_timeout, failed once, nothing persisted)",
+      r.status === 504 && r.body.reason === "scan_timeout" && w.n.failScan === 1 && w.n.persist === 0 && w.n.webRiskRequest === 0);
+  }
+  {
+    // Control: when everything settles before the deadline, the deadline signal is never aborted and the scan completes.
+    const deadline = deferred<void>();
+    const w = makeWorld({ deadline });
+    const r = await run(w);
+    deadline.resolve(); await flush();
+    check("C21 control: no deadline -> 201 safe, signals never aborted, timer cleared", r.status === 201 && r.body.verdict === "safe" && w.sig.reserve?.aborted === false && w.sig.call?.aborted === false && w.n.cleared === 1);
   }
 
   // ---- UI contract: app/(dashboard)/scan/new reads only scan_id, then /scan/[id] polls the stored status --------------

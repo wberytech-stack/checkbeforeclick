@@ -14,6 +14,11 @@
 // Deadline: if the provider phase (reservation RPC and provider requests) has not settled within
 // PROVIDER_PHASE_DEADLINE_MS, the scan is marked failed and 504 is returned, well inside the route's
 // maxDuration of 30 s, so a hung dependency cannot leave the scan in "processing".
+// Cancellation (review CBC-007A-R1-01): the deadline aborts the phase's AbortSignal BEFORE the scan is marked
+// failed. The signal reaches the paid path (reservation RPC and provider request are cancelled where supported,
+// and a reservation granted after the deadline never starts a request) and stops unpaid providers that have not
+// started. Late results are discarded: after a 504 nothing is persisted, so the terminal "failed" status stays.
+// Unpaid providers already running finish on their own 7 s timeouts; their results are ignored.
 import type { ScanProvider, ScanProviderResult } from "@/lib/scan/providers/types"
 import type { LimitDecision } from "@/lib/security/rateLimit"
 import type { GuardedOutcome } from "@/lib/security/providerBudget"
@@ -46,7 +51,7 @@ export type ScanFlowDeps = {
   normalizeTarget: (rawInput: string, inputType: string) => { ok: boolean; normalizedUrl?: string; reason?: string }
   getProviders: () => ScanProvider[]
   // The ONLY way a paid provider runs: one reservation funded by the admission, then at most one request.
-  callPaid: (provider: ScanProvider, admissionId: string | undefined, url: string) => Promise<PaidOutcome>
+  callPaid: (provider: ScanProvider, admissionId: string | undefined, url: string, signal: AbortSignal) => Promise<PaidOutcome>
   scoring: {
     confidence: (results: ProviderEntry[], totalProviders: number) => number
     risk: (results: ProviderEntry[], confidenceScore: number) => { riskScore: number; verdict: string }
@@ -184,10 +189,12 @@ async function runFastPath(
     // then at most one request. A refused or unconfirmed reservation makes no request and fails the whole scan
     // with 503 - an incomplete check must never produce a verdict.
     const budget: { refused: { status: 503; reason: string; retryAfterSeconds: number } | null } = { refused: null }
+    const cancel = new AbortController()
     const phase = Promise.allSettled(
       providers.map(async (provider) => {
+        if (cancel.signal.aborted) throw new Error("Provider phase deadline exceeded")
         if (provider.paid !== true) return provider.run(providerInput, providerInputType)
-        const outcome = await deps.callPaid(provider, s.admissionId, providerInput)
+        const outcome = await deps.callPaid(provider, s.admissionId, providerInput, cancel.signal)
         if ("result" in outcome) return outcome.result
         budget.refused = outcome.decision
         throw new Error("Provider budget not granted")
@@ -198,6 +205,7 @@ async function runFastPath(
     deadline.clear()
 
     if (raced === "timed_out") {
+      cancel.abort()
       await deps.failScan(s.organizationId, s.scanId, deps.now() - startTime)
       return {
         status: 504,

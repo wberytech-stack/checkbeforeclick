@@ -23,7 +23,8 @@ function notConfiguredResult(): ScanProviderResult {
 }
 
 // Exactly one request; an AbortController cancels it at TIMEOUT_MS, so nothing keeps running in the background.
-async function fetchWebRisk(url: string): Promise<ScanProviderResult> {
+// The caller's deadline signal (scan flow) also aborts it, so no request outlives the scan request.
+async function fetchWebRisk(url: string, deadline?: AbortSignal): Promise<ScanProviderResult> {
   const apiKey = process.env.GOOGLE_WEB_RISK_API_KEY
   const startTime = Date.now()
 
@@ -43,6 +44,9 @@ async function fetchWebRisk(url: string): Promise<ScanProviderResult> {
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  const onDeadline = () => controller.abort()
+  deadline?.addEventListener("abort", onDeadline, { once: true })
+  if (deadline?.aborted) controller.abort()
   try {
     // The API key travels in the X-Goog-Api-Key header, never in the URL, so it cannot leak through URL logging
     // or error messages (AGENTS.md section 11).
@@ -117,25 +121,30 @@ async function fetchWebRisk(url: string): Promise<ScanProviderResult> {
     }
   } finally {
     clearTimeout(timer)
+    deadline?.removeEventListener("abort", onDeadline)
   }
 }
 
-export type WebRiskReserve = (provider: string, admissionId: string) => Promise<{ data: unknown; error: unknown }>
+export type WebRiskReserve = (provider: string, admissionId: string, signal?: AbortSignal) => Promise<{ data: unknown; error: unknown }>
 
 // The single guarded entry point for every Google Web Risk request.
 // - Not configured (no API key): no reservation, no request, a "skipped" result (scan cannot become "safe").
 // - Otherwise: one reservation (fail closed on anything but a grant), then exactly one request.
+// - signal (the scan's deadline): no reservation, no request and no late request once it is aborted
+//   (guardedPaidCall contract item 4); an in-flight request is aborted.
 export async function callWebRiskGuarded(args: {
   admissionId: string | undefined
   url: string
   reserve: WebRiskReserve
+  signal?: AbortSignal
 }): Promise<GuardedOutcome<ScanProviderResult> | { called: false; notConfigured: true; result: ScanProviderResult }> {
   if (!process.env.GOOGLE_WEB_RISK_API_KEY) return { called: false, notConfigured: true, result: notConfiguredResult() }
   return guardedPaidCall({
     provider: WEB_RISK_PROVIDER,
     admissionId: args.admissionId,
     reserve: args.reserve,
-    call: () => fetchWebRisk(args.url),
+    signal: args.signal,
+    call: (signal) => fetchWebRisk(args.url, signal),
   })
 }
 

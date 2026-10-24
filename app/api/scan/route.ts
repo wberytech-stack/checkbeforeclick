@@ -60,16 +60,20 @@ export async function POST(request: NextRequest) {
     markProcessing: markScanProcessing,
     normalizeTarget: normalizeScanTarget,
     getProviders: () => getFastProviders("url"),
-    callPaid: async (provider, admissionId, url) => {
+    callPaid: async (provider, admissionId, url, signal) => {
       if (provider.name !== "google_web_risk") throw new Error("No guarded entry point for this paid provider")
       return callWebRiskGuarded({
         admissionId,
         url,
-        reserve: async (p, id) => {
-          const { data, error } = await (await session()).rpc("cbc_reserve_provider_call", {
+        signal,
+        // The deadline signal cancels the reservation RPC over HTTP. A reservation the database commits anyway is
+        // never used: guardedPaidCall re-checks the signal before any request.
+        reserve: async (p, id, sig) => {
+          const query = (await session()).rpc("cbc_reserve_provider_call", {
             p_provider: p,
             p_admission_id: Number(id),
           })
+          const { data, error } = await (sig ? query.abortSignal(sig) : query)
           return { data, error }
         },
       })

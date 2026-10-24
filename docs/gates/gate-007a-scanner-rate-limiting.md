@@ -13,6 +13,10 @@
     2026-10-24T07:16Z): **changes required**. The founder's execution handoff
     (PR #45 comment, 2026-10-24T07:30Z) followed it. The response is in
     "Review round 1 response", next section. **Release remains blocked.**
+  - **Review round 2:** ChatGPT review of `984c2b8` (founder-relayed,
+    2026-10-24): **recommend_changes**, with two in-scope required changes
+    (CBC-007A-R1-01, CBC-007A-R1-02). The response is in "Review round 2
+    response".
 - **Not merged and not deployed.** Merging into `master` is a Vercel production
   deployment.
 - **Migrations:**
@@ -243,6 +247,69 @@ None of these can be completed by an agent. Each needs the founder or operator.
 2. Then, only if required, `001…down.sql`, which deletes both ledgers.
 
 Never run it while this code is live.
+
+## Review round 2 response (2026-10-24)
+
+**CBC-007A-R1-01: cancel the provider phase at the deadline.**
+
+The finding was correct: `Promise.race` returned the 504 but left the reservation
+RPC and any provider request running. A grant arriving after the deadline could
+still have started a paid request.
+
+What the code does now:
+- **`lib/scan/scanFlow.ts`:**
+  - each scan creates an `AbortController` for its provider phase;
+  - when the deadline fires, it aborts the controller **before** marking the scan
+    failed and returning 504;
+  - providers that have not started yet do not start;
+  - after a 504 nothing is persisted, so late results cannot change the terminal
+    `failed` status.
+- **`lib/security/providerBudget.ts`, `guardedPaidCall` contract item 4:**
+  - signal already aborted: no reservation and no request;
+  - signal aborted while the reservation is in flight: the signal reaches the
+    RPC, and a grant that arrives later is **not used** (`deadline_exceeded`; the
+    unit may be consumed, but the request is never made);
+  - signal aborted after a grant: no request;
+  - during the request: the signal reaches `call()`.
+  - Exactly-once is unchanged: at most one reservation attempt and at most one
+    request per admission, with no retry.
+- **`app/api/scan/route.ts`:** the reservation RPC is cancellable over HTTP
+  (`.abortSignal(signal)`, supported by `@supabase/postgrest-js` 2.106.1).
+  - A reservation the database commits anyway is harmless, because the guard
+    re-checks the signal before any request.
+- **`lib/scan/providers/googleWebRisk.ts`:** the deadline signal is linked to the
+  request's own `AbortController`, alongside its 7 s timeout. An in-flight Web
+  Risk request is aborted, not abandoned.
+- **Not cancellable:** unpaid providers that are already running (domain age).
+  `ScanProvider.run()` takes no signal. They are bounded by their own 7 s
+  timeouts, and their results are discarded.
+
+**CBC-007A-R1-02: tests.**
+- **`test-scan-flow.ts` C10–C21.** These use a deadline fired by the test and
+  deferred promises, so the ordering is exact. They cover:
+  - a reservation in flight at the deadline that is then granted late: no paid
+    request (C13);
+  - the RPC's signal is aborted (C12);
+  - terminal status preserved after late results: nothing persisted, failed once
+    (C14);
+  - no verdict and nothing stored, so no false "safe" (C15);
+  - exactly once (C16);
+  - an in-flight request aborted through its signal, with no second request
+    (C17–C19);
+  - a late refusal changes nothing (C20);
+  - a control case where nothing is aborted when the scan finishes in time
+    (C21).
+- **`test-provider-budget.ts`:**
+  - B21–B25 test the guard: aborted before, during and after the reservation; the
+    signal is forwarded; behaviour is unchanged without a signal;
+  - S19 checks the static wiring: abort before `failScan`, RPC
+    `.abortSignal`, the Web Risk link.
+- **Mutation check:** 9/9 mutants of the cancellation code were killed (each abort
+  check, signal forwarding, abort order, Web Risk link, RPC abort).
+
+**Not addressed by code:** the reviewer's third finding (live release
+prerequisites unverified) is correct and unchanged. Release dossier R1–R11 stays
+open.
 
 ## Goal
 
@@ -691,13 +758,13 @@ PR #45 and `.agents/claude-handoff.yaml`, since a commit cannot cite its own run
 | Check | Result |
 | --- | --- |
 | `test-rate-limit.ts` | 76 passed, 0 failed (75 before round 1) |
-| `test-provider-budget.ts` | 54 passed, 0 failed |
-| `test-scan-flow.ts` | 73 passed, 0 failed (68 before round 1) |
+| `test-provider-budget.ts` | 60 passed, 0 failed (54 before round 2) |
+| `test-scan-flow.ts` | 85 passed, 0 failed (73 before round 2, 68 before round 1) |
 | `test-login-flow.ts` | 30 passed, 0 failed |
 | `test-worker-flow.ts` | 34 passed, 0 failed (new in round 1) |
 | `test-tenant-guard.ts` | 21 passed, 0 failed |
 | `test-hosting-safety.ts` | 129 passed, 0 failed (125 before round 1, 110 before CI) |
-| Mutation checks | Revision 2: 13/13; CI: 10/10; round 1 (worker, deadline, IP, workflow): 13/13 |
+| Mutation checks | Revision 2: 13/13; CI: 10/10; round 1 (worker, deadline, IP, workflow): 13/13; round 2 (cancellation): 9/9 |
 | `tsc --noEmit` | exit 0 |
 | `next build` | exit 0 locally, and exit 0 in a clean worktree with no `.env*` file and no Supabase variables |
 | `eslint` on the changed application files | exit 0 |

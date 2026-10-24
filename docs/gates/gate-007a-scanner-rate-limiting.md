@@ -21,6 +21,11 @@
     2026-10-24): **recommend_changes**, with one in-scope required change
     (CBC-007A-R2-01). The paid-provider cancellation contract was assessed as
     "materially improved". The response is in "Review round 3 response".
+  - **Review round 4:** ChatGPT review of `8042530` (founder-relayed,
+    2026-10-24): **recommend_approve, no required changes**. This is a
+    code-review recommendation only and approves nothing (AGENTS.md section 3).
+  - **FCR-007A-1 decided by the founder, 2026-10-24: option A,** synchronous
+    processing for all input types (see "Review round 1 response", item 1).
 - **Not merged and not deployed.** Merging into `master` is a Vercel production
   deployment.
 - **Migrations:**
@@ -96,8 +101,9 @@ introduced by this PR.
   page stops polling after 30 s. There is no sweeper; that is a candidate for a
   later gate.
 
-**Founder-level change request FCR-007A-1 (decision needed, nothing implemented
-for it).** The founder-approved budget design (2026-10-22) makes every paid call
+**Founder-level change request FCR-007A-1: DECIDED, option A** (founder
+instruction, 2026-10-24: "keep synchronous processing for all input types
+(option A)"). The founder-approved budget design (2026-10-22) makes every paid call
 inside the signed-in request. A reservation needs the user's own session and an
 admission no more than 10 minutes old, and the worker has neither. The options:
 
@@ -107,8 +113,20 @@ admission no more than 10 minutes old, and the worker has neither. The options:
 | B. Restore async for email/header/signature/batch, unpaid providers only | Old response shape (`{scan_id}`, pending) | **Detection regression:** Web Risk would never run for those types, so they could never be `safe` |
 | C. Restore async with worker-side reservations | Old shape and Web Risk | The worker has no user session: it needs a service-role or definer path for reservations (deepens AGENTS.md section 12) and a new design. That is a new gate |
 
-Recommendation: **A**. If the founder wants B or C, that is a scoped
-architecture decision recorded in a gate, not an in-gate review fix.
+Recommendation was **A**.
+
+**Decision (founder, 2026-10-24): option A.** Every input type (url, domain,
+email, header, signature, batch) is processed synchronously in the signed-in
+`POST /api/scan` request.
+- This is the behaviour already implemented on this PR, so no code change
+  follows.
+- The Inngest `process-scan` job stays registered only for events queued before
+  the deploy and for manual re-runs (unpaid providers only; finished scans
+  skipped).
+- Options B and C are not pursued. Revisiting them would be a new,
+  founder-approved gate.
+- **Consequence that remains a release item:** the request latency of email and
+  header scans must be measured on staging (ST6, dossier R5).
 
 ### 2. Client IP and login throttling
 
@@ -242,7 +260,7 @@ None of these can be completed by an agent. Each needs the founder or operator.
 | R6 | One explicitly budgeted Web Risk request to prove the `X-Goog-Api-Key` header (ST4) | Founder approval, then run | **Not run, blocker** | A real Google result (not `API error 401/403`) and ledger counts |
 | R7 | Migration 001 on production **before** merge: SHA check, backup or point-in-time-restore confirmation, apply, `NOTIFY pgrst, 'reload schema'`, verification queries | Founder/operator | **Not done, blocker** | Backup reference; apply log; function and grant queries |
 | R8 | Decision on migration 002 (apply to staging, then production, or not) after R2 | Founder | **Open** | Recorded decision; staging validation if applied |
-| R9 | FCR-007A-1 (sync vs async for email/header) | Founder | **Open** | Recorded decision |
+| R9 | FCR-007A-1 (sync vs async for email/header) | Founder | **Decided 2026-10-24: option A (synchronous for all input types)** | Recorded in section 1 of "Review round 1 response" |
 | R10 | Topology for Azure: Front Door changes client-IP derivation | Founder | **Open (Azure only)** | Recorded decision before any Azure release with Front Door |
 | R11 | Fresh independent review of the final diff | Founder relays | **Requested** | `.agents/chatgpt-review.yaml` |
 
@@ -359,7 +377,7 @@ survive. A promise that never settles made Node exit with **code 0** before
 - The provider-budget suite uses top-level await, which Node already fails (exit
   13) when unsettled.
 
-**Also unchanged:** dossier R1–R11 and FCR-007A-1 remain open.
+**Also unchanged:** dossier R1–R11 remain open. FCR-007A-1 was decided later (option A, 2026-10-24).
 
 ## Goal
 

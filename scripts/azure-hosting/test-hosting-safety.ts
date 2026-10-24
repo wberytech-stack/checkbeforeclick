@@ -330,6 +330,38 @@ check("bicep main: every symbol used with .id/.properties/.outputs is a declared
   [...usedSymbols].filter((s) => s !== "s").every((s) => declared.has(s)),
   [...usedSymbols].filter((s) => !declared.has(s)).join(","));
 
+// ---------------------------------------------------------------- Gate 007A pull-request validation workflow
+{
+  const prText = read(".github/workflows/pr-validate.yml");
+  const prCode = prText.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");   // text checks ignore comments
+  type PrStep = { uses?: string; run?: string; with?: Record<string, unknown> };
+  type PrJob = { permissions?: Record<string, string>; environment?: unknown; steps?: PrStep[] };
+  const pr = YAML.parse(prText) as { on?: Record<string, { branches?: string[] }>; permissions?: Record<string, string>; jobs?: Record<string, PrJob> };
+  const prTriggers = Object.keys(pr.on ?? {});
+  check("pr-validate: only trigger is pull_request into master",
+    prTriggers.length === 1 && prTriggers[0] === "pull_request" && JSON.stringify(pr.on?.pull_request?.branches) === '["master"]', prTriggers.join(","));
+  check("pr-validate: never pull_request_target / workflow_run / push / dispatch", !/pull_request_target|workflow_run|workflow_dispatch|^\s*push:/m.test(prCode));
+  check("pr-validate: top-level permissions are contents: read only", JSON.stringify(pr.permissions) === '{"contents":"read"}');
+  const prJobs = Object.entries(pr.jobs ?? {});
+  check("pr-validate: every job is contents: read only, with no environment",
+    prJobs.length > 0 && prJobs.every(([, j]) => JSON.stringify(j.permissions) === '{"contents":"read"}' && j.environment === undefined));
+  check("pr-validate: no secrets, vars or token references", !/secrets\.|vars\.|github\.token|GH_TOKEN|GITHUB_TOKEN/.test(prCode));
+  const steps = prJobs.flatMap(([, j]) => j.steps ?? []);
+  const runs = steps.map((s) => s.run ?? "").filter(Boolean);
+  check("pr-validate: only checkout and setup-node actions", steps.filter((s) => s.uses).every((s) => /^actions\/(checkout|setup-node)@v4$/.test(s.uses as string)));
+  check("pr-validate: checkout does not persist credentials", steps.filter((s) => s.uses?.startsWith("actions/checkout")).every((s) => s.with?.["persist-credentials"] === false));
+  check("pr-validate: pins Node 24.14.0", steps.filter((s) => s.uses?.startsWith("actions/setup-node")).every((s) => s.with?.["node-version"] === "24.14.0"));
+  check("pr-validate: installs with npm ci --ignore-scripts, no npx", runs.some((r) => /^npm ci --ignore-scripts\b/.test(r)) && !/\bnpx\b|npm (install|i|update|audit)\b/.test(prCode));
+  check("pr-validate: runs tsc --noEmit", runs.some((r) => r === "./node_modules/.bin/tsc --noEmit -p tsconfig.json"));
+  const suites = ["scripts/rate-limit/test-rate-limit.ts", "scripts/rate-limit/test-provider-budget.ts", "scripts/rate-limit/test-scan-flow.ts",
+    "scripts/rate-limit/test-login-flow.ts", "scripts/rate-limit/test-tenant-guard.ts", "scripts/azure-hosting/test-hosting-safety.ts"];
+  check("pr-validate: runs all six offline Gate 007A suites", suites.every((s) => runs.some((r) => r.endsWith(" " + s))), suites.filter((s) => !runs.some((r) => r.endsWith(" " + s))).join(","));
+  check("pr-validate: scan-flow suite runs with --conditions=react-server", runs.some((r) => r === "node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-scan-flow.ts"));
+  check("pr-validate: no deploy, cloud, database or network commands",
+    !/\b(vercel|az|azd|supabase|psql|pg_dump|docker|curl|wget|gh|terraform|bicep)\b|validate-[a-z-]+-db\.ts|smoke\.ts/.test(runs.join("\n")));
+  noSecrets("pr-validate", prText);
+}
+
 // ---------------------------------------------------------------- no stray workflows deploy
 for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
   if (f === "azure-deploy.yml") continue;

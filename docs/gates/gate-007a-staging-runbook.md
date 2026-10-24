@@ -51,7 +51,7 @@ Stop immediately, record the evidence, and do not continue, if any of these happ
 - the cap check finds more reservations than approved, any reservation funded by a no-link admission, or any
   reservation without its admission;
 - any scan with no link, or with a private or loopback target, getting `verdict = 'safe'`;
-- the Preview talking to a Supabase project other than staging (P3);
+- P3a or P3b failing: the Preview is not proven to be bound to the staging Supabase project;
 - an unexpected Google Cloud cost or quota alert.
 
 ## 3. Preparation
@@ -66,14 +66,57 @@ select id, email, last_sign_in_at from auth.users where email = '<U1 email>';   
 ```
 Record only `U1_ID`.
 
-**P3. Sign in on the Preview with U1 (this is ST1a).**
-- Expect the dashboard to open.
-- In DevTools → Network, the login request must go to `/api/auth/login` and return **200**.
-- Then confirm that this Preview uses staging:
-```sql
-select last_sign_in_at > now() - interval '5 minutes' as signed_in_just_now from auth.users where id = '<U1_ID>';
-```
-`true` proves it. `false` is a stop condition.
+**P3. Sign in on the Preview with U1 (this is ST1a), then prove the Preview is bound to staging.**
+
+P3 passes only if **both** project-specific checks, P3a and P3b, pass. Neither reads or copies a credential: P3a
+records a cookie **name** only, and P3b uses a random marker you type.
+
+- **ST1a: sign in.**
+  - Sign in on the Preview login page as U1. Expect the dashboard to open.
+  - In DevTools → Network, the login request must go to `/api/auth/login` and return **200**.
+- **P3a: the server's configured project ref.**
+  - Where to look: DevTools → Application → Cookies → the Preview origin.
+  - Expected: a cookie **named** `sb-zgxmvpbvvakpsnzcymsf-auth-token`. A large session may be split into
+    `sb-zgxmvpbvvakpsnzcymsf-auth-token.0`, `.1`, … instead.
+  - **Record only the name; never copy its value.**
+  - Why this is project-specific: the route sets this cookie through `@supabase/ssr` 0.10.3. That library names
+    the cookie `sb-<first label of the Supabase hostname>-auth-token`, derived from the server's
+    `NEXT_PUBLIC_SUPABASE_URL` (supabase-js 2.106.1). The app sets no `cookieOptions.name` override.
+  - Any other ref, or no `sb-…-auth-token` cookie at all, is a **stop condition**.
+- **P3b: a unique write lands in staging (no paid request; the input has no link).**
+  - **Mint a marker in the console.** It prints the marker locally:
+    ```js
+    const P3_MARKER = "p3-" + crypto.randomUUID(); console.log(P3_MARKER);
+    ```
+  - **Send one scan carrying it:**
+    ```js
+    await (async () => {
+      const r = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: `P3 staging binding check ${P3_MARKER} (no link in this text)`, input_type: "email" }) });
+      console.log(r.status, await r.json());   // expect 201 with a scan_id and verdict "unknown"
+    })();
+    ```
+  - **Then, in the staging SQL editor**, paste the printed marker:
+    ```sql
+    select id, user_id, status, verdict, created_at from public.scans
+     where raw_input like '%<P3_MARKER>%';
+    ```
+  - **Pass:** exactly 1 row, whose `id` equals the `scan_id` the console printed and whose `user_id` equals
+    `U1_ID`.
+  - **No row is a stop condition:** the Preview did not write to staging.
+  - This check uses one admission and makes no Web Risk request. It happens before the P4 baseline, so it does
+    not affect later counts.
+- **P3c: corroboration only.** On its own this is not proof.
+  ```sql
+  select last_sign_in_at > now() - interval '15 minutes' as signed_in_recently from auth.users where id = '<U1_ID>';
+  ```
+  Expected `true`.
+- **P3d: optional third view.** In the Vercel dashboard (Project → Settings → Environment Variables), the
+  **Preview** value of `NEXT_PUBLIC_SUPABASE_URL` should have the host `zgxmvpbvvakpsnzcymsf.supabase.co`.
+  - This is a public value. Do not open, copy or screenshot any other variable.
+  - Branch-specific overrides, if any, take precedence. The cookie name (P3a) is what the running deployment
+    actually used.
+- **Wait 60 s after P3b before ST2,** so the P3b scan cannot count toward ST2's burst window.
 
 **P4. Baseline** (staging SQL editor, as `postgres`; record the values):
 ```sql
@@ -266,8 +309,16 @@ If a reservation **does** appear, it counts against the cap of 7 and is a findin
 
 Pass conditions:
 - attempts 1–5 show "Invalid email or password.";
-- attempt 6 shows "Too many sign-in attempts. Please wait about 15 minutes and try again.";
-- in Network, the 6th response is **429** with `Retry-After` and `Cache-Control: no-store`.
+- the 6th attempt's **response** (DevTools → Network → `/api/auth/login` → Response) is **429**:
+  - body `{"error":"Too many sign-in attempts. Please wait and try again.","retry_after_seconds":<n>}`
+    (`lib/security/loginFlow.ts`);
+  - headers `Retry-After: <n>` and `Cache-Control: no-store, private`;
+- the 6th attempt's **text on the login page** is built by the page from `Retry-After`, not taken from that body:
+  "Too many sign-in attempts. Please wait about N minutes and try again." Here N = ⌈`Retry-After` ÷ 60⌉,
+  normally 14 or 15 (`app/(auth)/login/[[...rest]]/page.tsx`).
+
+Both texts are expected. A pass needs the 429 body text above, and the page message with an N that matches
+`Retry-After`.
 
 **What a pass proves:** the UI signs in through the throttled route, and the per-email limit works on the
 instance or instances that served these attempts.
@@ -309,7 +360,8 @@ PowerShell, and **only** against the Preview host. Do not use a protection-bypas
 Vercel authentication, Method B is "not run".
 ```powershell
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-$preview = 'https://checkbeforeclick-kkakwno9a-checkbeforeclick.vercel.app'   # the Preview under test, nothing else
+$preview = '<Preview URL recorded in the evidence sheet>'   # exactly the Preview under test, nothing else
+if ($preview -notmatch '^https://checkbeforeclick-[a-z0-9]+-checkbeforeclick\.vercel\.app$') { throw 'not a checkbeforeclick Preview URL' }
 foreach ($i in 1..11) {
   $body = @{ email = "st8b-$i-$(Get-Date -Format yyyyMMddHHmmss)@example.invalid"; password = 'wrong-password' } | ConvertTo-Json
   try {
@@ -364,7 +416,9 @@ Preview URL / commit: ____ / ____
 Paid Web Risk approval: max 7 (ST2 x4, ST6 x3) approved: yes / no        R1 quota/budget confirmed today: yes / no
 Additional paid approvals (each: date, count, reason, quota re-checked): none / ____
 Topology: plan=__ region=__ fluid=__ deployment protection=__ other proxy=__ (unknown allowed)
-P3 Preview uses staging (signed_in_just_now): true / false
+P3a cookie name(s) seen (name only, no value): ____ (exp sb-zgxmvpbvvakpsnzcymsf-auth-token[.n])
+P3b marker row found in staging: yes/no; row id = console scan_id: yes/no; user_id = U1_ID: yes/no
+P3c signed_in_recently: true / false        P3d Vercel Preview NEXT_PUBLIC_SUPABASE_URL host: ____ / not checked
 P4 baseline: admissions_u1=__ reservations_u1=__ scans_u1=__ baseline_at=____
 ST2/P5: admissions in order=__ (exp url,domain,email,header,email); reserved=__ (exp yes,yes,yes,yes,no)
         reservations_since=__ (exp 4); without_admission=__ (exp 0); two_reservations=__ (exp 0)
@@ -375,7 +429,8 @@ ST6: ms=__/__/__ (target <10000 each); scan_duration_ms=__/__/__; any 504: yes/n
 ST7: process-scan runs since T0=__ (exp 0); scan/requested events=__ (exp 0)
 ST5: not run (optional) / result: __ (reservation appeared: yes/no)
 ST1a: login via /api/auth/login 200: yes/no; dashboard opened: yes/no
-ST1b: first 429 at attempt __ (exp 6); message shown: __; Retry-After=__; Cache-Control no-store: yes/no
+ST1b: first 429 at attempt __ (exp 6); 429 body error = "Too many sign-in attempts. Please wait and try again.": yes/no
+      page text = "... Please wait about N minutes ..." with N=__ and Retry-After=__ (N = ceil(Retry-After/60)): yes/no; Cache-Control no-store: yes/no
 ST8: method A / B / not run; header confirmed sent (A): yes/no; first 429 at attempt __ (exp 11); statuses=__
 Stop conditions hit: none / ____
 Unexpected observations: ____
@@ -405,3 +460,24 @@ from this run.
   4. **Exact reservation linkage.** ST2 uses an exact per-admission check (P5: `admission_id` join) instead of
      the time-window correlation, plus integrity counts. The doc states that the scan ↔ admission match remains
      by order, because the schema has no link.
+- **Revision 3:** the review of `7e50f7e` (PR #45 review, 2026-10-24T10:09Z) asked for two docs-only
+  changes before execution.
+  1. **ST1b expected text.** The 429 **response body** is "Too many sign-in attempts. Please wait and try
+     again." (`lib/security/loginFlow.ts`), as the review stated, and ST1b now checks it in the Network tab.
+     The **login page** does not display that body: on a 429 it builds "… Please wait about N minutes and try
+     again." from `Retry-After`. ST1b names both texts and where each appears, so the founder is not misled by
+     either.
+  2. **P3 staging binding.** `last_sign_in_at` is now corroboration only (P3c). P3 requires two
+     project-specific proofs that expose no credential:
+     - P3a: the session cookie **name** `sb-zgxmvpbvvakpsnzcymsf-auth-token`, which `@supabase/ssr` derives from
+       the server's configured project URL;
+     - P3b: a random-marker scan with no link (no paid request) whose `scan_id` must appear in staging
+       `public.scans` for U1.
+
+     P3d, the Preview's public `NEXT_PUBLIC_SUPABASE_URL` host in Vercel, is optional.
+  - **Consistency fixes:**
+    - ST8 Method B no longer hard-codes one Preview URL; it takes the recorded Preview and refuses any other
+      host.
+    - The evidence sheet has fields for P3a–P3d and both ST1b texts.
+    - The stop condition for P3 names P3a/P3b.
+    - A 60 s wait follows P3b, so it cannot affect ST2's burst window.

@@ -191,7 +191,10 @@ const EXPECTED_SECRETS_COPY = [{
     identity: "[parameters('identityId')]",
   },
 }];
-const EXPECTED_ENV = "[concat(variables('secretEnv'), createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'HOSTNAME', 'value', '0.0.0.0')), variables('activePlainEnv'))]";
+const EXPECTED_APP_IDENTITY = { type: "UserAssigned", userAssignedIdentities: { "[format('{0}', parameters('identityId'))]": {} } };
+const EXPECTED_INGRESS = { external: true, targetPort: 3000, transport: "auto", allowInsecure: false };
+const EXPECTED_REGISTRIES = [{ server: "[parameters('registryServer')]", identity: "[parameters('identityId')]" }];
+const EXPECTED_ENV ="[concat(variables('secretEnv'), createArray(createObject('name', 'PORT', 'value', '3000'), createObject('name', 'HOSTNAME', 'value', '0.0.0.0')), variables('activePlainEnv'))]";
 
 export function checkTemplate(t, appName, image) {
   const problems = [];
@@ -213,7 +216,15 @@ export function checkTemplate(t, appName, image) {
   if (!Array.isArray(inner?.resources) || inner.resources.length !== 1) return fail("module must deploy exactly one resource");
   const app = inner.resources[0];
   if (app.type !== "Microsoft.App/containerApps" || app.name !== "[parameters('name')]") problems.push("module resource must be the Container App");
+  // Runtime identity, registry pull and ingress, bound to the module parameters pinned in
+  // EXPECTED_MODULE_PARAMS (identityId, registryServer) and the names checked below.
+  if (!same(app.identity, EXPECTED_APP_IDENTITY)) problems.push("Container App identity is not the user-assigned runtime identity binding");
+  if (!keysAre(app.properties, ["managedEnvironmentId", "configuration", "template"])) problems.push("Container App properties are not the reviewed set");
   const conf = app.properties?.configuration ?? {};
+  if (!keysAre(conf, ["copy", "activeRevisionsMode", "ingress", "registries"]) || conf.activeRevisionsMode !== "Single")
+    problems.push("Container App configuration is not the reviewed set");
+  if (!same(conf.ingress, EXPECTED_INGRESS)) problems.push("ingress is not external HTTPS-only on port 3000");
+  if (!same(conf.registries, EXPECTED_REGISTRIES)) problems.push("registry is not the reviewed server pulled by the runtime identity");
   if ("secrets" in conf || !same(conf.copy, EXPECTED_SECRETS_COPY)) problems.push("Container App secrets are not the reviewed secrets loop");
   const tpl = app.properties?.template ?? {};
   if (!keysAre(tpl, ["containers", "scale"])) problems.push("Container App template must contain only containers and scale");

@@ -35,6 +35,9 @@ param productionAppName string
 @description('Phase B switch: create the two Container Apps (requires images in the registry).')
 param deployApps bool = false
 
+@description('Phase B: also create the production app. Default false so Phase B provisions staging only; production is a later, separately approved deployment that passes deployProductionApp=true.')
+param deployProductionApp bool = false
+
 @description('Phase B: full image ref for staging, e.g. crcbcprodcc001.azurecr.io/cbc-web:<sha>-stg')
 param stagingImage string = ''
 
@@ -167,7 +170,7 @@ module staging 'modules/web-app.bicep' = if (deployApps) {
   }
 }
 
-module production 'modules/web-app.bicep' = if (deployApps) {
+module production 'modules/web-app.bicep' = if (deployApps && deployProductionApp) {
   name: 'web-production'
   dependsOn: [
     acrPull
@@ -195,4 +198,4 @@ output identityClientId string = identity.properties.clientId
 // Known after Phase A; set CBC_STG_NEXT_PUBLIC_APP_URL to this before the first staging build.
 output stagingPublicOrigin string = 'https://${stagingAppName}.${env.properties.defaultDomain}'
 output stagingFqdn string = deployApps ? staging!.outputs.fqdn : ''
-output productionFqdn string = deployApps ? production!.outputs.fqdn : ''
+output productionFqdn string = deployApps && deployProductionApp ? production!.outputs.fqdn : ''

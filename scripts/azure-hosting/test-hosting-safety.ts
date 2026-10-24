@@ -252,7 +252,14 @@ check("bicep: probes on /api/healthz port 3000", /path: '\/api\/healthz'/.test(b
 check("bicep: ingress https only", /allowInsecure: false/.test(bicep));
 check("bicep: apps are Phase B only (deployApps, default false)",
   /param deployApps bool = false/.test(bicep) && /module staging '[^']+' = if \(deployApps\)/.test(bicep) &&
-  /module production '[^']+' = if \(deployApps\)/.test(bicep));
+  /module production '[^']+' = if \(deployApps && deployProductionApp\)/.test(bicep));
+// Gate 006C (founder, 2026-10-24): Phase B provisions staging only. The production app needs
+// an explicit deployProductionApp=true at deployment time, never the parameters file.
+check("bicep: production app needs deployProductionApp (default false)",
+  /^param deployProductionApp bool = false$/m.test(bicep) &&
+  /^output productionFqdn string = deployApps && deployProductionApp \? production!\.outputs\.fqdn : ''$/m.test(bicep));
+check("bicep params: parameters file does not set deployProductionApp or deployApps",
+  !("deployProductionApp" in params.parameters) && !("deployApps" in params.parameters));
 check("bicep: no placeholder/bootstrap image that would fail the 3000 probe", !/quickstart/.test(bicep));
 
 // ---------------------------------------------------------------- Bicep structure (Gate 006C offline validation)

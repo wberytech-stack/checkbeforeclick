@@ -11,6 +11,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ROOT = process.cwd();
 const YAML = createRequire(path.join(ROOT, "package.json"))("yaml") as typeof import("yaml");
@@ -80,8 +81,10 @@ for (const [id, job] of Object.entries(jobs)) {
   check(`workflow: job ${id} writes at most id-token`, writes.every((k) => k === "id-token"), writes.join(","));
   const usesLogin = (job.steps ?? []).some((s) => typeof s.uses === "string" && s.uses.startsWith("azure/login@"));
   if (usesLogin || perms["id-token"] === "write") {
+    // Staging-only jobs (Gate 006C) name azure-staging directly and must be gated to staging.
     check(`workflow: job ${id} with Azure access runs in azure-<env> environment`,
-      job.environment === "azure-${{ inputs.environment }}");
+      job.environment === "azure-${{ inputs.environment }}" ||
+      (job.environment === "azure-staging" && typeof job.if === "string" && job.if.includes("inputs.environment == 'staging'")));
     check(`workflow: job ${id} needs build`, job.needs === "build" || (Array.isArray(job.needs) && job.needs.includes("build")));
   } else {
     check(`workflow: job ${id} has no id-token permission`, perms["id-token"] === undefined);
@@ -108,6 +111,85 @@ check("workflow: waits for the new revision (latest == latestReady, image matche
 check("workflow: NEXT_PUBLIC_APP_URL required as an https origin",
   wfText.includes('[[ "$app" =~ ^https://[a-z0-9.-]+$ ]]'));
 noSecrets("workflow", wfText);
+
+// ---------------------------------------------------------------- single-dispatch staging (Gate 006C)
+// Production keeps the image-only deploy job. Staging is one job behind one azure-staging
+// approval: push and pin the digest, checked what-if, deploy the same digest, health,
+// read-only configuration check, in that order. Bicep is applied only for staging.
+{
+  const stg = jobs.staging;
+  const steps = (stg?.steps ?? []).map((s) => JSON.stringify(s));
+  const at = (text: string) => steps.findIndex((s) => s.includes(text));
+  check("staging: deploy job runs for production only",
+    typeof jobs.deploy?.if === "string" && jobs.deploy.if.includes("inputs.environment == 'production'"));
+  check("staging: staging job exists, gated to staging, in azure-staging",
+    !!stg && typeof stg.if === "string" && stg.if.includes("inputs.environment == 'staging'") && stg.environment === "azure-staging");
+  check("staging: exactly one job runs in azure-staging (one approval per dispatch)",
+    Object.values(jobs).filter((j) => j.environment === "azure-staging").length === 1);
+  check("staging: permissions are exactly id-token: write, contents: read",
+    JSON.stringify(stg?.permissions) === JSON.stringify({ "id-token": "write", contents: "read" }));
+  check("staging: checkout does not persist credentials",
+    (stg?.steps ?? []).some((s) => s.uses === "actions/checkout@v4" && s.with?.["persist-credentials"] === false));
+  const order = [
+    at("azure/login@"), at("docker push"), at("az deployment group what-if"), at("staging-guard.mjs whatif"),
+    at("az deployment group create"), at("latestReadyRevisionName"), at("staging-guard.mjs config"),
+  ];
+  check("staging: sign-in, push, what-if, guard, create, wait, config check run in that order",
+    order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1] || k === 3)), order.join(","));
+  check("staging: what-if and its guard share one step (no deployment unless the guard passes)",
+    order[2] >= 0 && order[2] === order[3]);
+  check("staging: the configuration check is the last step", order[6] === steps.length - 1);
+  check("staging: what-if and create each appear once in the workflow",
+    (wfText.match(/az deployment group what-if/g) ?? []).length === 1 && (wfText.match(/az deployment group create/g) ?? []).length === 1);
+  check("staging: both Bicep commands use staging-app.bicep only",
+    (wfText.match(/--template-file \S+/g) ?? []).every((m) => m === "--template-file infra/azure/hosting/staging-app.bicep") &&
+    (wfText.match(/--template-file/g) ?? []).length === 2);
+  check("staging: workflow never deploys main.bicep, production flags, complete mode or role assignments",
+    !/main\.bicep|deployProductionApp|deployApps|--mode\s+Complete|az role|roleAssignments/i.test(wfText));
+  check("staging: digest pinned from the pushed image (RepoDigests), not looked up by tag",
+    wfText.includes("{{index .RepoDigests 0}}") && wfText.includes("cbc-web@sha256:[0-9a-f]{64}") &&
+    !/az acr repository show/.test(wfText));
+  check("staging: what-if, create, wait and config check all use the pinned image_ref",
+    steps.filter((s) => /what-if|deployment group create|latestReadyRevisionName|staging-guard\.mjs config/.test(s))
+      .every((s) => s.includes("steps.push.outputs.image_ref")) &&
+    (wfText.match(/--parameters image=\S+/g) ?? []).length === 2 &&
+    (wfText.match(/--parameters image=\S+/g) ?? []).every((m) => m === '--parameters image="$IMAGE_REF"'));
+  check("staging: waits for the exact image, ready revision and /api/healthz",
+    steps.some((s) => s.includes('[ \\"$image\\" = \\"$want\\" ]') && s.includes("/api/healthz")));
+  check("staging: no automatic retry of provisioning", !/retry|continue-on-error/i.test(wfText));
+  check("staging: checks the azure-staging app and registry names against main.parameters.json",
+    steps.some((s) => s.includes(".parameters.stagingAppName.value") && s.includes(".parameters.registryName.value")));
+}
+
+// ---------------------------------------------------------------- staging-app.bicep (Gate 006C)
+{
+  const src = read("infra/azure/hosting/staging-app.bicep");
+  noSecrets("staging-app.bicep", src);
+  const code = src.split("\n").filter((l) => !l.trimStart().startsWith("//")).join("\n");
+  check("staging-app.bicep: resource group scope", /^targetScope = 'resourceGroup'$/m.test(code));
+  check("staging-app.bicep: only parameter is image", JSON.stringify([...code.matchAll(/^param (\w+)/gm)].map((m) => m[1])) === '["image"]');
+  check("staging-app.bicep: values come from main.parameters.json",
+    /^var cfg = loadJsonContent\('main\.parameters\.json'\)\.parameters$/m.test(code));
+  const resources = [...code.matchAll(/^resource \w+ '([^']+)'(.*)$/gm)];
+  check("staging-app.bicep: every resource is existing (creates nothing but the app module)",
+    resources.length === 4 && resources.every((m) => m[2].includes(" existing = {")), resources.map((m) => m[1]).join(","));
+  const modules = [...code.matchAll(/^module (\w+) '([^']+)'(.*)$/gm)];
+  check("staging-app.bicep: exactly one module, web-app.bicep, unconditional, named web-staging",
+    modules.length === 1 && modules[0][2] === "modules/web-app.bicep" && modules[0][3] === " = {" && /\n  name: 'web-staging'\n/.test(code));
+  for (const [k, v] of [
+    ["name", "cfg.stagingAppName.value"], ["secretNames", "cfg.stagingSecretNames.value"],
+    ["plainEnv", "cfg.stagingPlainEnv.value"], ["injectWebRiskKey", "false"],
+    ["minReplicas", "0"], ["maxReplicas", "1"], ["image", "image"],
+  ]) check(`staging-app.bicep: passes ${k}: ${v}`, new RegExp(`^    ${k}: ${v.replace(/\./g, "\\.")}$`, "m").test(code));
+  check("staging-app.bicep: no production value", !/production/i.test(code));
+  const block = code.match(/\n  params: \{\n([\s\S]*?)\n  \}\n\}/)?.[1] ?? "";
+  const passed = [...block.matchAll(/^ {4}(\w+):/gm)].map((m) => m[1]);
+  const modParamList = [...read("infra/azure/hosting/modules/web-app.bicep").matchAll(/^param\s+(\w+)\s+\w+(\s*=)?/gm)]
+    .map((m) => ({ name: m[1], required: !m[2] }));
+  check("staging-app.bicep: passes every required web-app.bicep param and no unknown one",
+    passed.length > 0 && modParamList.filter((p) => p.required).every((p) => passed.includes(p.name)) &&
+    passed.every((p) => modParamList.some((q) => q.name === p)), passed.join(","));
+}
 
 // ---------------------------------------------------------------- Dockerfile
 const df = read("Dockerfile");
@@ -368,6 +450,70 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
   if (f === "azure-deploy.yml") continue;
   const t = read(path.join(".github", "workflows", f));
   check(`${f}: does not call Azure`, !/azure\/login|az containerapp|az acr/.test(t));
+}
+
+// ---------------------------------------------------------------- staging-guard.mjs behaviour
+// Synthetic what-if and `az containerapp show` documents (no Azure). Each broken
+// variant must be rejected; the good ones must pass.
+{
+  type Guard = {
+    checkWhatIf: (r: unknown, app: string, image: string) => { problems: string[] };
+    checkConfig: (a: unknown, image: string) => { problems: string[] };
+  };
+  const guard = (await import(pathToFileURL(path.join(ROOT, "scripts/azure-hosting/staging-guard.mjs")).href)) as Guard;
+  const APP = "ca-cbc-web-stg-cc-001";
+  const IMG = `crcbcprodcc001.azurecr.io/cbc-web@sha256:${"a".repeat(64)}`;
+  const RG = "/subscriptions/0/resourceGroups/rg-cbc-prod-canadacentral-001/providers";
+  const props = () => ({
+    configuration: { secrets: [
+      { name: "supabase-service-role-key", keyVaultUrl: "https://kv/secrets/cbc-stg-supabase-service-role-key" },
+      { name: "inngest-event-key", keyVaultUrl: "https://kv/secrets/cbc-stg-inngest-event-key" },
+    ] },
+    template: {
+      containers: [{ image: IMG, env: [
+        { name: "SUPABASE_SERVICE_ROLE_KEY", secretRef: "supabase-service-role-key" },
+        { name: "WEB_RISK_PROVIDER_ENABLED", value: "false" },
+      ] }],
+      scale: { minReplicas: 0, maxReplicas: 1 },
+    },
+  });
+  type Props = ReturnType<typeof props>;
+  const whatIf = (p: Props, extra: unknown[] = [], changeType = "Create") => ({
+    status: "Succeeded",
+    changes: [{ changeType, resourceId: `${RG}/Microsoft.App/containerApps/${APP}`, after: { properties: p } }, ...extra],
+  });
+  const mutate = (f: (p: Props) => void) => { const p = props(); f(p); return p; };
+  const webRiskSecret = (p: Props) => p.configuration.secrets.push({ name: "google-web-risk-api-key", keyVaultUrl: "https://kv/secrets/cbc-shared-google-web-risk-api-key" });
+  const webRiskEnv = (p: Props) => p.template.containers[0].env.push({ name: "GOOGLE_WEB_RISK_API_KEY", secretRef: "x" });
+  const ok = (r: { problems: string[] }) => r.problems.length === 0;
+
+  check("guard whatif: first-time Create of the staging app passes", ok(guard.checkWhatIf(whatIf(props()), APP, IMG)));
+  check("guard whatif: Modify of the staging app with Ignore elsewhere passes",
+    ok(guard.checkWhatIf(whatIf(props(), [{ changeType: "Ignore", resourceId: `${RG}/Microsoft.App/containerApps/ca-cbc-web-prod-cc-001` }], "Modify"), APP, IMG)));
+  for (const [name, doc] of [
+    ["Web Risk secret", whatIf(mutate(webRiskSecret))],
+    ["GOOGLE_WEB_RISK_API_KEY env", whatIf(mutate(webRiskEnv))],
+    ["provider flag missing", whatIf(mutate((p) => { p.template.containers[0].env = p.template.containers[0].env.filter((e) => e.name !== "WEB_RISK_PROVIDER_ENABLED"); }))],
+    ["provider flag \"False\"", whatIf(mutate((p) => { p.template.containers[0].env[1].value = "False"; }))],
+    ["maxReplicas 2", whatIf(mutate((p) => { p.template.scale.maxReplicas = 2; }))],
+    ["minReplicas 1", whatIf(mutate((p) => { p.template.scale.minReplicas = 1; }))],
+    ["other image", whatIf(mutate((p) => { p.template.containers[0].image = IMG.replace("@sha256:a", "@sha256:b"); }))],
+    ["Create of another resource", whatIf(props(), [{ changeType: "Create", resourceId: `${RG}/Microsoft.App/containerApps/ca-cbc-web-prod-cc-001` }])],
+    ["Modify of another resource", whatIf(props(), [{ changeType: "Modify", resourceId: `${RG}/Microsoft.KeyVault/vaults/kv-cbc-prod-cc-001` }])],
+    ["Delete of the staging app", whatIf(props(), [], "Delete")],
+    ["status Failed", { ...whatIf(props()), status: "Failed" }],
+    ["no change for the staging app", { status: "Succeeded", changes: [] }],
+  ] as const) check(`guard whatif: rejects ${name}`, !ok(guard.checkWhatIf(doc, APP, IMG)));
+
+  const app = (p: Props) => ({ name: APP, properties: p });
+  check("guard config: compliant staging app passes", ok(guard.checkConfig(app(props()), IMG)));
+  for (const [name, p] of [
+    ["Web Risk secret", mutate(webRiskSecret)],
+    ["GOOGLE_WEB_RISK_API_KEY env", mutate(webRiskEnv)],
+    ["provider flag missing", mutate((p) => { p.template.containers[0].env.pop(); })],
+    ["maxReplicas 2", mutate((p) => { p.template.scale.maxReplicas = 2; })],
+    ["other image", mutate((p) => { p.template.containers[0].image = "crcbcprodcc001.azurecr.io/cbc-web:latest"; })],
+  ] as const) check(`guard config: rejects ${name}`, !ok(guard.checkConfig(app(p), IMG)));
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

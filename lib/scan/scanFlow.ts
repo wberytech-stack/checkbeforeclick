@@ -11,6 +11,9 @@
 //   7. providers in parallel: unpaid ones directly; a paid one ONLY through callPaid (one execution-time
 //      reservation, then at most one request). A refused reservation fails the scan with 503, no verdict.
 //   8. scoring and persistence (201); any error after the scan row exists marks it failed (500).
+// Deadline: if the provider phase (reservation RPC and provider requests) has not settled within
+// PROVIDER_PHASE_DEADLINE_MS, the scan is marked failed and 504 is returned, well inside the route's
+// maxDuration of 30 s, so a hung dependency cannot leave the scan in "processing".
 import type { ScanProvider, ScanProviderResult } from "@/lib/scan/providers/types"
 import type { LimitDecision } from "@/lib/security/rateLimit"
 import type { GuardedOutcome } from "@/lib/security/providerBudget"
@@ -19,6 +22,7 @@ import type { FastScanVerdict, RecordFastScanResultInput } from "@/src/server/sc
 
 export const VALID_INPUT_TYPES = ["url", "domain", "email", "header", "signature", "batch"]
 export const MAX_INPUT_LENGTH = 10000
+export const PROVIDER_PHASE_DEADLINE_MS = 20000
 
 export type ScanResponse = {
   status: number
@@ -53,6 +57,8 @@ export type ScanFlowDeps = {
   failScan: (orgId: string, scanId: string, durationMs: number) => Promise<void>
   retryHeaders: (decision: LimitDecision) => Record<string, string>
   now: () => number
+  // A timer for the provider-phase deadline; clear() must stop it.
+  timer: (ms: number) => { done: Promise<void>; clear: () => void }
   logError: (message: string, error: unknown) => void
 }
 
@@ -178,7 +184,7 @@ async function runFastPath(
     // then at most one request. A refused or unconfirmed reservation makes no request and fails the whole scan
     // with 503 - an incomplete check must never produce a verdict.
     const budget: { refused: { status: 503; reason: string; retryAfterSeconds: number } | null } = { refused: null }
-    const providerResults = await Promise.allSettled(
+    const phase = Promise.allSettled(
       providers.map(async (provider) => {
         if (provider.paid !== true) return provider.run(providerInput, providerInputType)
         const outcome = await deps.callPaid(provider, s.admissionId, providerInput)
@@ -187,6 +193,19 @@ async function runFastPath(
         throw new Error("Provider budget not granted")
       })
     )
+    const deadline = deps.timer(PROVIDER_PHASE_DEADLINE_MS)
+    const raced = await Promise.race([phase, deadline.done.then(() => "timed_out" as const)])
+    deadline.clear()
+
+    if (raced === "timed_out") {
+      await deps.failScan(s.organizationId, s.scanId, deps.now() - startTime)
+      return {
+        status: 504,
+        body: { error: "The check took too long. Please try again.", reason: "scan_timeout", scan_id: s.scanId },
+        headers: { "Cache-Control": "no-store" },
+      }
+    }
+    const providerResults = raced
 
     if (budget.refused) {
       await deps.failScan(s.organizationId, s.scanId, deps.now() - startTime)

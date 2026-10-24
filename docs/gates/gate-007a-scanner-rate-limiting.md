@@ -9,20 +9,240 @@
     approval on 2026-10-23.
   - **CI:** `f040dd1` adds the read-only pull-request validation workflow (see
     "Continuous validation"). Founder instruction, 2026-10-24.
-  - **Not yet reviewed by ChatGPT.** An independent review of the complete
-    Revision 2 diff has been requested.
+  - **Review round 1:** independent ChatGPT review of `19d22ff` (PR #45 review,
+    2026-10-24T07:16Z): **changes required**. The founder's execution handoff
+    (PR #45 comment, 2026-10-24T07:30Z) followed it. The response is in
+    "Review round 1 response", next section. **Release remains blocked.**
 - **Not merged and not deployed.** Merging into `master` is a Vercel production
   deployment.
 - **Migrations:**
   - `001_scan_admission.sql` is **applied to Supabase staging only**
     (`zgxmvpbvvakpsnzcymsf`), by the founder; see "Staging validation". It is not
     applied to production.
-  - `002_users_identity_guard.sql` is a **draft**. It is not applied anywhere and
-    not yet validated on a disposable database.
+  - `002_users_identity_guard.sql` is a **draft, applied to no real database**.
+    It was validated on a disposable local database on 2026-10-24: 17/17, plus a
+    negative control (see "Review round 1 response", item 3).
+    - The file's header comment still says "not yet validated". The file is left
+      byte-identical to the reviewed commit (AGENTS.md section 9: never edit an
+      existing migration). This document is authoritative.
   - Applying either to a real database is founder-only (AGENTS.md sections 6.3
     and 9).
 - **Approval:** founder-approved design and limits, 2026-10-22. Revision 2 was
   requested by the founder on 2026-10-23 for local edits and offline tests only.
+
+## Review round 1 response (2026-10-24)
+
+The items are numbered as in the founder's handoff. Each item says what the
+repository now does, the evidence, and what stays external.
+
+### 1. Scan contract (`master@1810aeb` compared with this PR)
+
+**Finding: input-type handling did not change. Only the timing did.** On
+`master`, the worker already reduced email, header, signature and batch input to
+the first URL:
+- `processScan` called `normalizeScanTarget(raw_input, input_type)`, which
+  extracts the first `http(s)://` URL for those types and returns `ok: false`
+  when there is none;
+- with no URL, the scan completed as `unknown` with `invalid_target`;
+- with a URL, it ran `getFastProviders("url")`, the same Web Risk and domain-age
+  providers as the URL fast path;
+- the `getAsyncProviders` branch was unreachable, and **no async provider exists**
+  (both providers declare `path: "fast"`).
+
+So "every input becomes its first URL" is `master` behaviour, preserved, not
+introduced by this PR.
+
+| Aspect | `master@1810aeb` | This PR |
+| --- | --- | --- |
+| url / domain | synchronous in `/api/scan`; 201 `{scan_id, status: "complete", verdict}` | unchanged, plus admission and Web Risk reservation |
+| email / header / signature / batch | `inngest.send("scan/requested")`; 201 `{scan_id}`; scan `pending` → worker | synchronous in `/api/scan`; 201 `{scan_id, status: "complete", verdict}` |
+| What is scanned for those types | first `http(s)` URL; none → `unknown` | **identical** (the same `normalizeScanTarget`) |
+| Providers for those types | Web Risk + domain age, **in the worker, unreserved** | Web Risk (reserved, at most once) + domain age, in the request |
+| Queue failure | 502 and the scan marked failed | not applicable (nothing queued) |
+| Retries | Inngest `retries: 1`: a retry **re-called Web Risk** | none in the request; the worker never calls paid providers |
+| Time limit | worker step: none of ours; route: platform default | provider phase deadline **20 s** → 504 + scan failed; route `maxDuration = 30` |
+| UI (`app/(dashboard)/scan/new`) | reads only `scan_id`, opens `/scan/[id]` | unchanged (test X07). A 201 is already terminal; 503/504 bodies carry `scan_id` (tests U01–U02) |
+| Result page `/scan/[id]` | polls `/api/scan/[id]/status` while `pending`/`processing` (30 s) | unchanged and still needed for scans queued before the deploy (test X08) |
+| UI sends | `url`, `email`, `header` (domain/signature/batch are API-only) | unchanged |
+
+**Fixes made in this round:**
+- **Worker contract extracted and tested.** The logic moved to
+  `lib/scan/workerFlow.ts`; `inngest/functions/processScan.ts` is now an adapter.
+  `test-worker-flow.ts` has 34 checks: every input type, no-link and private
+  targets, empty provider list, pending/processing/null status, error → failed +
+  rethrow, retry after failure, missing id or organization, and the wiring.
+- **Real defect fixed: worker replays.** On `master`, a replayed or re-run
+  `scan/requested` event for a finished scan re-processed it. That appended
+  duplicate evidence and, after this gate, would have overwritten a Web
+  Risk-backed verdict with an unpaid-only one.
+  - The worker now skips scans that are already `complete` or `failed`.
+  - `loadScanForProcessing` returns `status` for this.
+- **Pending-state handling in the request.**
+  - A provider-phase deadline of 20 s (`PROVIDER_PHASE_DEADLINE_MS`) marks the
+    scan failed and returns 504 `scan_timeout`. A hung reservation RPC or
+    provider can no longer outlive `maxDuration` and leave the scan in
+    `processing`.
+  - Tests D01–D03.
+- **Residual risk:** a platform kill before `failScan` runs (for example, a hung
+  Supabase write after the deadline) still leaves a scan `processing`. The result
+  page stops polling after 30 s. There is no sweeper; that is a candidate for a
+  later gate.
+
+**Founder-level change request FCR-007A-1 (decision needed, nothing implemented
+for it).** The founder-approved budget design (2026-10-22) makes every paid call
+inside the signed-in request. A reservation needs the user's own session and an
+admission no more than 10 minutes old, and the worker has neither. The options:
+
+| Option | Effect | Cost |
+| --- | --- | --- |
+| **A. Keep synchronous for all types** (this PR) | Same inputs scanned as on `master`; Web Risk still checked for email/header, now budgeted; no queue dependency | Request latency includes the provider phase (deadline 20 s); measured latency is a staging item (ST6) |
+| B. Restore async for email/header/signature/batch, unpaid providers only | Old response shape (`{scan_id}`, pending) | **Detection regression:** Web Risk would never run for those types, so they could never be `safe` |
+| C. Restore async with worker-side reservations | Old shape and Web Risk | The worker has no user session: it needs a service-role or definer path for reservations (deepens AGENTS.md section 12) and a new design. That is a new gate |
+
+Recommendation: **A**. If the founder wants B or C, that is a scoped
+architecture decision recorded in a gate, not an in-gate review fix.
+
+### 2. Client IP and login throttling
+
+**Evidence (official documentation, read 2026-10-24):**
+- **Vercel** (vercel.com/docs/headers/request-headers): Vercel will "overwrite
+  the X-Forwarded-For header and do not forward external IPs" (stated for the
+  proxy case, "to prevent IP spoofing"). X-Forwarded-For is documented as "the
+  public IP address of the client that made the request".
+- **Azure Container Apps** (learn.microsoft.com/azure/container-apps/ingress-overview):
+  X-Forwarded-For "is appended to", and "Only the rightmost IP is provided by
+  Azure Container Apps". Other values "must be validated by the user to prevent
+  IP spoofing".
+- **Azure Front Door** (learn.microsoft.com/azure/frontdoor/front-door-http-headers-protocol):
+  Front Door appends the client socket IP to X-Forwarded-For. **Not documented:**
+  what the rightmost entry is at an app behind Front Door + Container Apps. It is
+  probably Front Door's egress address.
+
+**What the code does:**
+- It uses the **rightmost** X-Forwarded-For entry. That rule is supported by the
+  documentation for **Vercel** and for **Container Apps without another proxy**.
+- `normalizeIp` (new) accepts only a well-formed IPv4 address (an optional port is
+  stripped) or IPv6 address (lower-cased, brackets and port stripped). Anything
+  else maps to the shared `unknown` bucket. Test G09.
+- **Unsafe assumption rejected:** behind Azure Front Door, or any other proxy, the
+  rightmost entry is not the client. **An Azure deployment with Front Door must
+  change this derivation first**, for example to a validated `X-Azure-ClientIP`.
+  That is a release precondition for that topology, recorded in the dossier.
+- **Runtime proof is a staging item (ST8):** confirm on the Preview that a forged
+  leading X-Forwarded-For entry does not change the bucket.
+
+**What the limits are and are not:**
+- The 10 per IP and 5 per email per 15 minutes are **per server instance,
+  best-effort**. They are not a global guarantee, and the documentation says so.
+- Direct calls to Supabase Auth with the public anon key bypass them entirely.
+- **Shared enforcement is a founder decision.** It is needed only if the product
+  requires strict cross-instance caps. It would need either a database-backed
+  limiter (a new migration and an `anon`-callable pre-auth function, with its own
+  abuse analysis) or a shared store (new infrastructure, a dependency change).
+  Not implemented.
+- **Supabase Auth's own per-IP limits, CAPTCHA and sign-up policy are the real
+  outer boundary.** Their production values are unverified and are a release
+  blocker.
+
+### 3. Migration 002 on a disposable database
+
+- **Environment:**
+  - `public.ecr.aws/supabase/postgres:17.6.1.121`, bound to `127.0.0.1:55472`,
+    with a random session-only password;
+  - the container was removed afterwards and the password file deleted.
+- **Fixture** (`scripts/rate-limit/fixtures/users-guard-fixture.sql`, run as
+  `supabase_admin`):
+  - `organizations` and `users`, with `users.id` referencing
+    `auth.users ON DELETE CASCADE`;
+  - `handle_new_user` (SECURITY DEFINER, owned by `postgres`), fired by
+    `on_auth_user_created`;
+  - Supabase default grants;
+  - a **deliberately permissive** self-update policy;
+  - a user-callable definer function.
+- **002 was applied as `postgres`,** the non-superuser role the Supabase SQL
+  editor uses.
+- **`validate-users-guard-db.ts`: 17 passed, 0 failed.**
+  - The guard is installed, is not a definer function, and cannot be executed by
+    `anon` or `authenticated`.
+  - Sign-up through `auth.users` as `supabase_auth_admin` still provisions the
+    user through `handle_new_user`.
+  - A signed-in user cannot change `organization_id`, `role` or `id`, or
+    insert or delete a `users` row (42501). Editing `full_name` and no-op writes
+    still work.
+  - `anon` is blocked.
+  - `service_role` and `postgres` can still change identity columns.
+  - Deleting the auth user still cascades.
+  - **Limitation confirmed (U17):** a user-callable SECURITY DEFINER function
+    owned by `postgres` can still move a user. Production must be checked for
+    such functions (read-only SQL, item 3 in the verification list below).
+- **Negative control:**
+  - with `002…down.sql` applied, the same signed-in request moved the user to
+    another organization and set `role = 'owner'` (1 row changed);
+  - with 002 re-applied, it was refused: "cbc: id, organization_id and role on
+    public.users cannot be changed by authenticated".
+- **Idempotence:** 002 was applied twice after the rollback without error; the
+  validator still passed 17/17.
+- **The fixture models the documented production shape;** the production DDL is
+  not in the repository. **Applying 002 to staging or production remains a
+  separate founder decision,** after the read-only production checks.
+
+### 4. CI
+
+- Actions are pinned to immutable commits:
+  - `actions/checkout@11d5960a326750d5838078e36cf38b85af677262` (v4.4.0);
+  - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020` (v4.4.0).
+
+  These are GitHub-verified commits, identical to the commits `v4` resolved to
+  during the earlier green runs.
+- **Controlled build added:**
+  - **The step:** `next build`, last in the job, with only
+    `NEXT_TELEMETRY_DISABLED=1`.
+  - **Proven secret-free first:** a clean worktree with **no `.env*` file and no
+    Supabase variables**, after `npm ci --ignore-scripts`, built with exit 0 and
+    generated all 13 static pages. The `package.json` and `package-lock.json`
+    hashes were unchanged.
+- **Suites:** the worker-flow suite was added, so there are now seven offline
+  suites.
+- **Invariants in `test-hosting-safety.ts` (now 129 checks):**
+  - every action is SHA-pinned to the reviewed commit, with no movable reference;
+  - `next build` runs exactly once, last;
+  - the only environment variable anywhere is the telemetry flag on the build
+    step;
+  - seven suites; the `react-server` condition for scan and worker flow.
+
+  A mutation check of 13 mutants across code and workflow killed 13/13.
+- **Still founder-only:**
+  - making `pr-validate / offline` a **required status check** (a GitHub
+    settings change);
+  - pinning the other workflows (`azure-deploy.yml`, `state-reconcile.yml`),
+    which belong to other gates and, for the deploy workflow, to deploy
+    configuration.
+- **A green offline CI run is not release proof.**
+
+### 5. Release dossier: status of every release condition
+
+None of these can be completed by an agent. Each needs the founder or operator.
+**All are unverified until evidence is recorded here.**
+
+| # | Condition | Owner | Status | Evidence required |
+| --- | --- | --- | --- | --- |
+| R1 | Google Cloud: daily Web Risk quota and budget alert on the key; ideally separate or rotated Production/Preview keys | Founder | **Unverified, blocker** | Screenshot or export of the quota value and budget alert |
+| R2 | Production read-only RLS checks (`users`/`organizations` policies, grants, definer functions, `handle_new_user` body) | Founder (SQL editor) | **Unverified, blocker** | Query output per "Production facts that need read-only verification" |
+| R3 | Supabase Auth: sign-in rate limits, CAPTCHA, sign-up policy (production) | Founder | **Unverified, blocker** | Dashboard values |
+| R4 | Vercel plan supports `maxDuration = 30`; function region relative to the Supabase region | Founder | **Unverified, blocker** | Plan page; project region setting |
+| R5 | Staging ST1–ST8 on the PR #45 Preview | Founder/operator | **Not run, blocker** | Per-test results and SQL counts |
+| R6 | One explicitly budgeted Web Risk request to prove the `X-Goog-Api-Key` header (ST4) | Founder approval, then run | **Not run, blocker** | A real Google result (not `API error 401/403`) and ledger counts |
+| R7 | Migration 001 on production **before** merge: SHA check, backup or point-in-time-restore confirmation, apply, `NOTIFY pgrst, 'reload schema'`, verification queries | Founder/operator | **Not done, blocker** | Backup reference; apply log; function and grant queries |
+| R8 | Decision on migration 002 (apply to staging, then production, or not) after R2 | Founder | **Open** | Recorded decision; staging validation if applied |
+| R9 | FCR-007A-1 (sync vs async for email/header) | Founder | **Open** | Recorded decision |
+| R10 | Topology for Azure: Front Door changes client-IP derivation | Founder | **Open (Azure only)** | Recorded decision before any Azure release with Front Door |
+| R11 | Fresh independent review of the final diff | Founder relays | **Requested** | `.agents/chatgpt-review.yaml` |
+
+**Rollback after migration 001 (unchanged):**
+1. Vercel instant rollback first (the old code works with 001 applied).
+2. Then, only if required, `001…down.sql`, which deletes both ledgers.
+
+Never run it while this code is live.
 
 ## Goal
 
@@ -372,6 +592,7 @@ section 16).
 | ST5 | `WEB_RISK_PROVIDER_ENABLED=false` on Preview (optional) | Scan completes, no reservation, verdict not `safe` |
 | ST6 | 5–10 URL scans | p95 latency well under 30 s |
 | ST7 | Inngest dashboard after ST2–ST6 | No new `process-scan` runs |
+| ST8 | Two sign-in attempts with different forged leading `X-Forwarded-For` entries (wrong password) | Both count against the same per-IP bucket (the rightmost entry is the client) |
 
 ## Changed files
 
@@ -395,10 +616,16 @@ section 16).
 | `scripts/rate-limit/test-login-flow.ts` | **Rev 2, new:** behavioural login tests and UI statics |
 | `scripts/rate-limit/test-tenant-guard.ts` | **Rev 2, new:** migration 002 and tenant-resolution statics |
 | `scripts/rate-limit/validate-admission-db.ts` | Disposable-database validation of 001 (commit 1) |
-| `scripts/rate-limit/validate-users-guard-db.ts` | **Rev 2, new:** disposable validation of 002, not yet run |
+| `scripts/rate-limit/validate-users-guard-db.ts` | **Rev 2, new; round 1:** auth.users sign-up, service role, cascade, definer limitation; run: 17/17 |
+| `scripts/rate-limit/fixtures/users-guard-fixture.sql` | **Round 1, new:** disposable-database fixture for 002 |
+| `lib/scan/workerFlow.ts` | **Round 1, new:** pure worker flow (skips terminal scans, never runs paid providers) |
+| `inngest/functions/processScan.ts` | Commit 1: unpaid only; **round 1:** adapter over `workerFlow` |
+| `lib/data/index.ts` | **Round 1:** `loadScanForProcessing` also returns `status` |
+| `lib/security/rateLimit.ts` | **Round 1:** `normalizeIp`, documented platform evidence |
+| `scripts/rate-limit/test-worker-flow.ts` | **Round 1, new:** worker contract tests |
 | `docs/gates/gate-007a-scanner-rate-limiting.md` | This document |
 | `.github/workflows/pr-validate.yml` | **CI, new:** read-only pull-request validation |
-| `scripts/azure-hosting/test-hosting-safety.ts` | **CI:** 15 invariants for `pr-validate.yml` |
+| `scripts/azure-hosting/test-hosting-safety.ts` | **CI:** invariants for `pr-validate.yml` (19 after round 1) |
 
 ## Continuous validation (`.github/workflows/pr-validate.yml`)
 
@@ -407,22 +634,25 @@ section 16).
 - **Permissions:** `contents: read`, at the workflow level and the job level.
 - **No secrets:** no secrets, repository variables, GitHub environment or cloud
   credentials.
-- **Checkout:** `persist-credentials: false`. Only `actions/checkout@v4` and
-  `actions/setup-node@v4` are used.
+- **Checkout:** `persist-credentials: false`. Only `actions/checkout` and
+  `actions/setup-node` are used. **Round 1:** both are pinned to immutable commit
+  SHAs (v4.4.0).
 - **Steps:**
   1. Node 24.14.0;
   2. `npm ci --ignore-scripts --no-audit --no-fund`;
   3. `tsc --noEmit -p tsconfig.json`;
-  4. the six offline suites (rate limit, provider budget, scan flow with
-     `--conditions=react-server`, login flow, tenant guard, hosting and workflow
-     safety).
+  4. the seven offline suites (rate limit, provider budget, scan flow and worker
+     flow with `--conditions=react-server`, login flow, tenant guard, hosting and
+     workflow safety; worker flow added in round 1);
+  5. **round 1:** `next build` (no secrets, telemetry off).
 - **What it never does:** it deploys nothing and makes no database, Supabase,
   Google, Vercel or Azure call. The disposable-database validators and the smoke
   test are excluded, and a test asserts this.
-- **Guarded by `test-hosting-safety.ts`:** 15 invariants, covering the trigger,
-  permissions, absence of secrets and tokens, allowed actions, credentials, the
-  Node pin, `--ignore-scripts`, `tsc`, all six suites, the `react-server`
-  condition, and no deploy, cloud, database or network commands.
+- **Guarded by `test-hosting-safety.ts`:** the invariants cover the trigger,
+  permissions, absence of secrets and tokens, allowed actions, SHA pins,
+  credentials, the Node pin, `--ignore-scripts`, `tsc`, all suites, the
+  `react-server` condition, the build step and its environment, and no deploy,
+  cloud, database or network commands.
   - A mutation check ran 10 workflow mutants against them (for example
     `pull_request_target`, `contents: write`, a secret reference, a dropped suite,
     a deploy step, an unpinned Node): **10/10 killed**.
@@ -455,23 +685,29 @@ Run with `node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKA
 
 | Check | Result |
 | --- | --- |
-| `test-rate-limit.ts` | 75 passed, 0 failed |
+Results after review round 1 (the CI run for the round-1 commit is recorded in
+PR #45 and `.agents/claude-handoff.yaml`, since a commit cannot cite its own run):
+
+| Check | Result |
+| --- | --- |
+| `test-rate-limit.ts` | 76 passed, 0 failed (75 before round 1) |
 | `test-provider-budget.ts` | 54 passed, 0 failed |
-| `test-scan-flow.ts` | 68 passed, 0 failed |
+| `test-scan-flow.ts` | 73 passed, 0 failed (68 before round 1) |
 | `test-login-flow.ts` | 30 passed, 0 failed |
+| `test-worker-flow.ts` | 34 passed, 0 failed (new in round 1) |
 | `test-tenant-guard.ts` | 21 passed, 0 failed |
-| `test-hosting-safety.ts` | 125 passed, 0 failed (110 before the CI invariants) |
-| Mutation check (13 hand-written mutants of the flow, login, Web Risk and guard code) | 13/13 killed |
+| `test-hosting-safety.ts` | 129 passed, 0 failed (125 before round 1, 110 before CI) |
+| Mutation checks | Revision 2: 13/13; CI: 10/10; round 1 (worker, deadline, IP, workflow): 13/13 |
 | `tsc --noEmit` | exit 0 |
+| `next build` | exit 0 locally, and exit 0 in a clean worktree with no `.env*` file and no Supabase variables |
 | `eslint` on the changed application files | exit 0 |
 | `validate-admission-db.ts` (commit 1, disposable DB) | 40 passed, 0 failed |
-| `validate-users-guard-db.ts` | **Not exercised** (needs approval for disposable database work) |
+| `validate-users-guard-db.ts` (round 1, disposable DB) | **17 passed, 0 failed**, plus a negative control and an idempotence check |
 
 **Not exercised:**
-- `next build`;
-- any request against a running app;
+- any request against a running app (Preview or production);
 - the Web Risk header change against Google (ST4);
-- migration 002 on any database;
+- migration 002 on any real database;
 - runtime behaviour on Vercel or Azure.
 
 ## Required deployment order (founder)

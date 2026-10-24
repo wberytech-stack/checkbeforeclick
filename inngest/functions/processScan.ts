@@ -15,135 +15,38 @@ import {
   insertEvidenceItems,
   insertVendorResults,
 } from "@/lib/data"
+import { processScanJob } from "@/lib/scan/workerFlow"
 
+// Gate 007A: nothing sends "scan/requested" any more (every scan runs in the signed-in request). This job remains
+// for events queued before the deploy and for manual re-runs. The flow lives in lib/scan/workerFlow.ts (pure,
+// tested offline): terminal scans are skipped, paid providers never run here, errors fail the scan and rethrow.
 export const processScan = inngest.createFunction(
   {
     id: "process-scan",
     retries: 1,
     triggers: [{ event: "scan/requested" }],
   },
-  async ({ event }) => {
-    const { scan_id } = event.data
-    const startTime = Date.now()
-
-    // Invariant 6: reload scan + org context from the database;
-    // never trust the event payload alone.
-    const scanRecord = await loadScanForProcessing(scan_id)
-
-    if (!scanRecord) {
-      throw new Error(`Could not load scan record for scan_id: ${scan_id}`)
-    }
-    if (!scanRecord.organization_id) {
-      throw new Error(`Scan ${scan_id} has no organization_id - cannot proceed`)
-    }
-
-    const { organization_id, raw_input, input_type } = scanRecord
-
-    await markScanProcessing(organization_id, scan_id)
-
-    try {
-      const target = normalizeScanTarget(raw_input, input_type)
-
-      if (!target.ok) {
-        await insertEvidenceItems(organization_id, [
-          {
-            scan_id,
-            signal_type: "invalid_target",
-            severity: "info",
-            title: "Target could not be safely scanned",
-            detail: target.reason ?? "Input could not be parsed into a safe scan target.",
-            score_impact: 0,
-          },
-        ])
-
-        await completeScan(organization_id, scan_id, {
-          riskScore: 0,
-          confidenceScore: 10,
-          verdict: "unknown",
-          durationMs: Date.now() - startTime,
-        })
-
-        return { scan_id, verdict: "unknown", reason: target.reason }
-      }
-
-      // Use normalized URL if available, otherwise raw input
-      // For email/header, normalizeScanTarget extracts the first URL found
-      const providerInput = target.normalizedUrl ?? raw_input
-      const providerInputType = target.normalizedUrl ? "url" : input_type
-
-      // If a URL was extracted, run URL-capable providers inside Inngest
-      // If no URL extracted, get async providers for the input type
-      // Gate 007A: never a paid provider here. Delayed, retried, duplicated or replayed worker runs must not be
-      // able to call Google Web Risk; paid calls happen only in the signed-in scan request, under a reservation.
-      const providers = withoutPaidProviders(
-        target.normalizedUrl
-          ? getFastProviders("url")
-          : getAsyncProviders(input_type as "email" | "header")
-      )
-
-      // If no providers available, complete as unknown
-      if (providers.length === 0) {
-        await completeScan(organization_id, scan_id, {
-          riskScore: 0,
-          confidenceScore: 10,
-          verdict: "unknown",
-          durationMs: Date.now() - startTime,
-        })
-
-        return { scan_id, verdict: "unknown", reason: "No providers available for this input" }
-      }
-
-      // Run all providers in parallel
-      const providerResults = await Promise.allSettled(
-        providers.map((provider) =>
-          provider.run(providerInput, providerInputType as "url" | "domain")
-        )
-      )
-
-      const results = providers.map((provider, i) => ({
-        providerName: provider.name,
-        result:
-          providerResults[i].status === "fulfilled"
-            ? providerResults[i].value
-            : {
-                verdict: "error" as const,
-                error: "Provider threw unexpectedly",
-                scoreImpact: 0,
-                confidenceImpact: -10,
-                evidenceTitle: `${provider.displayName} check failed`,
-                evidenceDetail: "An unexpected error occurred.",
-                evidenceSeverity: "info" as const,
-                rawResponse: null,
-                responseTimeMs: 0,
-              },
-      }))
-
-      const confidenceScore = calculateConfidenceFromProviders(results, providers.length)
-      const { riskScore, verdict } = calculateRiskScoreFromProviders(results, confidenceScore)
-      const scanDurationMs = Date.now() - startTime
-
-      const evidenceRows = results.map(({ providerName, result }) =>
-        buildEvidenceItem(scan_id, organization_id, providerName, result)
-      )
-      await insertEvidenceItems(organization_id, evidenceRows)
-
-      const vendorRows = results.map(({ providerName, result }) =>
-        buildVendorResultRow(scan_id, organization_id, providerName, result)
-      )
-      await insertVendorResults(organization_id, vendorRows)
-
-      await completeScan(organization_id, scan_id, {
-        riskScore,
-        confidenceScore,
-        verdict,
-        durationMs: scanDurationMs,
-      })
-
-      return { scan_id, verdict, riskScore, confidenceScore }
-
-    } catch (error) {
-      await failScan(organization_id, scan_id, Date.now() - startTime)
-      throw error
-    }
-  }
+  async ({ event }) =>
+    processScanJob(
+      {
+        loadScan: loadScanForProcessing,
+        markProcessing: markScanProcessing,
+        normalizeTarget: normalizeScanTarget,
+        // Never a paid provider here (workerFlow filters again, independently).
+        getProviders: (hasUrl, inputType) =>
+          withoutPaidProviders(hasUrl ? getFastProviders("url") : getAsyncProviders(inputType as "email" | "header")),
+        scoring: {
+          confidence: calculateConfidenceFromProviders,
+          risk: calculateRiskScoreFromProviders,
+          evidence: buildEvidenceItem,
+          vendor: buildVendorResultRow,
+        },
+        insertEvidence: insertEvidenceItems,
+        insertVendorResults,
+        completeScan,
+        failScan,
+        now: () => Date.now(),
+      },
+      event.data?.scan_id
+    )
 )

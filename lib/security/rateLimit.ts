@@ -162,12 +162,30 @@ export async function admitScan(args: {
   return interpretAdmission(result.data, result.error)
 }
 
-// Client IP for login limiting. The hosting proxy (Azure Container Apps ingress; Vercel today) appends or sets
-// the real client address as the LAST X-Forwarded-For entry; earlier entries can be forged by the client.
+// Client IP for login limiting: the RIGHTMOST X-Forwarded-For entry, i.e. the address added by the last proxy.
+// Evidence (gate doc, "Client IP derivation"):
+//   - Vercel overwrites X-Forwarded-For with the client's public IP and does not forward external values
+//     (vercel.com/docs/headers/request-headers).
+//   - Azure Container Apps ingress appends to X-Forwarded-For; "Only the rightmost IP is provided by Azure Container
+//     Apps" (learn.microsoft.com/azure/container-apps/ingress-overview).
+//   - NOT valid behind another proxy such as Azure Front Door: the rightmost entry would then be that proxy's address
+//     (unverified), so every user would share one bucket. Such a deployment must change this derivation first.
+// Entries the client could forge (all but the rightmost) are ignored. Only a well-formed IPv4 (optional :port) or
+// IPv6 address is accepted; anything else maps to the shared "unknown" bucket.
 export function clientIpFromForwardedFor(headerValue: string | null): string {
   if (!headerValue) return "unknown"
   const parts = headerValue.split(",").map((p) => p.trim()).filter(Boolean)
-  return parts.length ? parts[parts.length - 1].toLowerCase() : "unknown"
+  if (parts.length === 0) return "unknown"
+  return normalizeIp(parts[parts.length - 1])
+}
+
+export function normalizeIp(raw: string): string {
+  const v = raw.trim().toLowerCase()
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?::\d{1,5})?$/.exec(v)
+  if (v4) return v4.slice(1, 5).every((o) => Number(o) <= 255) ? v4.slice(1, 5).map(Number).join(".") : "unknown"
+  const v6 = v.startsWith("[") ? /^\[([0-9a-f:.]+)\](?::\d{1,5})?$/.exec(v)?.[1] : v
+  if (v6 && v6.includes(":") && v6.length <= 45 && /^[0-9a-f:.]+$/.test(v6) && (v6.match(/::/g) ?? []).length <= 1) return v6
+  return "unknown"
 }
 
 export function normalizeLoginEmail(email: string): string {

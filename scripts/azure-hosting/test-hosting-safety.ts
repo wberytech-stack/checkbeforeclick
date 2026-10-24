@@ -334,7 +334,7 @@ check("bicep main: every symbol used with .id/.properties/.outputs is a declared
 {
   const prText = read(".github/workflows/pr-validate.yml");
   const prCode = prText.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");   // text checks ignore comments
-  type PrStep = { uses?: string; run?: string; with?: Record<string, unknown> };
+  type PrStep = { uses?: string; run?: string; with?: Record<string, unknown>; env?: Record<string, string> };
   type PrJob = { permissions?: Record<string, string>; environment?: unknown; steps?: PrStep[] };
   const pr = YAML.parse(prText) as { on?: Record<string, { branches?: string[] }>; permissions?: Record<string, string>; jobs?: Record<string, PrJob> };
   const prTriggers = Object.keys(pr.on ?? {});
@@ -348,14 +348,24 @@ check("bicep main: every symbol used with .id/.properties/.outputs is a declared
   check("pr-validate: no secrets, vars or token references", !/secrets\.|vars\.|github\.token|GH_TOKEN|GITHUB_TOKEN/.test(prCode));
   const steps = prJobs.flatMap(([, j]) => j.steps ?? []);
   const runs = steps.map((s) => s.run ?? "").filter(Boolean);
-  check("pr-validate: only checkout and setup-node actions", steps.filter((s) => s.uses).every((s) => /^actions\/(checkout|setup-node)@v4$/.test(s.uses as string)));
+  const pins: Record<string, string> = { "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262", "actions/setup-node": "49933ea5288caeca8642d1e84afbd3f7d6820020" };
+  const used = steps.filter((s) => s.uses).map((s) => s.uses as string);
+  check("pr-validate: only checkout and setup-node actions, each pinned to its reviewed immutable commit SHA",
+    used.length === 2 && used.every((u) => { const [name, ref] = u.split("@"); return pins[name] !== undefined && ref === pins[name]; }), used.join(","));
+  check("pr-validate: no action referenced by a movable tag or branch", !/uses:\s*[^\s#]+@(?![0-9a-f]{40}\b)/.test(prCode));
   check("pr-validate: checkout does not persist credentials", steps.filter((s) => s.uses?.startsWith("actions/checkout")).every((s) => s.with?.["persist-credentials"] === false));
   check("pr-validate: pins Node 24.14.0", steps.filter((s) => s.uses?.startsWith("actions/setup-node")).every((s) => s.with?.["node-version"] === "24.14.0"));
   check("pr-validate: installs with npm ci --ignore-scripts, no npx", runs.some((r) => /^npm ci --ignore-scripts\b/.test(r)) && !/\bnpx\b|npm (install|i|update|audit)\b/.test(prCode));
   check("pr-validate: runs tsc --noEmit", runs.some((r) => r === "./node_modules/.bin/tsc --noEmit -p tsconfig.json"));
   const suites = ["scripts/rate-limit/test-rate-limit.ts", "scripts/rate-limit/test-provider-budget.ts", "scripts/rate-limit/test-scan-flow.ts",
-    "scripts/rate-limit/test-login-flow.ts", "scripts/rate-limit/test-tenant-guard.ts", "scripts/azure-hosting/test-hosting-safety.ts"];
-  check("pr-validate: runs all six offline Gate 007A suites", suites.every((s) => runs.some((r) => r.endsWith(" " + s))), suites.filter((s) => !runs.some((r) => r.endsWith(" " + s))).join(","));
+    "scripts/rate-limit/test-login-flow.ts", "scripts/rate-limit/test-worker-flow.ts", "scripts/rate-limit/test-tenant-guard.ts",
+    "scripts/azure-hosting/test-hosting-safety.ts"];
+  check("pr-validate: runs all seven offline Gate 007A suites", suites.every((s) => runs.some((r) => r.endsWith(" " + s))), suites.filter((s) => !runs.some((r) => r.endsWith(" " + s))).join(","));
+  check("pr-validate: worker-flow suite runs with --conditions=react-server", runs.some((r) => r === "node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-worker-flow.ts"));
+  const build = steps.filter((s) => s.run === "./node_modules/.bin/next build");
+  check("pr-validate: runs next build exactly once, after every test suite", build.length === 1 && steps.indexOf(build[0]) === steps.length - 1);
+  check("pr-validate: the build step's only environment is NEXT_TELEMETRY_DISABLED=1 (no Supabase, key or URL values)",
+    JSON.stringify(build[0]?.env) === '{"NEXT_TELEMETRY_DISABLED":"1"}' && steps.every((s) => s === build[0] || s.env === undefined));
   check("pr-validate: scan-flow suite runs with --conditions=react-server", runs.some((r) => r === "node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-scan-flow.ts"));
   check("pr-validate: no deploy, cloud, database or network commands",
     !/\b(vercel|az|azd|supabase|psql|pg_dump|docker|curl|wget|gh|terraform|bicep)\b|validate-[a-z-]+-db\.ts|smoke\.ts/.test(runs.join("\n")));

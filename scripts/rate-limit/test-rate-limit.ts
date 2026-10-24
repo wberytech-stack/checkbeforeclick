@@ -209,6 +209,21 @@ check("A16 missing/zero retry falls back to 60 seconds", !noRetry.allowed && noR
 check("G05 client IP is the LAST X-Forwarded-For entry (forged leading entries ignored)", clientIpFromForwardedFor("1.2.3.4, 10.0.0.1, 203.0.113.9") === "203.0.113.9");
 check("G06 single X-Forwarded-For value", clientIpFromForwardedFor("203.0.113.9") === "203.0.113.9");
 check("G07 missing header -> shared 'unknown' bucket", clientIpFromForwardedFor(null) === "unknown" && clientIpFromForwardedFor(" , ") === "unknown");
+{
+  const cases: Array<[string, string]> = [
+    ["198.51.100.7:51234", "198.51.100.7"],                  // port stripped, so one client cannot rotate buckets by port
+    ["2001:DB8::1", "2001:db8::1"],                          // IPv6, case-normalized
+    ["[2001:db8::1]:443", "2001:db8::1"],                    // bracketed IPv6 with port
+    ["1.2.3.4, 2001:db8::7", "2001:db8::7"],
+    ["999.1.1.1", "unknown"],                                // octet out of range
+    ["not-an-ip", "unknown"],
+    ["1.2.3.4, evil<script>", "unknown"],                    // a malformed rightmost entry is never used as a key
+    ["2001:db8::1::2", "unknown"],                           // two "::"
+    ["1.2.3.4, " + "a".repeat(400), "unknown"],
+  ];
+  const bad = cases.filter(([h, want]) => clientIpFromForwardedFor(h) !== want).map(([h]) => h.slice(0, 30));
+  check("G09 only a well-formed rightmost IPv4/IPv6 becomes the key (ports stripped, case-normalized); anything else -> unknown", bad.length === 0, bad.join(" | "));
+}
 const h = rateLimitHeaders({ allowed: false, status: 429, reason: "x", retryAfterSeconds: 42 });
 check("G08 rejection headers carry Retry-After and no-store", h["Retry-After"] === "42" && h["Cache-Control"] === "no-store" && Object.keys(rateLimitHeaders({ allowed: true })).length === 0);
 

@@ -75,8 +75,10 @@ function makeWorld(opts: {
   failScanThrows?: boolean;
   markThrows?: boolean;
   getUserThrows?: boolean;
+  hangReservation?: boolean;
+  deadlineFires?: boolean;
 } = {}) {
-  const n = { getUser: 0, org: 0, admitRpc: 0, createScan: 0, mark: 0, reserve: 0, webRiskRequest: 0, domainAge: 0, persist: 0, failScan: 0, errors: 0, otherPaid: 0 };
+  const n = { timers: 0, timerMs: 0, cleared: 0, getUser: 0, org: 0, admitRpc: 0, createScan: 0, mark: 0, reserve: 0, webRiskRequest: 0, domainAge: 0, persist: 0, failScan: 0, errors: 0, otherPaid: 0 };
   const seen: { webRiskUrls: string[]; domainAgeUrls: string[]; persisted: any[]; reservedFor: string[] } = { webRiskUrls: [], domainAgeUrls: [], persisted: [], reservedFor: [] };
   const userId = opts.user === undefined ? "user-1" : opts.user?.id;
   const burst = createSlidingWindowLimiter({ limit: opts.burstLimit ?? 5, windowMs: 60_000, reason: "user_burst_limit" });
@@ -86,6 +88,7 @@ function makeWorld(opts: {
     n.reserve++;
     seen.reservedFor.push(admissionId);
     if (opts.reservation === "throw") throw new Error("rpc down");
+    if (opts.hangReservation) return new Promise<never>(() => {});
     if (opts.reservation) return opts.reservation;
     const L = opts.ledger;
     if (L) {
@@ -168,6 +171,10 @@ function makeWorld(opts: {
     failScan: async () => { n.failScan++; if (opts.failScanThrows) throw new Error("update failed"); },
     retryHeaders: rateLimitHeaders,
     now: () => 1_000,
+    timer: (ms) => {
+      n.timers++; n.timerMs = ms;
+      return { done: opts.deadlineFires ? Promise.resolve() : new Promise<void>(() => {}), clear: () => { n.cleared++; } };
+    },
     logError: () => { n.errors++; },
   };
   return { deps, n, seen, burst };
@@ -368,6 +375,38 @@ async function main() {
   {
     const w = makeWorld({ reservation: { data: null, error: { code: "x" } }, failScanThrows: true }); const r = await run(w);
     check("E04 budget refusal where failScan throws -> 500 JSON, still no Web Risk request", r.status === 500 && w.n.webRiskRequest === 0);
+  }
+
+  // ---- deadline inside maxDuration = 30 s ------------------------------------------------------------------------
+  {
+    const w = makeWorld({ hangReservation: true, deadlineFires: true }); const r = await run(w);
+    check("D01 hung reservation RPC -> 504 scan_timeout with scan_id, scan marked failed, nothing persisted, no Web Risk request",
+      r.status === 504 && r.body.reason === "scan_timeout" && typeof r.body.scan_id === "string" && w.n.failScan === 1 && w.n.persist === 0 && w.n.webRiskRequest === 0,
+      `${r.status} ${String(r.body.reason)}`);
+  }
+  {
+    const w = makeWorld(); await run(w);
+    check("D02 the deadline is 20 s (inside maxDuration 30 s) and its timer is cleared on a normal scan", w.n.timers === 1 && w.n.timerMs === 20_000 && w.n.cleared === 1);
+  }
+  {
+    const w = makeWorld({ body: { input: "no link here", input_type: "email" } }); await run(w);
+    check("D03 no deadline timer is started when there is nothing to check (no-target path)", w.n.timers === 0);
+  }
+
+  // ---- UI contract: app/(dashboard)/scan/new reads only scan_id, then /scan/[id] polls the stored status --------------
+  {
+    const outcomes: Array<[string, ScanResponse]> = [];
+    for (const [label, o] of [
+      ["url 201", {}], ["email 201", { body: { input: "see https://a.example/x", input_type: "email" } }],
+      ["header 201", { body: { input: "Link: <https://a.example/y>", input_type: "header" } }],
+      ["no-link 201", { body: { input: "plain text", input_type: "email" } }],
+      ["budget 503", { reservation: { data: [{ granted: false, reason: "provider_budget_exhausted", retry_after_seconds: 5, reservation_id: null }], error: null } }],
+      ["timeout 504", { hangReservation: true, deadlineFires: true }],
+    ] as const) outcomes.push([label, await run(makeWorld(o as any))]);
+    const bad = outcomes.filter(([, r]) => typeof r.body.scan_id !== "string").map(([l]) => l);
+    check("U01 every response for a created scan (201 complete, 503 budget, 504 timeout) carries scan_id", bad.length === 0, bad.join(","));
+    const terminal = outcomes.filter(([, r]) => r.status === 201).every(([, r]) => r.body.status === "complete");
+    check("U02 a 201 means the scan is already terminal (status complete); the result page needs no polling", terminal);
   }
 
   // ---- concurrency against an atomic ledger -----------------------------------------------------------------------

@@ -84,6 +84,11 @@ export async function POST(request: NextRequest) {
     failScan,
     retryHeaders: rateLimitHeaders,
     now: () => Date.now(),
+    timer: (ms) => {
+      let handle: ReturnType<typeof setTimeout> | undefined
+      const done = new Promise<void>((resolve) => { handle = setTimeout(resolve, ms) })
+      return { done, clear: () => clearTimeout(handle) }
+    },
     logError: (message, error) => console.error(message, error),
   })
 

@@ -8,6 +8,10 @@
 #           No `npx <package>` and nothing fetched outside the lockfile.
 # Node    : pinned 24.14.0, matching the other workflows and the built-in TypeScript type stripping
 #           the suites rely on.
+# Actions : pinned to immutable commit SHAs (the v4.4.0 release commits, which the v4 tags pointed to
+#           when this workflow first ran green).
+# Build   : `next build` with no environment file and no Supabase values (verified to succeed without
+#           them); telemetry off. It compiles and type-checks the app; it does not start or deploy it.
 name: pr-validate
 
 on:
@@ -28,11 +32,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24.14.0"
 
@@ -54,8 +58,16 @@ jobs:
       - name: Gate 007A login flow
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-login-flow.ts
 
+      - name: Gate 007A worker flow (react-server condition for the server-only marker)
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-worker-flow.ts
+
       - name: Gate 007A tenant guard
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-tenant-guard.ts
 
       - name: Hosting and workflow safety
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-hosting-safety.ts
+
+      - name: Production build (next build, no secrets, telemetry off)
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: ./node_modules/.bin/next build

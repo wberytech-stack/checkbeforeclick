@@ -4,32 +4,43 @@
 Google or Inngest. Running it is the founder's action. Approving this runbook approves nothing else: no merge,
 no production action, no migration (AGENTS.md sections 3 and 6.3).
 
+**What it cannot complete.** Release items R1, R5, R6 and R10 are **not** completed by this runbook existing,
+or by green CI. Each needs the recorded evidence described here (R5/R6) or its own founder check (R1, R10).
+
+Revision 2 (2026-10-24) addresses the review of `c6a8a97` (PR #45 review, 2026-10-24T09:31Z). See section 7.
+
 ## 0. Facts this runbook relies on
 
 | Item | Value | Source |
 | --- | --- | --- |
-| Code under test | `42a65d1b4e8987469f48db04238184a866888c04` (draft PR #45; reviewed code head `8042530` plus docs) | git |
-| Preview URL | `https://checkbeforeclick-7alirs8a6-checkbeforeclick.vercel.app` | GitHub deployment 7296701791, environment `Preview`, state `success`, 2026-10-24T09:20:17Z |
+| Code under test | application code of `8042530` (independently reviewed: recommend_approve). Later commits change docs only | git |
+| Preview URL | any Preview built from a commit at or after `8042530` on this branch, e.g. `https://checkbeforeclick-7alirs8a6-checkbeforeclick.vercel.app` (`42a65d1`) or `https://checkbeforeclick-kkakwno9a-checkbeforeclick.vercel.app` (`c6a8a97`). Record the URL and its commit | GitHub deployment records, state `success` |
 | Staging Supabase | `zgxmvpbvvakpsnzcymsf` (Preview uses staging per `docs/ENVIRONMENTS.md`) | repo; **verified in P3 below** |
 | Migration | `001_scan_admission.sql` applied to staging by the founder on 2026-10-23 | founder-reported |
-| Limits | burst 5 scans per user per minute; 50 per user, 200 per org, 500 global per 24 h; login 10 per IP and 5 per email per 15 min (per instance) | `lib/security/rateLimit.ts` |
+| Limits | burst 5 scans per user per minute; 50 per user, 200 per org, 500 global per 24 h; login 10 per IP and 5 per email per 15 min | `lib/security/rateLimit.ts` |
+| Where each limit lives | burst and login: **in memory, per server instance**; daily caps and Web Risk reservations: **in the database, shared** | same |
 | Provider deadline | 20 s → 504 `scan_timeout`; route `maxDuration` 30 s | `lib/scan/scanFlow.ts`, `app/api/scan/route.ts` |
+| Schema linkage | every reservation row carries the `admission_id` that funded it (at most one per admission). A **scan row has no `admission_id` column**, so scan ↔ admission is matched by order and time only | `001_scan_admission.sql`, `lib/data/index.ts` |
 
-If a newer commit lands on the branch, use the Preview of that commit instead and record its SHA.
+## 1. Paid Google Web Risk requests: hard cap 7
 
-## 1. Cost and approvals (decide before starting)
-
-- **Paid Google Web Risk requests: 7 in total.**
-  - ST2: 4 (url, domain, email with a link, header with a link).
+- **Authorized maximum: 7 paid requests** for the whole run, once approved in the evidence sheet:
+  - ST2: 4 (2a url, 2b domain, 2c email with a link, 2d header with a link);
   - ST6: 3 URL scans.
-  - Every other step makes **no** paid request: no-link inputs and login calls never reach Web Risk.
-- **They use the shared `GOOGLE_WEB_RISK_API_KEY`.** Dossier R1 (quota and budget alert) should be in place
-  first.
-- **Record your approval** of these 7 requests in the evidence sheet before ST2.
-- **ST5 is optional** and needs a Preview environment-variable change plus a redeploy (founder-only). Skip it
-  unless you want the kill-switch proof.
-- **Your own IP is locked out** of Preview sign-in for 15 minutes after ST1b/ST8. Those steps therefore run
-  last.
+  - Every other step makes **no** paid request: no-link inputs and login calls never reach Web Risk. ST5, if
+    run, is expected to make none.
+- **Anything beyond the 7 is NOT authorized by this runbook.** That covers:
+  - retrying or re-running ST2 or ST6;
+  - any extra scan whose input contains a link or a domain;
+  - any ST5 result that shows a Web Risk row.
+
+  Each of these needs a **new approval recorded in the evidence sheet** (date, count, reason) **and a fresh
+  quota check** (R1) before it is sent.
+- **The ledger is the counter.** After ST2 and again after ST6, run the cap check (section 3, P5). Stop if
+  `reservations_since` exceeds the approved running total: 4 after ST2, 7 after ST6.
+- **R1 comes first.** Google Cloud quota and budget alert must be in place, and confirmed on the day, before
+  the first paid step (ST2).
+- **Your own IP is locked out** of Preview sign-in for 15 minutes after ST1b/ST8. Those steps run last.
 
 ## 2. Stop conditions (abort and record)
 
@@ -37,7 +48,8 @@ Stop immediately, record the evidence, and do not continue, if any of these happ
 - any HTTP 500 from `/api/scan` or `/api/auth/login`;
 - a Web Risk vendor row with `error_message` containing `API error 401` or `API error 403`. That means the
   `X-Goog-Api-Key` header change does not authenticate; it is a **release blocker**;
-- more reservation rows than URL-bearing admitted scans, or any reservation for a no-link scan;
+- the cap check finds more reservations than approved, any reservation funded by a no-link admission, or any
+  reservation without its admission;
 - any scan with no link, or with a private or loopback target, getting `verdict = 'safe'`;
 - the Preview talking to a Supabase project other than staging (P3);
 - an unexpected Google Cloud cost or quota alert.
@@ -56,15 +68,14 @@ Record only `U1_ID`.
 
 **P3. Sign in on the Preview with U1 (this is ST1a).**
 - Expect the dashboard to open.
-- The browser now signs in only through `POST /api/auth/login`. In DevTools → Network, the login request must
-  go to `/api/auth/login` and return **200**.
-- Then confirm in the staging SQL editor that this Preview really uses staging:
+- In DevTools → Network, the login request must go to `/api/auth/login` and return **200**.
+- Then confirm that this Preview uses staging:
 ```sql
 select last_sign_in_at > now() - interval '5 minutes' as signed_in_just_now from auth.users where id = '<U1_ID>';
 ```
-`true` proves the Preview uses staging. `false` is a stop condition.
+`true` proves it. `false` is a stop condition.
 
-**P4. Baseline** (staging SQL editor, as `postgres`; record the four numbers):
+**P4. Baseline** (staging SQL editor, as `postgres`; record the values):
 ```sql
 select
   (select count(*) from public.scan_admissions where user_id = '<U1_ID>')            as admissions_u1,
@@ -73,23 +84,53 @@ select
   now()                                                                               as baseline_at;
 ```
 
+**P5. Exact ledger check** (reused after ST2, ST3 and ST6). One row per admission since the baseline, linked to
+the reservation it funded **by `admission_id`** (exact, not a time window):
+```sql
+select a.id as admission_id, a.input_type, a.admitted_at, r.id as reservation_id, r.reserved_at
+  from public.scan_admissions a
+  left join public.provider_call_reservations r
+         on r.admission_id = a.id and r.provider = 'google_web_risk'
+ where a.user_id = '<U1_ID>' and a.admitted_at > '<baseline_at>'
+ order by a.admitted_at;
+
+-- cap and integrity, same window
+select
+  (select count(*) from public.provider_call_reservations r
+    where r.user_id = '<U1_ID>' and r.reserved_at > '<baseline_at>')                    as reservations_since,
+  (select count(*) from public.provider_call_reservations r
+    left join public.scan_admissions a on a.id = r.admission_id
+    where r.user_id = '<U1_ID>' and r.reserved_at > '<baseline_at>' and a.id is null)   as reservations_without_admission,
+  (select count(*) from (select admission_id from public.provider_call_reservations
+     where user_id = '<U1_ID>' and reserved_at > '<baseline_at>'
+     group by admission_id having count(*) > 1) d)                                       as admissions_with_two_reservations;
+```
+
+**What P5 proves.**
+- Exactly which admissions funded a Web Risk request, and that none funded two.
+- `reservations_since` equals the number of paid requests the code reserved. The reservation is made
+  immediately before each request, and no request is made without one.
+
+**What P5 cannot prove.** Which scan row an admission belongs to: the schema has no link. That match is by order,
+because the steps run one at a time and 15 s apart.
+
 All console snippets below run in **DevTools → Console on the Preview tab, signed in as U1**. They only call the
 Preview's own `/api/...` routes. If the console refuses pasting, type `allow pasting` first.
 
 ## 4. Tests
 
-### ST2: one scan per input type (4 paid requests)
+### ST2: one scan per input type (paid requests 1–4 of 7)
 
-Space the scans about **15 s apart** so the burst limit (5 per minute) cannot interfere. Use the UI for `url`,
-`email` and `header` (the tabs "URL or Domain", "Full Email" and "Email Header"), and the console for `domain`.
+Space the scans about **15 s apart**. Run each **once**: a retry is a new paid request (section 1). Use the UI for
+`url`, `email` and `header`, and the console for `domain`.
 
 | # | Type | Input | Expected |
 | --- | --- | --- | --- |
-| 2a | url (UI) | `https://www.wikipedia.org/` | Result page opens; status complete; verdict `safe` or `unknown`; one Web Risk request |
-| 2b | domain (console) | `wikipedia.org` | 201, `status: "complete"`; one Web Risk request |
-| 2c | email (UI) | `Hello, please review https://www.wikipedia.org/wiki/Phishing today.` | complete; one Web Risk request on that first link |
-| 2d | header (UI) | `List-Unsubscribe: <https://www.wikipedia.org/>` | complete; one Web Risk request |
-| 2e | email (UI) | `Hello, please call me about the invoice. No links here.` | complete; verdict **unknown**; **no** Web Risk request |
+| 2a | url (UI) | `https://www.wikipedia.org/` | Result page; status complete; verdict `safe` or `unknown`; funds 1 reservation |
+| 2b | domain (console) | `wikipedia.org` | 201, `status: "complete"`; funds 1 reservation |
+| 2c | email (UI) | `Hello, please review https://www.wikipedia.org/wiki/Phishing today.` | complete; funds 1 reservation (its first link) |
+| 2d | header (UI) | `List-Unsubscribe: <https://www.wikipedia.org/>` | complete; funds 1 reservation |
+| 2e | email (UI) | `Hello, please call me about the invoice. No links here.` | complete; verdict **unknown**; **no** reservation |
 
 Console for 2b:
 ```js
@@ -100,29 +141,23 @@ await (async () => {
 })();
 ```
 
-SQL after ST2:
+After ST2, run **P5** and this scan list:
 ```sql
-select s.created_at, s.input_type, s.status, s.verdict, s.scan_duration_ms,
-       (select count(*) from public.provider_call_reservations r
-          join public.scan_admissions a on a.id = r.admission_id
-         where a.user_id = s.user_id and r.reserved_at between s.created_at - interval '5 seconds' and s.created_at + interval '30 seconds') as reservations_near
-  from public.scans s
- where s.user_id = '<U1_ID>' and s.created_at > '<baseline_at>'
- order by s.created_at;
-select count(*) as admissions_since from public.scan_admissions where user_id = '<U1_ID>' and admitted_at > '<baseline_at>';
-select count(*) as reservations_since from public.provider_call_reservations where user_id = '<U1_ID>' and reserved_at > '<baseline_at>';
+select created_at, input_type, status, verdict, scan_duration_ms
+  from public.scans where user_id = '<U1_ID>' and created_at > '<baseline_at>' order by created_at;
 ```
 
 Pass conditions:
-- 5 scans, all `complete`;
-- `admissions_since = 5`;
-- `reservations_since = 4`;
-- 2e has verdict `unknown` and no reservation near it.
+- P5 lists exactly **5 admissions**, in order `url`, `domain`, `email`, `header`, `email`;
+- `reservation_id` is **non-null for the first four** and **null for the fifth** (2e). This is exact, by
+  `admission_id`;
+- `reservations_since = 4`, `reservations_without_admission = 0`, `admissions_with_two_reservations = 0`;
+- 5 scan rows, all `complete`; 2e has verdict `unknown`.
 
 ### ST4: the Web Risk header change authenticates (uses the ST2 requests; no extra spend)
 
 ```sql
-select s.input_type, v.vendor_name, v.verdict, v.error_message, v.response_time_ms
+select s.created_at, s.input_type, v.verdict, v.error_message, v.response_time_ms
   from public.vendor_results v join public.scans s on s.id = v.scan_id
  where s.user_id = '<U1_ID>' and s.created_at > '<baseline_at>' and v.vendor_name = 'google_web_risk'
  order by s.created_at;
@@ -134,8 +169,10 @@ Pass conditions:
 - `error_message` is null;
 - `response_time_ms` > 0.
 
-An `API error 401/403` is the stop condition from section 2. Any other `error` is recorded and investigated
-before release.
+An `API error 401/403` is the stop condition from section 2.
+
+**What ST4 proves:** Google accepted the key sent in `X-Goog-Api-Key` for these requests. **What it cannot prove:**
+anything about R1 (quota and budget). That is checked separately in Google Cloud.
 
 ### ST3: burst limit (no paid requests)
 
@@ -155,16 +192,25 @@ await (async () => {
 
 Pass conditions:
 - attempts 1–5 return 201 with verdict `unknown`;
-- attempt 6 returns **429** with reason `user_burst_limit` and a `Retry-After` of 1–60.
+- attempt 6 returns **429** with reason `user_burst_limit` and a `Retry-After` of 1–60;
+- P5 shows the new admissions with **null** `reservation_id`;
+- `reservations_since` is unchanged (still 4).
 
-SQL afterwards: admissions rose by 5 more, and reservations by **0**.
+**What a pass proves:** the burst limiter works on the instance or instances that served these six requests,
+and a burst rejection consumes no admission.
 
-The limiter is per instance. If Vercel spreads the six requests across instances, more than 5 can succeed.
-Record what you see, re-run once after 60 s, and report both runs. Do not repeat further.
+**What it does not prove:**
+- a global per-user limit across instances. The limiter is in memory, per instance. With *k* concurrent
+  instances a user can make up to 5 × *k* scans per minute;
+- anything about the daily caps. Those are enforced in the database, shared across instances, and covered by
+  the disposable-database validation.
 
-### ST6: latency (3 paid requests)
+If more than 5 requests succeed, that is the documented per-instance behaviour, not a defect of this run. Record
+it, re-run once after 60 s, and report both runs.
 
-Wait 60 s after ST3, then:
+### ST6: latency (paid requests 5–7 of 7)
+
+Wait 60 s after ST3. Run **once**; a re-run needs a new approval (section 1).
 ```js
 await (async () => {
   const urls = ["https://www.wikipedia.org/wiki/Main_Page", "https://www.mozilla.org/", "https://www.python.org/"];
@@ -184,31 +230,33 @@ await (async () => {
 Pass conditions:
 - all three return 201;
 - each takes **under 10 s** (target);
-- none takes more than 20 s. A 504 `scan_timeout` is a finding to record.
+- none takes more than 20 s (a 504 `scan_timeout` is a finding);
+- P5 afterwards shows `reservations_since = 7`, three more reserved `url` admissions, and both integrity
+  counts at 0.
 
-Also record `scan_duration_ms` from SQL for these scans.
+Also record `scan_duration_ms` from the scan list.
 
 ### ST7: the Inngest worker is not used (no requests)
 
-In the Inngest dashboard, open the environment that serves this Preview (a branch environment, if Vercel
-branch environments are enabled). Filter function `process-scan` and event `scan/requested`, from `T0` until
-now.
+In the Inngest dashboard, open the environment that serves this Preview. Filter function `process-scan` and event
+`scan/requested` from `T0` until now.
 
 Pass condition: **0 new runs and 0 new `scan/requested` events.**
 
 ### ST5 (optional): kill switch (founder-only environment change)
 
-1. Set `WEB_RISK_PROVIDER_ENABLED=false` for Preview in Vercel, and redeploy this commit's Preview.
-2. Run one URL scan (no paid request is expected).
+1. Set `WEB_RISK_PROVIDER_ENABLED=false` for Preview in Vercel, and redeploy.
+2. Run one URL scan.
 3. Restore the variable and redeploy.
 
 Pass conditions:
 - 201;
 - verdict is **not** `safe`;
-- reservations rose by 0;
-- the vendor rows contain no `google_web_risk` row.
+- P5 shows that admission with a **null** `reservation_id`;
+- no `google_web_risk` vendor row.
 
-If you skip it, record it as "not run (optional)".
+If a reservation **does** appear, it counts against the cap of 7 and is a finding. If you skip ST5, record it as
+"not run (optional)".
 
 ### ST1b: login throttle (no paid requests; locks your IP for 15 min, so run it near the end)
 
@@ -221,15 +269,28 @@ Pass conditions:
 - attempt 6 shows "Too many sign-in attempts. Please wait about 15 minutes and try again.";
 - in Network, the 6th response is **429** with `Retry-After` and `Cache-Control: no-store`.
 
-Per-instance caveat: if attempt 6 still shows "Invalid", continue up to 10 attempts and record the attempt
-number of the first 429.
+**What a pass proves:** the UI signs in through the throttled route, and the per-email limit works on the
+instance or instances that served these attempts.
 
-After that, **wait 15 minutes** before ST8, because both use your IP's bucket. U1 itself is never locked, since
-ST1b uses a non-existent address.
+**What it does not prove:**
+- a global limit across instances (per-instance memory);
+- any protection against direct calls to Supabase Auth with the public anon key. That is Supabase's own rate
+  limit and CAPTCHA (R3).
 
-### ST8: a forged X-Forwarded-For does not change the IP bucket (no paid requests)
+If attempt 6 is still 401, continue up to 10 attempts and record the attempt number of the first 429. Then
+**wait 15 minutes** before ST8. U1 itself is never locked.
 
-Run this ≥ 15 minutes after ST1b, on the Preview tab. Signing in is not required.
+### ST8: forged client address (no paid requests)
+
+**What this step tests.** A client cannot get a fresh per-IP login bucket by sending its own
+`X-Forwarded-For`. It checks the deployed system end to end. It does **not** reveal *where* the forged value was
+discarded, at Vercel's edge or in the app. The proxy-hop topology is verified separately (section 5).
+
+**Method A: browser (default).** Run it ≥ 15 minutes after ST1b, on the Preview tab.
+- `X-Forwarded-For` is not a forbidden request header in the Fetch standard, so a same-origin `fetch()` sends it.
+- **You must confirm that it was actually sent:** in DevTools → Network, open attempt 1 and check that
+  **Request Headers** list `x-forwarded-for: 198.51.100.1`.
+- If that header is absent, the browser did not send it, and ST8 is **not exercised**, not passed.
 ```js
 await (async () => {
   const out = [];
@@ -243,35 +304,104 @@ await (async () => {
 })();
 ```
 
-Pass conditions:
+**Method B: non-browser (only if the Preview has no Vercel Deployment Protection).** Run it from Windows
+PowerShell, and **only** against the Preview host. Do not use a protection-bypass secret: if the Preview requires
+Vercel authentication, Method B is "not run".
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$preview = 'https://checkbeforeclick-kkakwno9a-checkbeforeclick.vercel.app'   # the Preview under test, nothing else
+foreach ($i in 1..11) {
+  $body = @{ email = "st8b-$i-$(Get-Date -Format yyyyMMddHHmmss)@example.invalid"; password = 'wrong-password' } | ConvertTo-Json
+  try {
+    $r = Invoke-WebRequest -Uri "$preview/api/auth/login" -Method Post -ContentType 'application/json' -Body $body `
+         -Headers @{ 'X-Forwarded-For' = "198.51.100.$i" } -MaximumRedirection 0 -UseBasicParsing
+    "$i $($r.StatusCode)"
+  } catch {
+    $resp = $_.Exception.Response
+    if ($resp) { "$i $([int]$resp.StatusCode)" } else { "$i no HTTP response: $($_.Exception.Message)" }
+  }
+}
+```
+
+Pass conditions (either method):
 - attempts 1–10 return **401**;
 - attempt **11** returns **429**.
 
-Each attempt uses a different email and a different forged address, so a 429 at attempt 11 shows that every
-attempt counted against your one real IP. If all 11 return 401 because the forged value was trusted (or the
-requests were spread across instances), record it and repeat once after 15 minutes. Two all-401 runs are a
-**finding** for the client-IP derivation.
+Each attempt uses a different email and a different forged address, so a 429 at attempt 11 means every attempt
+counted against your one real address.
 
-## 5. Evidence sheet (copy, fill in, keep secrets out)
+**What a pass proves:** on the instance or instances that served the run, forged values did not change the IP
+bucket.
+
+**What it does not prove:**
+- which layer discarded the forged value;
+- that limits are global across instances;
+- anything about Azure or Front Door (R10).
+
+If all 11 return 401, record it, check that the header was really sent, and repeat once after 15 minutes. Two
+all-401 runs with the header confirmed sent are a **finding** for the client-IP derivation. With the header
+absent, the run is "not exercised".
+
+## 5. Deployment topology to record (needed to interpret ST3, ST1b and ST8)
+
+Record these from the Vercel dashboard. Values that cannot be seen are recorded as "unknown", never guessed.
+- **Plan**, and the **function region** for the Preview.
+- **Fluid compute:** on or off.
+- **Deployment Protection** on Previews: on or off. This decides whether ST8 Method B is possible.
+- **Proxies in front:** whether any proxy or CDN other than Vercel's sits in front of the Preview (expected:
+  none).
+- **Instance count is not visible to you.** A single-instance pass therefore proves only per-instance
+  behaviour.
+- **The proxy-hop topology itself is checked by documentation, not by this runbook.** The gate doc cites Vercel's
+  statement that it overwrites `X-Forwarded-For` (section "Review round 1 response", item 2). Any other
+  topology, such as Azure Front Door, needs its own verification (R10).
+
+## 6. Evidence sheet (copy, fill in, keep secrets out)
 
 ```text
 Gate 007A staging run - executed by: founder        Date (UTC): ____        T0: ____
-Commit / Preview URL: 42a65d1 / https://checkbeforeclick-7alirs8a6-checkbeforeclick.vercel.app
-Approval of 7 paid Web Risk requests (ST2 x4, ST6 x3): yes / no      Google Cloud quota/budget (R1) in place: yes / no
+Preview URL / commit: ____ / ____
+Paid Web Risk approval: max 7 (ST2 x4, ST6 x3) approved: yes / no        R1 quota/budget confirmed today: yes / no
+Additional paid approvals (each: date, count, reason, quota re-checked): none / ____
+Topology: plan=__ region=__ fluid=__ deployment protection=__ other proxy=__ (unknown allowed)
 P3 Preview uses staging (signed_in_just_now): true / false
 P4 baseline: admissions_u1=__ reservations_u1=__ scans_u1=__ baseline_at=____
-ST2: scans complete __/5; admissions_since=__ (exp 5); reservations_since=__ (exp 4); 2e verdict=__ (exp unknown)
+ST2/P5: admissions in order=__ (exp url,domain,email,header,email); reserved=__ (exp yes,yes,yes,yes,no)
+        reservations_since=__ (exp 4); without_admission=__ (exp 0); two_reservations=__ (exp 0)
+        scans complete __/5; 2e verdict=__ (exp unknown)
 ST4: web risk rows=__ (exp 4); verdicts=__; error_message all null: yes/no; any API error 401/403: yes/no
-ST3: statuses=__ (exp 201 x5, then 429 user_burst_limit); Retry-After=__; extra admissions=__ (exp 5); extra reservations=__ (exp 0)
-ST6: ms=__/__/__ (target <10000 each); scan_duration_ms=__/__/__; any 504: yes/no
+ST3: statuses=__ (exp 201 x5, then 429 user_burst_limit); Retry-After=__; new admissions unreserved: yes/no; reservations_since=__ (exp 4)
+ST6: ms=__/__/__ (target <10000 each); scan_duration_ms=__/__/__; any 504: yes/no; reservations_since=__ (exp 7); integrity 0/0: yes/no
 ST7: process-scan runs since T0=__ (exp 0); scan/requested events=__ (exp 0)
-ST5: not run (optional) / result: __
+ST5: not run (optional) / result: __ (reservation appeared: yes/no)
 ST1a: login via /api/auth/login 200: yes/no; dashboard opened: yes/no
 ST1b: first 429 at attempt __ (exp 6); message shown: __; Retry-After=__; Cache-Control no-store: yes/no
-ST8: first 429 at attempt __ (exp 11); statuses=__
+ST8: method A / B / not run; header confirmed sent (A): yes/no; first 429 at attempt __ (exp 11); statuses=__
 Stop conditions hit: none / ____
 Unexpected observations: ____
 ```
 
 When the sheet is filled in, paste it back. Claude Code will record it in the gate document (dossier R5/R6) as
-founder-reported evidence, with the SQL outputs, and will not treat any item as passed without its numbers.
+founder-reported evidence. It will mark no item passed without its numbers, and will not mark R1 or R10 complete
+from this run.
+
+## 7. Revision history
+
+- **Revision 1** (`c6a8a97`): initial runbook.
+- **Revision 2:** the review of `c6a8a97` (PR #45 review, 2026-10-24T09:31Z) raised four findings.
+  1. **ST8 and `X-Forwarded-For`.** The review called it a forbidden browser request header. It is not:
+     neither the WHATWG Fetch standard's forbidden request-header list nor MDN's includes it; only `Proxy-`/`Sec-`
+     prefixes and a fixed set such as `Host`, `Origin`, `Via` are forbidden.
+     - The underlying concern is valid, so ST8 now:
+       - requires confirming in DevTools that the header was actually sent (otherwise "not exercised");
+       - states that it tests the end-to-end effect only, not which layer discards the value;
+       - adds a non-browser Method B, which needs no secrets and is used only when the Preview is unprotected;
+       - leaves topology verification to section 5 and R10.
+  2. **Single-instance limits.** ST3, ST1b and ST8 now say what a pass proves and does not prove, and section 5
+     records the deployment topology.
+  3. **Paid-call cap.** Section 1 now caps paid Web Risk requests at 7. Every retry, re-run or unexpected
+     link-bearing test needs a new recorded approval and quota check. The ledger is checked against the running
+     total after ST2 and ST6.
+  4. **Exact reservation linkage.** ST2 uses an exact per-admission check (P5: `admission_id` join) instead of
+     the time-window correlation, plus integrity counts. The doc states that the scan ↔ admission match remains
+     by order, because the schema has no link.

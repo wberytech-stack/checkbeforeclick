@@ -40,6 +40,8 @@ Every live step below is founder-only.
 
 ## 3. Founder actions for the first authenticated staging run
 
+Steps 1–4 can be done in one founder-run, idempotent command: see [`gate-006c-staging-auth-bootstrap.md`](gate-006c-staging-auth-bootstrap.md). It never dispatches a workflow.
+
 All of these are in the **staging** Supabase project `zgxmvpbvvakpsnzcymsf` and in GitHub. Nothing touches production.
 
 1. **Create two test accounts** in staging Supabase (Authentication → Users → Add user, with "Auto Confirm User" ticked). Use dedicated addresses, for example `cbc-stg-test-a@<your domain>` and `cbc-stg-test-b@<your domain>`, with strong, unique passwords that are used nowhere else.

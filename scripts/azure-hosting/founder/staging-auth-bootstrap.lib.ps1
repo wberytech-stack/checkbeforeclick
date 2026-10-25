@@ -27,7 +27,14 @@ $script:Cbc = @{
 }
 
 class CbcStop : System.Exception { CbcStop([string]$m) : base($m) {} }
+# A user was created but its credential pair is incomplete: never a success, founder
+# recovery required (see Get-PartialRecovery).
+class CbcPartial : CbcStop { CbcPartial([string]$m) : base($m) {} }
 function Stop-Bootstrap([string]$Message) { throw [CbcStop]::new($Message) }
+function Stop-Partial([string]$Message) { throw [CbcPartial]::new($Message) }
+function Get-PartialRecovery([string]$Label, [int]$Generation) {
+  return "Founder recovery: rerun with -Replace -Generation $($Generation + 1) (creates and verifies a fresh account $Label and overwrites both of its secrets), then delete the orphaned staging user for account $Label in Supabase (Authentication, Users; address +cbc-stg-test-$($Label.ToLowerInvariant())-g<earlier generation>)."
+}
 
 # ------------------------------------------------------------------ guarded gh
 function Test-GhAllowed([string[]]$GhArgs) {
@@ -151,10 +158,20 @@ function Invoke-StagingAuthBootstrap {
     [int]$Generation = 1,
     [string]$OrgIdA = '',
     [string]$OrgIdB = '',
+    # Accounts whose two secrets already exist cannot be re-verified here (secret values
+    # are never read back). Choose one explicitly: -Replace creates and verifies a fresh
+    # pair and overwrites the secrets; -AttestExisting keeps them on founder attestation
+    # (with -OrgIdA/-OrgIdB) and the outcome is ATTESTED, not VERIFIED.
+    [switch]$AttestExisting,
+    [switch]$Replace,
     [scriptblock]$Log = { param($m) Write-Host $m }
   )
   $R = $script:Cbc.Repo; $E = $script:Cbc.Environment
-  $report = [ordered]@{ Created = New-Object System.Collections.ArrayList; Verification = $null; OrgEvidence = $null }
+  $report = [ordered]@{
+    Created = New-Object System.Collections.ArrayList; Verification = $null; OrgEvidence = $null
+    Accounts = [ordered]@{ A = $null; B = $null }; Outcome = $null; Notes = New-Object System.Collections.ArrayList
+  }
+  $script:LastReport = $report
   $note = { param($m) [void]$report.Created.Add($m); & $Log "  created: $m" }
 
   # ---- preflight: nothing is written until all of these pass
@@ -193,11 +210,31 @@ function Invoke-StagingAuthBootstrap {
     $secretNames = @((ConvertFrom-JsonSafe (Invoke-Gh @('secret', 'list', '--env', $E, '--repo', $R, '--json', 'name')).Out) | ForEach-Object { $_.name })
     foreach ($v in @(ConvertFrom-JsonSafe (Invoke-Gh @('variable', 'list', '--env', $E, '--repo', $R, '--json', 'name,value')).Out)) { if ($v) { $vars[$v.name] = [string]$v.value } }
   }
+  if ($AttestExisting -and $Replace) { Stop-Bootstrap 'use either -Replace or -AttestExisting, not both' }
   $state = @{}
   foreach ($x in @('A', 'B')) {
-    $has = @("CBC_TEST_$($x)_EMAIL", "CBC_TEST_$($x)_PASSWORD" | Where-Object { $secretNames -contains $_ }).Count
-    if ($has -eq 1) { Stop-Bootstrap "environment holds only one of CBC_TEST_$($x)_EMAIL / _PASSWORD; fix it in GitHub (delete the remaining one) and rerun" }
-    $state[$x] = if ($has -eq 2) { 'existing' } else { 'new' }
+    $present = @("CBC_TEST_$($x)_EMAIL", "CBC_TEST_$($x)_PASSWORD" | Where-Object { $secretNames -contains $_ })
+    if ($present.Count -eq 1) {
+      # R2: an earlier run created the user but stored only one secret.
+      if (-not $Replace) {
+        Stop-Partial "PARTIAL: environment holds only $($present[0]) for account $x (an earlier run created the user but did not store both credentials). This is not a completed bootstrap. $(Get-PartialRecovery $x $Generation)"
+      }
+      & $Log "  account ${x}: incomplete credential pair will be replaced (-Replace)"
+      $state[$x] = 'new'
+    } elseif ($present.Count -eq 2) {
+      # R1: two secret names prove nothing about authentication or the profile.
+      if ($Replace) { $state[$x] = 'new'; & $Log "  account ${x}: stored credentials will be replaced (-Replace)" }
+      elseif ($AttestExisting) { $state[$x] = 'attested' }
+      else {
+        Stop-Bootstrap "account $x already has stored credentials, which this script cannot verify without reading secrets. Choose one: rerun with -Replace -Generation $($Generation + 1) (creates and verifies a fresh account, overwrites its secrets), or rerun with -AttestExisting -OrgIdA <uuid> -OrgIdB <uuid> (your attestation; outcome ATTESTED, verified only by the first staging-auth-journeys run)"
+      }
+    } else { $state[$x] = 'new' }
+  }
+  if ($AttestExisting) {
+    if (@($state.Values | Where-Object { $_ -eq 'attested' }).Count -eq 0) { Stop-Bootstrap '-AttestExisting was given but no account has stored credentials' }
+    foreach ($x in @('A', 'B')) {
+      if ($state[$x] -eq 'attested' -and -not (Get-Variable "OrgId$x" -ValueOnly)) { Stop-Bootstrap "-AttestExisting needs -OrgId$x (organization_id from the read-only SQL in the gate document, step 3.2)" }
+    }
   }
   & $Log "  ok  environment $E $(if ($envNow.Code -eq 0) { 'exists' } else { 'does not exist yet' }); account A $($state.A), account B $($state.B)"
 
@@ -221,7 +258,11 @@ function Invoke-StagingAuthBootstrap {
   $observed = @{ A = $null; B = $null }
   foreach ($x in @('A', 'B')) {
     & $Log "== Account $x ($($emails[$x]))"
-    if ($state[$x] -eq 'existing') { & $Log '  already bootstrapped (credentials stored); not recreated'; continue }
+    if ($state[$x] -eq 'attested') {
+      $report.Accounts[$x] = 'ATTESTED'
+      & $Log '  stored credentials kept on founder attestation; sign-in and profile NOT verified by this run (J1-J4 of the first staging-auth-journeys run verify them)'
+      continue
+    }
     $pw = New-CbcPassword
     $su = Invoke-CbcHttp 'POST' "$sb/auth/v1/signup" @{ apikey = $anon } (@{ email = $emails[$x]; password = $pw } | ConvertTo-Json -Compress)
     $sj = ConvertFrom-JsonSafe $su.Body
@@ -232,11 +273,19 @@ function Invoke-StagingAuthBootstrap {
     $uid = if ($sj -and $sj.user) { [string]$sj.user.id } else { '' }
     if ($su.Status -ne 200 -or -not $token -or $uid -notmatch $script:Cbc.Uuid -or -not $sj.user.email_confirmed_at) { Stop-Bootstrap "signup for account $x did not return a confirmed user with a session (status $($su.Status)); nothing stored for it" }
     & $note "staging user $($emails[$x])"
-    # Store the credentials at once, so a later failure cannot lose them.
+    # Store the credentials at once, so a later failure cannot lose them. If only one of
+    # the two is stored, the result is PARTIAL (R2), never an ordinary failure or success.
+    $stored = @()
     foreach ($pair in @(@("CBC_TEST_$($x)_EMAIL", $emails[$x]), @("CBC_TEST_$($x)_PASSWORD", $pw))) {
-      if ((Invoke-Gh @('secret', 'set', $pair[0], '--env', $E, '--repo', $R) $pair[1]).Code -ne 0) { Stop-Bootstrap "could not store secret $($pair[0]); the user exists, rerun with -Generation $($Generation + 1) after deleting it" }
+      if ((Invoke-Gh @('secret', 'set', $pair[0], '--env', $E, '--repo', $R) $pair[1]).Code -ne 0) {
+        $pw = $null; $token = $null
+        if ($stored.Count -eq 0) { Stop-Bootstrap "user $($emails[$x]) was created but no credential could be stored. Delete it in Supabase (Authentication, Users) or rerun with -Generation $($Generation + 1)" }
+        Stop-Partial "PARTIAL: user $($emails[$x]) was created and $($stored -join ', ') stored, but $($pair[0]) could not be stored. $(Get-PartialRecovery $x $Generation)"
+      }
+      $stored += $pair[0]
       & $note "secret $($pair[0])"
     }
+    if ($Replace) { [void]$report.Notes.Add("account ${x}: credentials replaced; delete the earlier staging user for account $x in Supabase (Authentication, Users)") }
     # Profile and organization: the account's own users row, read with its own token.
     $row = Invoke-CbcHttp 'GET' "$sb/rest/v1/users?select=id,organization_id&id=eq.$uid" @{ apikey = $anon; authorization = "Bearer $token"; accept = 'application/json' }
     $rows = @(ConvertFrom-JsonSafe $row.Body)
@@ -257,6 +306,7 @@ function Invoke-StagingAuthBootstrap {
     }
     $null = Invoke-CbcHttp 'POST' "$sb/auth/v1/logout" @{ apikey = $anon; authorization = "Bearer $token" } '{}'
     $pw = $null; $token = $null
+    $report.Accounts[$x] = 'VERIFIED'
   }
 
   # ---- organizations: distinct, observed where possible, otherwise founder evidence
@@ -295,5 +345,8 @@ function Invoke-StagingAuthBootstrap {
   foreach ($k in $checks.Keys) { & $Log ("  {0}  {1}" -f $(if ($checks[$k]) { 'ok  ' } else { 'FAIL' }), $k) }
   $report.Verification = $checks
   if (@($checks.Values | Where-Object { -not $_ }).Count -gt 0) { Stop-Bootstrap 'verification failed; see the lines above' }
+  # VERIFIED only if this run signed up and checked both accounts and observed both
+  # organizations; anything resting on founder evidence is ATTESTED.
+  $report.Outcome = if ($report.Accounts.A -eq 'VERIFIED' -and $report.Accounts.B -eq 'VERIFIED' -and $report.OrgEvidence -like 'VERIFIED*') { 'VERIFIED' } else { 'ATTESTED' }
   return $report
 }

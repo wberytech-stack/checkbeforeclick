@@ -29,7 +29,7 @@ function New-World([hashtable]$o = @{}) {
     Vars = @{ CBC_STG_NEXT_PUBLIC_SUPABASE_URL = "https://$STG.supabase.co"; CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY = $ANON; CBC_STG_NEXT_PUBLIC_APP_URL = "https://$APPHOST" }
     Settings = @{ external = @{ email = $true }; disable_signup = $false; mailer_autoconfirm = $true }
     EnvExists = $false; Reviewers = @(); Policies = @(); Secrets = @{}; EnvVars = @{}
-    Users = @{}; Orgs = @($ORG1, $ORG2); RowsReadable = $true; ProfileMissing = $false; SignupFail = $false
+    Users = @{}; Orgs = @($ORG1, $ORG2, $ORG1, $ORG2, $ORG1, $ORG2); RowsReadable = $true; ProfileMissing = $false; SignupFail = $false; FailSecret = $null
     GhLog = New-Object System.Collections.ArrayList; HttpLog = New-Object System.Collections.ArrayList
     Violations = New-Object System.Collections.ArrayList; SecretArgs = New-Object System.Collections.ArrayList
   }
@@ -54,7 +54,7 @@ function global:Invoke-Gh([string[]]$GhArgs, [string]$StdIn = $null) {
         protection_rules = @(@{ type = 'required_reviewers'; reviewers = @($w.Reviewers | ForEach-Object { @{ type = 'User'; reviewer = @{ id = $_ } } }) }) }) }
     '^api repos/[^ ]+/deployment-branch-policies$' { return (& $j @{ branch_policies = @($w.Policies | ForEach-Object { @{ name = $_; type = 'branch' } }) }) }
     'deployment-branch-policies -f name=master' { $w.Policies = @($w.Policies) + 'master'; return @{ Code = 0; Out = '{}' } }
-    '^secret set (\S+) ' { [void]$w.SecretArgs.Add($line); $w.Secrets[$Matches[1]] = $StdIn; return @{ Code = 0; Out = '' } }
+    '^secret set (\S+) ' { [void]$w.SecretArgs.Add($line); if ($w.FailSecret -eq $Matches[1]) { return @{ Code = 1; Out = '' } }; $w.Secrets[$Matches[1]] = $StdIn; return @{ Code = 0; Out = '' } }
     '^secret list ' { return (& $j @($w.Secrets.Keys | ForEach-Object { @{ name = $_ } })) }
     '^variable set (\S+) .* --body (\S+)$' { $w.EnvVars[$Matches[1]] = $Matches[2]; return @{ Code = 0; Out = '' } }
     '^variable list ' { return (& $j @($w.EnvVars.Keys | ForEach-Object { @{ name = $_; value = $w.EnvVars[$_] } })) }
@@ -96,9 +96,9 @@ function Run-Boot([hashtable]$p = @{}) {
   $logs = New-Object System.Collections.ArrayList
   $args2 = @{ EmailBase = 'founder@example.com'; Log = { param($m) [void]$logs.Add($m) } }
   foreach ($k in $p.Keys) { $args2[$k] = $p[$k] }
-  $err = $null; $rep = $null
-  try { $rep = Invoke-StagingAuthBootstrap @args2 } catch { $err = $_.Exception.Message }
-  return @{ Report = $rep; Error = $err; Log = ($logs -join "`n") }
+  $err = $null; $rep = $null; $type = $null
+  try { $rep = Invoke-StagingAuthBootstrap @args2 } catch { $err = $_.Exception.Message; $type = $_.Exception.GetType().Name }
+  return @{ Report = $rep; Error = $err; Type = $type; Log = ($logs -join "`n") }
 }
 $writes = { @($script:W.GhLog | Where-Object { $_ -match '^(api -X|secret set|variable set)' }).Count + @($script:W.HttpLog | Where-Object { $_.Url -match '/signup$' }).Count }
 
@@ -118,13 +118,50 @@ Check 'fresh: organization variables set, distinct, observed' ($w.EnvVars['CBC_T
 Check 'fresh: log never contains a password, key or token' ($r.Log -notmatch [regex]::Escape($pa) -and $r.Log -notmatch [regex]::Escape($pb) -and $r.Log -notmatch [regex]::Escape($ANON) -and $r.Log -notmatch 'tok-')
 Check 'fresh: signup sessions are logged out' (@($w.HttpLog | Where-Object { $_.Url -match '/auth/v1/logout$' }).Count -eq 2)
 Check 'fresh: no workflow call, no admin endpoint, no service-role key' (@($w.GhLog | Where-Object { $_ -match 'workflow|run ' }).Count -eq 0 -and @($w.HttpLog | Where-Object { $_.Url -match '/admin' }).Count -eq 0)
+Check 'fresh: outcome VERIFIED with both accounts verified by this run' ($r.Report.Outcome -eq 'VERIFIED' -and $r.Report.Accounts.A -eq 'VERIFIED' -and $r.Report.Accounts.B -eq 'VERIFIED')
 Check 'fresh: report lists what was created' (($r.Report.Created -join '|') -match 'environment staging-auth-test' -and ($r.Report.Created -join '|') -match 'staging user founder\+cbc-stg-test-b-g1@example\.com' -and ($r.Report.Created -join '|') -match 'variable CBC_TEST_B_ORG_ID')
 
-# ------------------------------------------------------------------ rerun is idempotent
+# ------------------------------------------------------------------ R1: stored credentials are not proof
 $before = $w.Users.Count
+$pwBefore = $w.Secrets['CBC_TEST_A_PASSWORD']
+$snapshot = { @{ Gh = $script:W.GhLog.Count; Http = $script:W.HttpLog.Count } }
+$s0 = & $snapshot
 $r2 = Run-Boot
-Check 'rerun: passes and creates nothing (no signup, no secret writes)' ($null -eq $r2.Error -and $script:W.Users.Count -eq $before -and $r2.Report.Created.Count -eq 0 -and @($script:W.GhLog | Where-Object { $_ -match '^secret set' }).Count -eq 4) "$($r2.Error)"
-Check 'rerun: organization evidence from stored variables is reported as ATTESTED' ($r2.Report.OrgEvidence -like 'ATTESTED*')
+$newWrites = @($script:W.GhLog | Select-Object -Skip $s0.Gh | Where-Object { $_ -match '^(api -X|secret set|variable set)' }).Count
+Check 'R1 rerun without a choice: STOP (not PASS), offers -Replace and -AttestExisting, writes nothing' ($r2.Type -eq 'CbcStop' -and $r2.Error -match '-Replace -Generation 2' -and $r2.Error -match '-AttestExisting' -and $newWrites -eq 0 -and $script:W.Users.Count -eq $before) "$($r2.Error)"
+$r3 = Run-Boot @{ AttestExisting = $true }
+Check 'R1 -AttestExisting without organization ids: STOP' ($r3.Error -match '-AttestExisting needs -OrgIdA')
+$r4 = Run-Boot @{ AttestExisting = $true; OrgIdA = $ORG2; OrgIdB = $ORG1 }
+Check 'R1 -AttestExisting with ids contradicting the stored variables: STOP' ($r4.Error -match 'inconsistent' -and $script:W.EnvVars['CBC_TEST_A_ORG_ID'] -eq $ORG1)
+$s1 = & $snapshot
+$r5 = Run-Boot @{ AttestExisting = $true; OrgIdA = $ORG1; OrgIdB = $ORG2 }
+Check 'R1 -AttestExisting with matching ids: outcome ATTESTED (not VERIFIED), accounts ATTESTED' ($null -eq $r5.Error -and $r5.Report.Outcome -eq 'ATTESTED' -and $r5.Report.Accounts.A -eq 'ATTESTED' -and $r5.Report.Accounts.B -eq 'ATTESTED') "$($r5.Error)"
+Check 'R1 -AttestExisting: no signup, no secret write, and says sign-in is NOT verified' (@($script:W.HttpLog | Select-Object -Skip $s1.Http | Where-Object { $_.Url -match '/signup$' }).Count -eq 0 -and @($script:W.GhLog | Select-Object -Skip $s1.Gh | Where-Object { $_ -match '^secret set' }).Count -eq 0 -and $r5.Log -match 'NOT verified by this run')
+$r6 = Run-Boot @{ Replace = $true; Generation = 2 }
+Check 'R1 -Replace -Generation 2: fresh pair created and verified, secrets overwritten, outcome VERIFIED' ($null -eq $r6.Error -and $r6.Report.Outcome -eq 'VERIFIED' -and $script:W.Users.ContainsKey('founder+cbc-stg-test-a-g2@example.com') -and $script:W.Secrets['CBC_TEST_A_EMAIL'] -eq 'founder+cbc-stg-test-a-g2@example.com' -and $script:W.Secrets['CBC_TEST_A_PASSWORD'] -ne $pwBefore -and $script:W.Secrets['CBC_TEST_A_PASSWORD'] -eq $script:W.Users['founder+cbc-stg-test-a-g2@example.com'].pw) "$($r6.Error)"
+Check 'R1 -Replace: report asks to delete the earlier users' (($r6.Report.Notes -join ' ') -match 'delete the earlier staging user for account A')
+$r7 = Run-Boot @{ Replace = $true; AttestExisting = $true; OrgIdA = $ORG1; OrgIdB = $ORG2 }
+Check 'R1 -Replace with -AttestExisting: STOP' ($r7.Error -match 'not both')
+New-World
+$r8 = Run-Boot @{ AttestExisting = $true; OrgIdA = $ORG1; OrgIdB = $ORG2 }
+Check 'R1 -AttestExisting with nothing stored: STOP, nothing written' ($r8.Error -match 'no account has stored credentials' -and (& $writes) -eq 0)
+
+# ------------------------------------------------------------------ R2: only one secret stored is PARTIAL
+New-World @{ FailSecret = 'CBC_TEST_A_PASSWORD' }
+$p1 = Run-Boot
+Check 'R2 password secret fails after email stored: PARTIAL (CbcPartial), with recovery' ($p1.Type -eq 'CbcPartial' -and $p1.Error -match '^PARTIAL' -and $p1.Error -match '-Replace -Generation 2' -and $p1.Error -match 'delete the orphaned staging user') "$($p1.Type) $($p1.Error)"
+Check 'R2: exactly one of the pair is stored and no organization variable is set' (($script:W.Secrets.Keys -join ',') -eq 'CBC_TEST_A_EMAIL' -and $script:W.EnvVars.Count -eq 0)
+$script:W.FailSecret = $null
+$s2 = & $snapshot
+$p2 = Run-Boot
+Check 'R2 plain rerun: PARTIAL again (never an ordinary success), writes nothing' ($p2.Type -eq 'CbcPartial' -and $p2.Error -match 'only CBC_TEST_A_EMAIL' -and @($script:W.GhLog | Select-Object -Skip $s2.Gh | Where-Object { $_ -match '^(api -X|secret set|variable set)' }).Count -eq 0) "$($p2.Type) $($p2.Error)"
+$p3 = Run-Boot @{ AttestExisting = $true; OrgIdA = $ORG1; OrgIdB = $ORG2 }
+Check 'R2 -AttestExisting cannot paper over a partial pair: still PARTIAL' ($p3.Type -eq 'CbcPartial')
+$p4 = Run-Boot @{ Replace = $true; Generation = 2 }
+Check 'R2 recovery with -Replace -Generation 2: completes VERIFIED with both pairs stored' ($null -eq $p4.Error -and $p4.Report.Outcome -eq 'VERIFIED' -and $script:W.Secrets.Count -eq 4 -and $script:W.Secrets['CBC_TEST_A_PASSWORD'] -eq $script:W.Users['founder+cbc-stg-test-a-g2@example.com'].pw) "$($p4.Error)"
+New-World @{ FailSecret = 'CBC_TEST_B_EMAIL' }
+$p5 = Run-Boot
+Check 'R2 first secret of a pair fails: STOP (not PARTIAL), nothing stored for that account' ($p5.Type -eq 'CbcStop' -and $p5.Error -match 'no credential could be stored' -and -not $script:W.Secrets.ContainsKey('CBC_TEST_B_PASSWORD'))
 
 # ------------------------------------------------------------------ preflight stops before any write
 foreach ($case in @(
@@ -135,7 +172,7 @@ foreach ($case in @(
     @{ N = 'app URL is production'; O = @{ Vars = @{ CBC_STG_NEXT_PUBLIC_SUPABASE_URL = "https://$STG.supabase.co"; CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY = $ANON; CBC_STG_NEXT_PUBLIC_APP_URL = 'https://checkbeforeclick.com' } }; Want = 'not the staging Container App' },
     @{ N = 'signup disabled'; O = @{ Settings = @{ external = @{ email = $true }; disable_signup = $true; mailer_autoconfirm = $true } }; Want = 'does not allow confirmed email signup' },
     @{ N = 'autoconfirm off'; O = @{ Settings = @{ external = @{ email = $true }; disable_signup = $false; mailer_autoconfirm = $false } }; Want = 'does not allow confirmed email signup' },
-    @{ N = 'one credential secret already present without its pair'; O = @{ EnvExists = $true; Custom = $true; Reviewers = @(4242); Policies = @('master'); Secrets = @{ CBC_TEST_A_EMAIL = 'x' } }; Want = 'only one of CBC_TEST_A_EMAIL' }
+    @{ N = 'one credential secret already present without its pair'; O = @{ EnvExists = $true; Custom = $true; Reviewers = @(4242); Policies = @('master'); Secrets = @{ CBC_TEST_A_EMAIL = 'x' } }; Want = 'PARTIAL: environment holds only CBC_TEST_A_EMAIL' }
   )) {
   New-World $case.O
   $rr = Run-Boot
@@ -164,7 +201,9 @@ $rr = Run-Boot
 Check 'own rows hidden by RLS and no org ids given -> STOP asking for -OrgIdA, credentials kept' ($rr.Error -match '-OrgIdA' -and $script:W.Secrets.Count -eq 4 -and $script:W.EnvVars.Count -eq 0) "$($rr.Error)"
 Check 'own rows hidden: profile confirmed through the app (login, status probe, sign-out)' (@($script:W.HttpLog | Where-Object { $_.Url -match '/api/scan/[0-9a-f-]+/status$' }).Count -eq 2 -and @($script:W.HttpLog | Where-Object { $_.Url -match '/auth/signout$' }).Count -eq 2)
 $rr = Run-Boot @{ OrgIdA = $ORG1; OrgIdB = $ORG2 }
-Check 'rerun with founder org ids -> PASS, ATTESTED, accounts not recreated' ($null -eq $rr.Error -and $rr.Report.OrgEvidence -like 'ATTESTED*' -and $script:W.Users.Count -eq 2 -and $script:W.EnvVars['CBC_TEST_B_ORG_ID'] -eq $ORG2) "$($rr.Error)"
+Check 'hidden rows, rerun with only org ids -> STOP (stored accounts need -AttestExisting or -Replace)' ($rr.Error -match '-AttestExisting')
+$rr = Run-Boot @{ AttestExisting = $true; OrgIdA = $ORG1; OrgIdB = $ORG2 }
+Check 'hidden rows, rerun with -AttestExisting and org ids -> ATTESTED, accounts not recreated' ($null -eq $rr.Error -and $rr.Report.Outcome -eq 'ATTESTED' -and $rr.Report.OrgEvidence -like 'ATTESTED*' -and $script:W.Users.Count -eq 2 -and $script:W.EnvVars['CBC_TEST_B_ORG_ID'] -eq $ORG2) "$($rr.Error)"
 New-World @{ RowsReadable = $false; ProfileMissing = $true }
 $rr = Run-Boot @{ OrgIdA = $ORG1; OrgIdB = $ORG2 }
 Check 'profile missing (app answers 403) -> STOP, the trigger did not map the account' ($rr.Error -match 'no public.users profile')
@@ -207,6 +246,13 @@ $code = ($lib + $entry) -replace '(?s)<#.*?#>', '' -replace '(?m)^\s*#.*$', ''
 Check 'source: no service-role key, no admin API, no auth.users insert' ($code -notmatch 'service_role|SERVICE_ROLE|/auth/v1/admin|auth\.users|sb_secret_')
 Check 'source: no file writes (no plaintext credential file)' ($code -notmatch 'Set-Content|Out-File|Add-Content|WriteAllText|WriteAllBytes|Export-Clixml|ConvertTo-SecureString|>\s*\$')
 Check 'source: secrets are written to gh stdin, not passed with --body' ($lib -match '\$p\.StandardInput\.Write\(\$StdIn\)' -and $code -notmatch "'secret', 'set'[^\n]*'--body'")
+$entryCode = $entry -replace '(?s)<#.*?#>', ''
+Check 'entry: exit 0 only for VERIFIED; ATTESTED exits 2; PARTIAL exits 3; STOP exits 1' (
+  $entryCode -match "if \(\`$report\.Outcome -eq 'VERIFIED'\) \{[^}]*exit 0" -and $entryCode -match "RESULT: ATTESTED[^\n]*\n\s*exit 2" -and
+  $entryCode -match "RESULT: PARTIAL[^\n]*\n\s*exit 3" -and $entryCode -match "RESULT: STOP[^\n]*\n\s*exit 1" -and @([regex]::Matches($entryCode, 'exit 0')).Count -eq 1)
+Check 'entry: PARTIAL is recognised by exception type and never reported as PASS' (
+  $entryCode -match '\$partial = \$_\.Exception\.GetType\(\)\.Name -eq ''CbcPartial''' -and
+  $entryCode -match 'if \(\$partial\) \{\s*Write-Host "PARTIAL' -and $entryCode -match 'Not a completed bootstrap')
 Check 'source: no workflow dispatch anywhere' ($code -notmatch 'workflow run|dispatches')
 
 Write-Host ''

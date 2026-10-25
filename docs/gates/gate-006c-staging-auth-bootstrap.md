@@ -40,15 +40,25 @@ gh auth login   # only if `gh auth status` does not show wberytech-stack
   - the app URL is the staging Container App;
   - staging Auth allows confirmed email signup;
   - no half-stored credential pair exists.
-- **Idempotent and safe on partial failure:**
-  - **Credentials are stored first.** Each account's credentials are stored immediately after its signup.
-  - **Rerun skips finished accounts.** An account whose two secrets exist is not recreated.
-  - **An orphaned user stops the run.** A user that exists without stored credentials stops with advice: delete it in the dashboard, or rerun with `-Generation 2`.
-  - **The environment update is safe to repeat.** It runs as a `PUT`. Extra deployment branches stop the run rather than being deleted.
-  - **The run reports what it created,** and rerunning is always safe.
+- **Stored credentials are never taken as proof (R1).** Secret values are never read back, so a rerun cannot sign in with stored credentials or check their profiles. When an account's two secrets already exist, the script **stops before any write** unless you choose one of two paths:
+  - `-Replace -Generation <N+1>`: signs up a fresh pair, which this run verifies, and overwrites both secrets. Then delete the earlier users in Supabase.
+  - `-AttestExisting -OrgIdA <uuid> -OrgIdB <uuid>`: keeps the stored credentials on **your attestation**. The organization ids come from the read-only SQL (step 3.2). The outcome is **ATTESTED**: sign-in and profiles are then verified only by J1–J4 of the first `staging-auth-journeys` run.
+- **Half-stored credentials are PARTIAL (R2).** If a signup succeeds but only one of its two secrets is stored, the run ends as **PARTIAL** (exit 3), never as a success. Every later rerun also reports PARTIAL and writes nothing, and `-AttestExisting` cannot cover it.
+  - **Recovery:** rerun with `-Replace -Generation <N+1>`, which creates and verifies a fresh account and overwrites both secrets. Then delete the orphaned user (`+cbc-stg-test-<a|b>-g<earlier generation>`) in Supabase.
+  - **If the first secret of a pair fails,** nothing is stored for that account, and the run stops (exit 1) with the same advice.
+- **Other reruns are safe:** the environment update is a `PUT`, extra deployment branches stop the run rather than being deleted, and every run reports what it created.
 - **Allow-lists enforced in code:**
   - **gh:** user, this repository, three staging repository variables, the `staging-auth-test` environment and its branch policy, four secrets, two variables. No workflow command.
   - **HTTPS:** staging Supabase signup, logout, settings and the caller's own `users` row; on the staging app, login, a status probe and sign-out.
+
+## Outcomes and exit codes
+
+| Exit | Outcome | Meaning |
+| --- | --- | --- |
+| 0 | **VERIFIED** | This run signed up and checked both accounts, and observed both organizations |
+| 2 | **ATTESTED** | Configuration is complete, but part of it rests on your attestation (`-AttestExisting`, or `-OrgIdA`/`-OrgIdB` because RLS hides the rows). The first `staging-auth-journeys` run verifies it |
+| 3 | **PARTIAL** | A user exists with only one of its two secrets stored. Founder recovery is required (above). Do not dispatch `staging-auth-journeys` |
+| 1 | **STOP** | A precondition failed. Anything created is listed, and rerunning is safe |
 
 ## What it verifies at the end (read-only)
 

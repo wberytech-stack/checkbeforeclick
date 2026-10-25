@@ -37,6 +37,7 @@
 #   closed), deploys that compiled template with the same digest, waits for the
 #   new revision and health, and re-checks the live configuration (no Web Risk key).
 #   The same run creates the app the first time and updates it later. No retries.
+#   Then verify-staging runs the read-only staging-verify workflow against the app.
 # Production keeps the image-only update in the deploy job and never touches Bicep.
 name: azure-deploy
 
@@ -400,3 +401,12 @@ jobs:
           set -euo pipefail
           az containerapp show --name "$APP" --resource-group "$RG" --output json > "$RUNNER_TEMP/app.json"
           node scripts/azure-hosting/staging-guard.mjs config "$RUNNER_TEMP/app.json" "$IMAGE_REF"
+
+  # Read-only verification of the deployed staging app (staging-verify.yml): no
+  # environment, no Azure sign-in, no repository secret; only after the staging job succeeds.
+  verify-staging:
+    needs: staging
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'staging'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/staging-verify.yml

@@ -35,6 +35,18 @@ const APPROVED = [
 const KEY_VAULT_URI = "https://kv-cbc-prod-cc-001.vault.azure.net/";
 const RUNTIME_IDENTITY = "/providers/microsoft.managedidentity/userassignedidentities/id-cbc-web-cc-001";
 const IMAGE_REF = /^crcbcprodcc001\.azurecr\.io\/cbc-web@sha256:[0-9a-f]{64}$/;
+// Inngest staging isolation (Gate 006C P6): the branch environment and the staging origin.
+const STAGING_INNGEST_ENV = "audit/azure-current-state";
+const STAGING_ORIGIN = /^https:\/\/ca-cbc-web-stg-cc-001\.[a-z0-9-]+\.canadacentral\.azurecontainerapps\.io$/;
+function inngestProblems(env, fqdn) {
+  const problems = [];
+  const values = (n) => env.filter((e) => e?.name === n).map((e) => e.value);
+  if (values("INNGEST_ENV").join("\n") !== STAGING_INNGEST_ENV) problems.push(`INNGEST_ENV is not exactly once "${STAGING_INNGEST_ENV}"`);
+  const origin = values("INNGEST_SERVE_ORIGIN");
+  if (origin.length !== 1 || !STAGING_ORIGIN.test(origin[0] ?? "")) problems.push("INNGEST_SERVE_ORIGIN is not exactly once the staging Container App origin");
+  else if (fqdn && origin[0] !== `https://${fqdn}`) problems.push("INNGEST_SERVE_ORIGIN does not match the app's ingress FQDN");
+  return problems;
+}
 const WHAT_IF_MASK = "*******";
 const WEB_RISK_KEY = /google[-_]?web[-_]?risk/i;
 const ALLOWED_ELSEWHERE = new Set(["NoChange", "Ignore"]);
@@ -108,6 +120,7 @@ function appProblems(props, image, { whatIf }) {
   const containers = props.template?.containers ?? [];
   const env = containers.flatMap((c) => c.env ?? []);
   const scale = props.template?.scale ?? {};
+  problems.push(...inngestProblems(env, whatIf ? null : props.configuration?.ingress?.fqdn));
   if (env.find((e) => e.name === "WEB_RISK_PROVIDER_ENABLED")?.value !== "false")
     problems.push('WEB_RISK_PROVIDER_ENABLED is not exactly "false"');
   if (scale.minReplicas !== 0 || scale.maxReplicas !== 1)
@@ -247,6 +260,7 @@ export function checkTemplate(t, appName, image) {
   if (plainEnv.some((e) => e.name === "GOOGLE_WEB_RISK_API_KEY")) problems.push("stagingPlainEnv sets GOOGLE_WEB_RISK_API_KEY");
   if (plainEnv.some((e) => /KEY|SECRET|PASSWORD|TOKEN/.test(e.name))) problems.push("stagingPlainEnv holds a secret-named variable");
   if (plainEnv.filter((e) => e.name === "WEB_RISK_PROVIDER_ENABLED").map((e) => e.value).join() !== "false") problems.push('stagingPlainEnv must set WEB_RISK_PROVIDER_ENABLED exactly once to "false"');
+  problems.push(...inngestProblems(plainEnv, null).map((p) => `stagingPlainEnv: ${p}`));
   const activePlain = plainEnv.filter((e) => inject || e.name !== "GOOGLE_WEB_RISK_API_KEY");
   const env = [...active.map((s) => ({ name: s.envName, secretRef: s.name })), { name: "PORT", value: "3000" }, { name: "HOSTNAME", value: "0.0.0.0" }, ...activePlain];
   const resolvedSecrets = active.map((s) => ({ name: s.name, keyVaultUrl: `${KEY_VAULT_URI}secrets/${secretNames[s.vaultKey]}` }));

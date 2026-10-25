@@ -48,15 +48,15 @@ export function clean(s) {
 // A value taken from a response is shown only if it is short and plain.
 const plain = (v, re = /^[A-Za-z0-9 ._-]{1,40}$/) => (typeof v === "string" && re.test(v) ? v : null);
 // Exceptions become one of a few fixed descriptions; their messages are not echoed.
-class VerifierError extends Error {}
-function describeError(e) {
+export class VerifierError extends Error {}
+export function describeError(e) {
   if (e instanceof VerifierError) return e.message;
   if (e && (e.name === "TimeoutError" || e.name === "AbortError")) return `timed out after ${TIMEOUT_MS / 1000}s`;
   if (e instanceof SyntaxError) return "response was not valid JSON";
   return "network error";
 }
 
-const hostOf = (u) => { try { return new URL(u).host; } catch { return ""; } };
+export const hostOf = (u) => { try { return new URL(u).host; } catch { return ""; } };
 const isHttpsOrigin = (u) => typeof u === "string" && /^https:\/\/[a-z0-9.-]+$/.test(u);
 
 function jwtClaims(token) {
@@ -73,22 +73,65 @@ export function makeClient(fetchImpl, allowedHosts) {
   };
 }
 
-export async function runChecks(env, fetchImpl = globalThis.fetch) {
-  const results = [];
-  const add = (id, name, status, evidence) => results.push({ id, name, status, evidence: clean(evidence) });
+// I1-I2, shared with staging-auth-journeys.mjs: staging and production must be
+// distinguishable before any request is sent.
+export function checkIdentity(env) {
   const stg = (env.STG_APP_URL ?? "").replace(/\/$/, "");
   const sb = (env.STG_SUPABASE_URL ?? "").replace(/\/$/, "");
   const prodApp = (env.PROD_APP_URL ?? "").replace(/\/$/, "");
   const prodSb = (env.PROD_SUPABASE_URL ?? "").replace(/\/$/, "");
-
-  // I1-I2: fail closed unless staging and production are distinguishable.
   const i1 = isHttpsOrigin(stg) && STAGING_APP_HOST.test(hostOf(stg)) && isHttpsOrigin(prodApp) && hostOf(prodApp) !== hostOf(stg);
-  add("I1", "Staging app origin is the staging Container App and differs from production", i1 ? "VERIFIED" : "FAILED",
-    i1 ? `staging host ${hostOf(stg)}; production host ${hostOf(prodApp)}` : "STG_APP_URL / PROD_APP_URL missing, not https, not the staging app, or equal");
   const i2 = sb === `https://${STAGING_REF}.supabase.co` && prodSb === `https://${PRODUCTION_REF}.supabase.co`;
-  add("I2", "Configured Supabase project is staging; production project is distinct", i2 ? "VERIFIED" : "FAILED",
-    i2 ? `staging ref ${STAGING_REF}; production ref ${PRODUCTION_REF}` : "STG_SUPABASE_URL / PROD_SUPABASE_URL are not the documented staging / production projects");
-  if (!i1 || !i2) {
+  return {
+    ok: i1 && i2, stg, sb,
+    rows: [
+      ["I1", "Staging app origin is the staging Container App and differs from production", i1 ? "VERIFIED" : "FAILED",
+        i1 ? `staging host ${hostOf(stg)}; production host ${hostOf(prodApp)}` : "STG_APP_URL / PROD_APP_URL missing, not https, not the staging app, or equal"],
+      ["I2", "Configured Supabase project is staging; production project is distinct", i2 ? "VERIFIED" : "FAILED",
+        i2 ? `staging ref ${STAGING_REF}; production ref ${PRODUCTION_REF}` : "STG_SUPABASE_URL / PROD_SUPABASE_URL are not the documented staging / production projects"],
+    ],
+  };
+}
+
+// I3-I4, shared with staging-auth-journeys.mjs: the /login HTML and the same-origin
+// scripts it references directly. Returns counts and the single public key (or null).
+export async function inspectLoginAssets(request, stg) {
+  const page = await request(`${stg}/login`);
+  if (page.status !== 200) throw new VerifierError(`/login returned status ${page.status}`);
+  const html = await page.text();
+  const srcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]))]
+    .map((s) => { try { return new URL(s, `${stg}/`).toString(); } catch { return ""; } })
+    .filter((u) => hostOf(u) === hostOf(stg)).slice(0, MAX_ASSETS);
+  let bundle = html;
+  for (const u of srcs) {
+    const r = await request(u);
+    if (r.status !== 200) throw new VerifierError(`a referenced script returned status ${r.status}`);
+    bundle += "\n" + (await r.text());
+    if (bundle.length > MAX_BYTES) throw new VerifierError("inspected assets exceed the verifier size limit");
+  }
+  const refs = [...new Set([...bundle.matchAll(/https:\/\/([a-z0-9]{20})\.supabase\.co/g)].map((m) => m[1]))];
+  const jwts = [...new Set(bundle.match(JWT) ?? [])].map((t) => ({ t, c: jwtClaims(t) })).filter((x) => x.c && (x.c.role || x.c.ref));
+  const publishable = [...new Set(bundle.match(PUBLISHABLE) ?? [])];
+  const anon = jwts.filter((x) => x.c.role === "anon" && x.c.ref === STAGING_REF);
+  const bad = jwts.filter((x) => !(x.c.role === "anon" && x.c.ref === STAGING_REF));
+  const secret = SECRET_KEY.test(bundle);
+  const keys = [...anon.map((x) => x.t), ...publishable];
+  const keyOk = !secret && bad.length === 0 && keys.length === 1;
+  return {
+    scope: `/login HTML plus ${srcs.length} directly referenced script(s)`,
+    refs, prodPresent: bundle.includes(PRODUCTION_REF), anonCount: anon.length, keysCount: keys.length, secret,
+    badCount: bad.length, roles: [...new Set(bad.map((x) => plain(x.c.role, /^[a-z_]{1,20}$/) ?? "other"))].slice(0, 5).join(","),
+    key: keyOk ? keys[0] : null,
+  };
+}
+
+export async function runChecks(env, fetchImpl = globalThis.fetch) {
+  const results = [];
+  const add = (id, name, status, evidence) => results.push({ id, name, status, evidence: clean(evidence) });
+  const identity = checkIdentity(env);
+  const { stg, sb } = identity;
+  for (const row of identity.rows) add(...row);
+  if (!identity.ok) {
     for (const [id, name] of [["I3", "Inspected client assets target staging Supabase only"], ["I4", "Inspected client assets carry only a public key"],
       ["I5", "Supabase Auth health"], ["I6", "Supabase Auth settings"], ["I7", "Supabase data API as anon, zero rows requested"], ["I8", "Inngest rejects unsigned requests"]])
       add(id, name, "BLOCKED", "not run: staging and production could not be distinguished");
@@ -101,39 +144,15 @@ export async function runChecks(env, fetchImpl = globalThis.fetch) {
   // I3-I4: the /login HTML and the same-origin scripts it references directly.
   let key = null;
   try {
-    const page = await request(`${stg}/login`);
-    if (page.status !== 200) throw new VerifierError(`/login returned status ${page.status}`);
-    const html = await page.text();
-    const srcs = [...new Set([...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]))]
-      .map((s) => { try { return new URL(s, `${stg}/`).toString(); } catch { return ""; } })
-      .filter((u) => hostOf(u) === hostOf(stg)).slice(0, MAX_ASSETS);
-    let bundle = html;
-    for (const u of srcs) {
-      const r = await request(u);
-      if (r.status !== 200) throw new VerifierError(`a referenced script returned status ${r.status}`);
-      bundle += "\n" + (await r.text());
-      if (bundle.length > MAX_BYTES) throw new VerifierError("inspected assets exceed the verifier size limit");
-    }
-    const scope = `/login HTML plus ${srcs.length} directly referenced script(s)`;
-    const refs = [...new Set([...bundle.matchAll(/https:\/\/([a-z0-9]{20})\.supabase\.co/g)].map((m) => m[1]))];
-    const prodPresent = bundle.includes(PRODUCTION_REF);
-    const i3 = refs.length === 1 && refs[0] === STAGING_REF && !prodPresent;
+    const a = await inspectLoginAssets(request, stg);
+    const i3 = a.refs.length === 1 && a.refs[0] === STAGING_REF && !a.prodPresent;
     add("I3", I3, i3 ? "VERIFIED" : "FAILED",
-      i3 ? `${scope}: only ${STAGING_REF}.supabase.co; production ref absent`
-         : `${scope}: ${refs.length} Supabase project ref(s)${refs.includes(STAGING_REF) ? " incl. staging" : ""}${prodPresent ? "; production ref present" : ""}`);
-
-    const jwts = [...new Set(bundle.match(JWT) ?? [])].map((t) => ({ t, c: jwtClaims(t) })).filter((x) => x.c && (x.c.role || x.c.ref));
-    const publishable = [...new Set(bundle.match(PUBLISHABLE) ?? [])];
-    const anon = jwts.filter((x) => x.c.role === "anon" && x.c.ref === STAGING_REF);
-    const bad = jwts.filter((x) => !(x.c.role === "anon" && x.c.ref === STAGING_REF));
-    const secret = SECRET_KEY.test(bundle);
-    const keys = [...anon.map((x) => x.t), ...publishable];
-    const i4 = !secret && bad.length === 0 && keys.length === 1;
-    key = i4 ? keys[0] : null;
-    const roles = [...new Set(bad.map((x) => plain(x.c.role, /^[a-z_]{1,20}$/) ?? "other"))].slice(0, 5).join(",");
-    add("I4", I4, i4 ? "VERIFIED" : "FAILED",
-      i4 ? `${scope}: ${anon.length ? `one anon JWT for ref ${STAGING_REF}` : "one publishable key (project binding checked by I5-I7)"}; no other credential found`
-         : `${scope}: public keys ${keys.length}; other JWTs ${bad.length}${roles ? ` (roles ${roles})` : ""}; secret key ${secret ? "FOUND" : "not found"}`);
+      i3 ? `${a.scope}: only ${STAGING_REF}.supabase.co; production ref absent`
+         : `${a.scope}: ${a.refs.length} Supabase project ref(s)${a.refs.includes(STAGING_REF) ? " incl. staging" : ""}${a.prodPresent ? "; production ref present" : ""}`);
+    key = a.key;
+    add("I4", I4, key ? "VERIFIED" : "FAILED",
+      key ? `${a.scope}: ${a.anonCount ? `one anon JWT for ref ${STAGING_REF}` : "one publishable key (project binding checked by I5-I7)"}; no other credential found`
+          : `${a.scope}: public keys ${a.keysCount}; other JWTs ${a.badCount}${a.roles ? ` (roles ${a.roles})` : ""}; secret key ${a.secret ? "FOUND" : "not found"}`);
   } catch (e) {
     add("I3", I3, "FAILED", describeError(e));
     add("I4", I4, "BLOCKED", "inspected assets could not be read");

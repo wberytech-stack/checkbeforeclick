@@ -23,6 +23,9 @@ if (publicOrigin && !/^https:\/\/[^/]+$/.test(publicOrigin)) {
   process.exit(2);
 }
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Printed values (a Location header, an error message) are bounded and stripped of
+// control characters so a response cannot inject log lines or workflow commands.
+const bounded = (s: string) => s.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/::+/g, ":").slice(0, 160);
 
 type Expect = { status: number | number[]; location?: RegExp; body?: RegExp };
 const cases: Array<[string, string, RequestInit, Expect]> = [
@@ -62,10 +65,10 @@ for (const [name, p, init, exp] of cases) {
       (!exp.location || exp.location.test(loc)) &&
       (!exp.body || exp.body.test(body));
     if (!ok) failed++;
-    console.log(`${ok ? "ok  " : "FAIL"} ${name}: ${res.status}${loc ? ` -> ${loc}` : ""}`);
+    console.log(`${ok ? "ok  " : "FAIL"} ${name}: ${res.status}${loc ? ` -> ${bounded(loc)}` : ""}`);
   } catch (e) {
     failed++;
-    console.log(`FAIL ${name}: ${(e as Error).message}`);
+    console.log(`FAIL ${name}: ${bounded((e as Error).message)}`);
   }
 }
 console.log(`\n${cases.length - failed} passed, ${failed} failed`);

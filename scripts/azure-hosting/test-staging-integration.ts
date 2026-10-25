@@ -77,7 +77,19 @@ async function run(sc: Scenario, e: Record<string, string> = env) { const { f, c
   const matrix = m.formatMatrix(r);
   check("evidence matrix: never contains the key", !matrix.includes(ANON) && !matrix.includes(ANON.split(".")[1]));
   check("evidence matrix: lists the uncovered checks as UNVERIFIED / BLOCKED",
-    /\| U1 \|[^\n]*\| UNVERIFIED \|/.test(matrix) && /\| U2 \|[^\n]*\| UNVERIFIED \|/.test(matrix) && /\| U3 \|[^\n]*\| BLOCKED \|/.test(matrix) && /\| U4 \|[^\n]*\| BLOCKED \|/.test(matrix));
+    /\| U1 \|[^\n]*\| UNVERIFIED \|/.test(matrix) && /\| U2 \|[^\n]*\| UNVERIFIED \|/.test(matrix) && /\| U3 \|[^\n]*\| BLOCKED \|/.test(matrix) &&
+    /\| U4 \|[^\n]*\| BLOCKED \|/.test(matrix) && /\| U5 \|[^\n]*row-level security[^\n]*\| UNVERIFIED \|/.test(matrix) &&
+    /\| U6 \|[^\n]*\| UNVERIFIED \|/.test(matrix));
+  const ev = (id: string) => r.find((x) => x.id === id)?.evidence ?? "";
+  // I3/I4 are scoped to what was inspected and never claim the whole build.
+  check("I3/I4: evidence names the inspected scope (/login HTML plus 2 directly referenced scripts)",
+    /\/login HTML plus 2 directly referenced script\(s\)/.test(ev("I3")) && /\/login HTML plus 2 directly referenced script\(s\)/.test(ev("I4")));
+  check("I3/I4: no claim about the entire deployed build", !/entire|whole|all of the|deployed build (is|has)/i.test(matrix));
+  // I7 reports the observation, never RLS correctness.
+  check("I7: zero-row result reported as a metadata query, RLS not verified",
+    /zero-row metadata query succeeded/.test(ev("I7")) && /RLS policy not verified/.test(ev("I7")));
+  check("I7: nothing in the matrix claims RLS is verified or correct",
+    !/RLS (is |policy )?(verified|correct|enforced|ok)\b/i.test(matrix.replace(/RLS policy not verified/g, "")) && !/row-level security (is |works|enforced)/i.test(matrix));
 }
 
 // ---------------------------------------------------------------- fail closed on identity
@@ -126,6 +138,8 @@ for (const [name, sc, id, want] of [
   ["Auth settings not JSON", { settings: [200, "oops"] }, "I6", "FAILED"],
   ["anon sees 3 scans (row-level security gap)", { scans: [200, "*/3"] }, "I7", "FAILED"],
   ["anon denied on scans (no grant) is accepted", { scans: [401, null] }, "I7", "VERIFIED"],
+  ["anon denied with 403 is accepted", { scans: [403, null] }, "I7", "VERIFIED"],
+  ["malformed count header", { scans: [200, "*/5;x"] }, "I7", "FAILED"],
   ["scans table missing", { scans: [404, null] }, "I7", "FAILED"],
   ["count header missing", { scans: [200, null] }, "I7", "FAILED"],
   ["Inngest answers unsigned GET with 200 (dev mode / exposed introspection)", { inngest: [200, { function_count: 1, mode: "dev" }] }, "I8", "FAILED"],
@@ -133,6 +147,53 @@ for (const [name, sc, id, want] of [
 ] as Array<[string, Scenario, string, string]>) {
   const { r } = await run(sc);
   check(`service: ${name} -> ${want}`, statusOf(r, id) === want, `${id}=${statusOf(r, id)}`);
+}
+
+{
+  const { r } = await run({ scans: [401, null] });
+  const e = r.find((x) => x.id === "I7")?.evidence ?? "";
+  check("I7: denial reported as a denied anonymous request, RLS not verified",
+    /anonymous request denied \(status 401\)/.test(e) && /RLS policy not verified/.test(e), e);
+}
+
+// ---------------------------------------------------------------- bounded, sanitized output
+{
+  type ExtMod = Mod & { clean: (s: string) => string };
+  const mm = m as ExtMod;
+  const nasty = "line1\nline2 | ::warning::x %0A https://user:pw@evil.example/p?sig=SECRET " + ANON + " " + "z".repeat(400);
+  const c = mm.clean(nasty);
+  check("clean: single line, at most 200 characters", !/[\r\n]/.test(c) && c.length <= 200, `${c.length}`);
+  check("clean: no pipe, percent, workflow-command or markup characters", !/[|%<>`]/.test(c) && !c.includes("::"));
+  check("clean: URLs and keys are redacted", !c.includes("evil.example") && !c.includes("SECRET") && !c.includes(ANON.split(".")[1]) && c.includes("REDACTED_URL") && c.includes("REDACTED_JWT"));
+
+  const leak = async (sc: Scenario, id: string, f?: typeof fetch) => {
+    const mf = makeFetch(sc);
+    const res = await m.runChecks(env, f ?? mf.f);
+    return { e: res.find((x) => x.id === id)?.evidence ?? "", matrix: m.formatMatrix(res) };
+  };
+  {
+    const { e, matrix } = await leak({ health: [200, { name: "<script>alert(1)</script>\n::set-env name=x::y", version: "https://evil.example/x?token=abc" }] }, "I5");
+    check("leak: unexpected Auth health fields are not echoed", !/script|evil\.example|token|set-env|::|\n/.test(e) && !/evil\.example|set-env/.test(matrix), e);
+  }
+  {
+    const { e } = await leak({ chunk: goodChunk() + `const s="${jwt({ ref: m.STAGING_REF, role: "<img src=x onerror=alert(1)>" })}";` }, "I4");
+    check("leak: an unexpected JWT role is shown as 'other'", /roles other/.test(e) && !/img|onerror/.test(e), e);
+  }
+  {
+    const throwing = (async () => { throw new Error("connect ECONNREFUSED https://user:pw@evil.example/x?sig=SECRET"); }) as unknown as typeof fetch;
+    const { e } = await leak({}, "I3", throwing);
+    check("leak: network errors become 'network error' (no URL, no message)", e === "network error", e);
+  }
+  {
+    const timingOut = (async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); }) as unknown as typeof fetch;
+    const { e } = await leak({}, "I3", timingOut);
+    check("leak: timeouts become a fixed description", e === "timed out after 15s", e);
+  }
+  {
+    const { matrix } = await leak({}, "I1");
+    check("matrix: every row is one line with exactly 5 column separators",
+      matrix.split("\n").every((l) => (l.match(/\|/g) ?? []).length === 5));
+  }
 }
 
 // ---------------------------------------------------------------- the guarded client itself
@@ -169,6 +230,20 @@ for (const [name, sc, id, want] of [
     })());
   check("staging-verify: pins Node 24.14.0 and does not install dependencies", wf.includes('node-version: "24.14.0"') && !/npm (ci|install)/.test(wf));
   check("staging-verify: no retries or continue-on-error", !/retry|continue-on-error/i.test(wf));
+  check("staging-verify: documents that smoke.ts sends one unauthenticated POST /api/scan that must return 401",
+    /ONE unauthenticated POST \/api\/scan/.test(wf) && /returns 401 right after getUser\(\)/.test(wf) && /GET and HEAD only/.test(wf));
+  // The one non-GET request in smoke.ts, and the route's early 401 it relies on.
+  const smoke = read("scripts/azure-hosting/smoke.ts");
+  const methods = [...smoke.matchAll(/method: "([A-Z]+)"/g)].map((x) => x[1]);
+  check("smoke.ts: the only non-GET request is one POST /api/scan expecting 401",
+    JSON.stringify(methods) === '["POST"]' && /\["API POST \/api\/scan signed-out -> 401", "\/api\/scan", \{\n\s+method: "POST"[^\n]*\n\s+\}, \{ status: 401 \}\]/.test(smoke));
+  check("smoke.ts: printed Location headers and errors are bounded", /-> \$\{bounded\(loc\)\}/.test(smoke) && /\$\{bounded\(\(e as Error\)\.message\)\}/.test(smoke));
+  const route = read("app/api/scan/route.ts");
+  const post = route.slice(route.indexOf("export async function POST"));
+  const first401 = post.indexOf("status: 401");
+  check("app/api/scan: POST returns 401 before org context, providers or any insert",
+    first401 > 0 && first401 < post.indexOf("getUserOrgContext(") && first401 < post.indexOf("getFastProviders(") &&
+    (post.indexOf(".insert(") < 0 || first401 < post.indexOf(".insert(")));
   const dep = read(".github/workflows/azure-deploy.yml");
   const job = dep.match(/\n {2}verify-staging:\n((?: {4}.*\n?)+)/)?.[1] ?? "";
   check("azure-deploy: verify-staging runs after the staging job via the reusable workflow, staging only",

@@ -7,9 +7,13 @@
 #           key is read from the deployed client build and never printed.
 # Checks  : offline self-test of the verifier; smoke.ts (healthz, signed-out
 #           redirects and API guards, auth callback, sign-out); staging-integration.mjs
-#           (staging/production identity, deployed build, Supabase Auth, anon
-#           database read with zero rows, Inngest signature enforcement).
+#           (staging/production identity, inspected /login assets, Supabase Auth, anon
+#           data API with zero rows requested, Inngest signature enforcement).
 #           Signed-in flows, Inngest sync or events, and Web Risk are out of scope.
+# Requests: staging-integration.mjs sends GET and HEAD only. smoke.ts sends GETs plus
+#           ONE unauthenticated POST /api/scan with no cookies; app/api/scan/route.ts
+#           returns 401 right after getUser(), before any provider or Web Risk code,
+#           and smoke.ts fails unless that POST returns 401.
 # One attempt, no retries; any failure fails the run.
 name: staging-verify
 
@@ -43,7 +47,7 @@ jobs:
       - name: Offline self-test of the verifier (no network)
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-staging-integration.ts
 
-      - name: Signed-out smoke checks against staging
+      - name: Signed-out smoke checks against staging (GETs plus one unauthenticated POST that must return 401)
         shell: bash
         env:
           STG_APP_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_APP_URL }}

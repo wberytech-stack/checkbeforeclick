@@ -4,8 +4,11 @@
 # Approval: the job runs in the GitHub environment staging-auth-test, which the founder
 #           creates with themself as required reviewer and deployments limited to
 #           master, and which holds the only credentials used here: two pre-created
-#           staging test accounts (CBC_TEST_A_* / CBC_TEST_B_*) in different
-#           organizations. Without them the verifier fails at J0 and sends nothing.
+#           staging test accounts (secrets CBC_TEST_A_* / CBC_TEST_B_*) and, as
+#           environment variables, each account's organization_id (founder evidence,
+#           CBC_TEST_A_ORG_ID / CBC_TEST_B_ORG_ID). Without them the verifier fails at J0
+#           and sends nothing; no scan is created until both accounts sign in, reach
+#           /dashboard and are in distinct organizations.
 # Access  : no Azure sign-in, no OIDC token, read-only repository token. URLs come from
 #           repository variables; the public Supabase key from the deployed /login assets.
 # Requests: GET on the staging app; POST only to /api/auth/login (two sign-ins) and
@@ -13,8 +16,8 @@
 #           Risk, no RDAP lookup, no Inngest event); GET/HEAD on four Supabase data-API
 #           tables with each account's own session token. No account is created.
 # Data    : one scan row and its evidence row per run, owned by account A. The run
-#           prints the scan id; the founder deletes it with the cleanup SQL in
-#           docs/gates/gate-006c-authenticated-staging-verification.md.
+#           prints the scan id and run id (even if later steps fail); the founder
+#           deletes them with docs/gates/sql/gate-006c-staging-test-scan-cleanup.sql.
 # One attempt, no retries; any failure fails the run.
 name: staging-auth-journeys
 
@@ -59,4 +62,6 @@ jobs:
           CBC_TEST_A_PASSWORD: ${{ secrets.CBC_TEST_A_PASSWORD }}
           CBC_TEST_B_EMAIL: ${{ secrets.CBC_TEST_B_EMAIL }}
           CBC_TEST_B_PASSWORD: ${{ secrets.CBC_TEST_B_PASSWORD }}
+          CBC_TEST_A_ORG_ID: ${{ vars.CBC_TEST_A_ORG_ID }}
+          CBC_TEST_B_ORG_ID: ${{ vars.CBC_TEST_B_ORG_ID }}
         run: node scripts/azure-hosting/staging-auth-journeys.mjs

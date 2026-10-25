@@ -35,7 +35,9 @@ const APPROVED = [
 const KEY_VAULT_URI = "https://kv-cbc-prod-cc-001.vault.azure.net/";
 const RUNTIME_IDENTITY = "/providers/microsoft.managedidentity/userassignedidentities/id-cbc-web-cc-001";
 const IMAGE_REF = /^crcbcprodcc001\.azurecr\.io\/cbc-web@sha256:[0-9a-f]{64}$/;
-// Inngest staging isolation (Gate 006C P6): the branch environment and the staging origin.
+// Inngest staging configuration (Gate 006C P6): the branch environment and the staging
+// origin must be set as reviewed. This guards configuration only; it does not prove that
+// the app is registered in Inngest Cloud, synced, or that functions execute there.
 const STAGING_INNGEST_ENV = "audit/azure-current-state";
 const STAGING_ORIGIN = /^https:\/\/ca-cbc-web-stg-cc-001\.[a-z0-9-]+\.canadacentral\.azurecontainerapps\.io$/;
 function inngestProblems(env, fqdn) {

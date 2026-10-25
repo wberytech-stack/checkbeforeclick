@@ -211,7 +211,7 @@ export async function runChecks(env, fetchImpl = globalThis.fetch) {
 
 // Checks this verifier cannot perform without credentials or cloud access.
 export const NOT_COVERED = [
-  ["U1", "Inngest branch environment (INNGEST_ENV) and serve origin, live", "UNVERIFIED", "needs a signed introspection (signing key); configured in main.parameters.json and checked by test-hosting-safety P6"],
+  ["U1", "Inngest Cloud registration and branch-environment use, live", "UNVERIFIED", "INNGEST_ENV and INNGEST_SERVE_ORIGIN are configuration-guarded at every deploy (staging-guard); that is not proof of Inngest Cloud registration, sync or function execution, which need a signed introspection or the Inngest dashboard"],
   ["U2", "WEB_RISK_PROVIDER_ENABLED=false and no Web Risk key, live", "UNVERIFIED", "needs Azure read; enforced at deploy by the template check and the post-deploy config check in azure-deploy"],
   ["U3", "Supabase Auth redirect URL allow-list", "BLOCKED", "not exposed publicly; needs the Supabase dashboard or a management token"],
   ["U4", "Signed-in flows S4-S12 (session, scans, sign-out)", "BLOCKED", "authenticated tests need a founder-approved staging test account"],

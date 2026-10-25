@@ -1,0 +1,64 @@
+# Gate 006C - read-only verification of the deployed Azure STAGING app.
+#
+# Trigger : workflow_dispatch (founder, on demand) or workflow_call from azure-deploy
+#           after a successful staging deployment. No push, PR or schedule trigger.
+# Access  : no repository secrets, no Azure sign-in, no OIDC token, read-only token.
+#           Inputs are repository variables holding URLs only; the public Supabase
+#           key is read from the deployed client build and never printed.
+# Checks  : offline self-test of the verifier; smoke.ts (healthz, signed-out
+#           redirects and API guards, auth callback, sign-out); staging-integration.mjs
+#           (staging/production identity, deployed build, Supabase Auth, anon
+#           database read with zero rows, Inngest signature enforcement).
+#           Signed-in flows, Inngest sync or events, and Web Risk are out of scope.
+# One attempt, no retries; any failure fails the run.
+name: staging-verify
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+
+      - name: Offline self-test of the verifier (no network)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-staging-integration.ts
+
+      - name: Signed-out smoke checks against staging
+        shell: bash
+        env:
+          STG_APP_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_APP_URL }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$STG_APP_URL" =~ ^https://ca-cbc-web-stg-cc-001\.[a-z0-9-]+\.canadacentral\.azurecontainerapps\.io$ ]]; then
+            echo "::error::CBC_STG_NEXT_PUBLIC_APP_URL is not the staging Container App origin; refusing to run"; exit 1
+          fi
+          node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/smoke.ts "$STG_APP_URL" "$STG_APP_URL"
+
+      - name: Staging integration checks (read-only)
+        shell: bash
+        env:
+          STG_APP_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_APP_URL }}
+          STG_SUPABASE_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_URL }}
+          PROD_APP_URL: ${{ vars.CBC_PROD_NEXT_PUBLIC_APP_URL }}
+          PROD_SUPABASE_URL: ${{ vars.CBC_PROD_NEXT_PUBLIC_SUPABASE_URL }}
+        run: node scripts/azure-hosting/staging-integration.mjs

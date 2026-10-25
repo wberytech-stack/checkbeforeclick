@@ -510,6 +510,8 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
         { name: "INNGEST_SIGNING_KEY", secretRef: "inngest-signing-key" },
         { name: "PORT", value: "3000" },
         { name: "WEB_RISK_PROVIDER_ENABLED", value: "false" },
+        { name: "INNGEST_ENV", value: "audit/azure-current-state" },
+        { name: "INNGEST_SERVE_ORIGIN", value: "https://ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io" },
       ] as Array<{ name: string; value?: string; secretRef?: string }> }],
       initContainers: null as unknown[] | null,
       scale: { minReplicas: 0, maxReplicas: 1 },
@@ -570,6 +572,24 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
     ["other image", mutate((p) => { p.template.containers[0].image = "crcbcprodcc001.azurecr.io/cbc-web:latest"; })],
   ] as const) check(`guard config: rejects ${name}`, !ok(guard.checkConfig(app(p), IMG)));
   check("guard config: rejects a missing properties object", !ok(guard.checkConfig({ name: APP }, IMG)));
+  // Inngest staging isolation (U1), checked at every deploy without the signing key.
+  const setEnv = (p: Props, n: string, v: string | null) => {
+    const e = env0(p); const i = e.findIndex((x) => x.name === n);
+    if (v === null) e.splice(i, 1); else e[i].value = v;
+  };
+  const FQDN = "ca-cbc-web-stg-cc-001.lemonmeadow-5efc7b91.canadacentral.azurecontainerapps.io";
+  const withFqdn = (p: Props, fqdn: string) => ({ ...app(p), properties: { ...p, configuration: { ...p.configuration, ingress: { fqdn } } } });
+  check("guard config: Inngest env and origin matching the ingress FQDN pass", ok(guard.checkConfig(withFqdn(props(), FQDN), IMG)));
+  for (const [name, p, fqdn] of [
+    ["INNGEST_ENV missing", mutate((p) => setEnv(p, "INNGEST_ENV", null)), FQDN],
+    ["INNGEST_ENV is the production environment (empty)", mutate((p) => setEnv(p, "INNGEST_ENV", "")), FQDN],
+    ["INNGEST_ENV another branch", mutate((p) => setEnv(p, "INNGEST_ENV", "main")), FQDN],
+    ["INNGEST_SERVE_ORIGIN is production", mutate((p) => setEnv(p, "INNGEST_SERVE_ORIGIN", "https://checkbeforeclick.com")), FQDN],
+    ["INNGEST_SERVE_ORIGIN missing", mutate((p) => setEnv(p, "INNGEST_SERVE_ORIGIN", null)), FQDN],
+    ["INNGEST_SERVE_ORIGIN differs from the ingress FQDN", props(), "ca-cbc-web-stg-cc-001.other-1234.canadacentral.azurecontainerapps.io"],
+  ] as const) check(`guard config: rejects ${name}`, !ok(guard.checkConfig(withFqdn(p as Props, fqdn), IMG)));
+  check("guard whatif: rejects INNGEST_ENV for another environment",
+    !ok(guard.checkWhatIf(whatIf([appChange(mutate((p) => setEnv(p, "INNGEST_ENV", "main")))]), APP, IMG)));
 
   // Observed on the first staging run (2026-10-24): what-if masks the three secret names
   // and the env secretRef that point at them as "*******"; everything else is concrete.
@@ -656,6 +676,8 @@ for (const f of readdirSync(path.join(ROOT, ".github", "workflows"))) {
     ["GOOGLE_WEB_RISK_API_KEY in stagingPlainEnv", tmut((t) => { cfgOf(t).stagingPlainEnv.value.push({ name: "GOOGLE_WEB_RISK_API_KEY", value: "x" }); }), IMG],
     ["provider flag not \"false\"", tmut((t) => { cfgOf(t).stagingPlainEnv.value.find((e: { name: string }) => e.name === "WEB_RISK_PROVIDER_ENABLED").value = "true"; }), IMG],
     ["another target app", tmut((t) => { cfgOf(t).stagingAppName.value = "ca-cbc-web-prod-cc-001"; }), IMG],
+    ["INNGEST_ENV for another environment", tmut((t) => { cfgOf(t).stagingPlainEnv.value.find((e: { name: string }) => e.name === "INNGEST_ENV").value = "main"; }), IMG],
+    ["INNGEST_SERVE_ORIGIN set to production", tmut((t) => { cfgOf(t).stagingPlainEnv.value.find((e: { name: string }) => e.name === "INNGEST_SERVE_ORIGIN").value = "https://checkbeforeclick.com"; }), IMG],
   ] as const) check(`guard template: rejects ${name}`, !ok(guard.checkTemplate(t, APP, image)));
 }
 

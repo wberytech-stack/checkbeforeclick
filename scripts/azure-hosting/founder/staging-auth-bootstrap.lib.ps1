@@ -151,6 +151,38 @@ function Get-TestEmail([string]$Base, [string]$Label, [int]$Generation) {
   return "$($Matches[1])+cbc-stg-test-$Label-g$Generation@$($Matches[2])".ToLowerInvariant()
 }
 
+# ------------------------------------------------------------------ environment validation
+# Read-only. Returns @{ Problems; Policies }. Compatible means: exactly one
+# required-reviewers rule whose reviewers are exactly the founder; deployments restricted
+# to selected branches (custom policies on, protected-branches mode off); branch policies
+# empty or exactly branch:master; no protection rule types other than required_reviewers,
+# wait_timer and branch_policy. Stricter settings that are present (a wait timer,
+# prevent_self_review) are left untouched, never removed.
+function Get-EnvProblems($EnvResponse, [string]$R, [string]$E, [long]$FounderId) {
+  $problems = New-Object System.Collections.ArrayList
+  $envObj = ConvertFrom-JsonSafe $EnvResponse.Out
+  if ($EnvResponse.Code -ne 0 -or -not $envObj) { [void]$problems.Add('environment could not be read'); return @{ Problems = $problems; Policies = @() } }
+  $rules = @($envObj.protection_rules | Where-Object { $_ })
+  $unknown = @($rules | Where-Object { $_.type -notin 'required_reviewers', 'wait_timer', 'branch_policy' } | ForEach-Object { [string]$_.type })
+  if ($unknown.Count) { [void]$problems.Add("unexpected protection rule type(s): $($unknown -join ', ')") }
+  $rev = @($rules | Where-Object { $_.type -eq 'required_reviewers' })
+  $ids = @($rev | ForEach-Object { @($_.reviewers) } | Where-Object { $_ } | ForEach-Object { "$($_.type):$($_.reviewer.id)" })
+  if ($rev.Count -ne 1 -or ($ids -join ',') -ne "User:$FounderId") { [void]$problems.Add('required reviewers are not exactly you') }
+  $dbp = $envObj.deployment_branch_policy
+  if ($null -eq $dbp -or $dbp.protected_branches -ne $false -or $dbp.custom_branch_policies -ne $true) {
+    [void]$problems.Add('deployments are not restricted to selected branches (custom branch policies)')
+  }
+  $policies = @()
+  $pr = Invoke-Gh @('api', "repos/$R/environments/$E/deployment-branch-policies")
+  if ($pr.Code -ne 0) { [void]$problems.Add('branch policies could not be read') }
+  else {
+    $policies = @(@((ConvertFrom-JsonSafe $pr.Out).branch_policies) | Where-Object { $_ } | ForEach-Object { "$(if ($_.type) { $_.type } else { 'branch' }):$($_.name)" })
+    $other = @($policies | Where-Object { $_ -ne 'branch:master' })
+    if ($other.Count) { [void]$problems.Add("deployment policies other than branch master: $($other -join ', ')") }
+  }
+  return @{ Problems = $problems; Policies = $policies }
+}
+
 # ------------------------------------------------------------------ bootstrap
 function Invoke-StagingAuthBootstrap {
   param(
@@ -236,23 +268,34 @@ function Invoke-StagingAuthBootstrap {
       if ($state[$x] -eq 'attested' -and -not (Get-Variable "OrgId$x" -ValueOnly)) { Stop-Bootstrap "-AttestExisting needs -OrgId$x (organization_id from the read-only SQL in the gate document, step 3.2)" }
     }
   }
-  & $Log "  ok  environment $E $(if ($envNow.Code -eq 0) { 'exists' } else { 'does not exist yet' }); account A $($state.A), account B $($state.B)"
+  $envPlan = 'create'
+  if ($envNow.Code -eq 0) {
+    $check = Get-EnvProblems $envNow $R $E ([long]$user.id)
+    if ($check.Problems.Count -gt 0) {
+      Stop-Bootstrap "existing environment $E is not compatible, so nothing was changed: $(@($check.Problems) -join '; '). Fix it in GitHub (Settings, Environments) or delete the environment so this script can create it, then rerun"
+    }
+    $envPlan = if ($check.Policies.Count -eq 0) { 'add-master' } else { 'keep' }
+  }
+  & $Log "  ok  environment $E $(if ($envNow.Code -eq 0) { "exists and is compatible ($envPlan)" } else { 'does not exist yet' }); account A $($state.A), account B $($state.B)"
 
-  # ---- environment: founder as required reviewer, deployments from master only
+  # ---- environment: founder as required reviewer, deployments from master only.
+  # The existing environment was validated read-only in preflight. An existing
+  # environment is never PUT (a PUT would replace its protections); the only writes are
+  # creating an absent environment, or adding the master policy to a compliant one.
   & $Log "== GitHub environment $E"
-  $body = @{ reviewers = @(@{ type = 'User'; id = [long]$user.id }); deployment_branch_policy = @{ protected_branches = $false; custom_branch_policies = $true } } | ConvertTo-Json -Depth 5 -Compress
-  $put = Invoke-Gh @('api', '-X', 'PUT', "repos/$R/environments/$E", '--input', '-') $body
-  if ($put.Code -ne 0) { Stop-Bootstrap "could not create or update environment $E" }
-  if ($envNow.Code -ne 0) { & $note "environment $E" }
-  $pol = @((ConvertFrom-JsonSafe (Invoke-Gh @('api', "repos/$R/environments/$E/deployment-branch-policies")).Out).branch_policies)
-  $names = @($pol | Where-Object { $_ } | ForEach-Object { "$($_.type):$($_.name)" })
-  if ($names.Count -eq 0) {
+  if ($envPlan -eq 'create') {
+    $body = @{ reviewers = @(@{ type = 'User'; id = [long]$user.id }); deployment_branch_policy = @{ protected_branches = $false; custom_branch_policies = $true } } | ConvertTo-Json -Depth 5 -Compress
+    if ((Invoke-Gh @('api', '-X', 'PUT', "repos/$R/environments/$E", '--input', '-') $body).Code -ne 0) { Stop-Bootstrap "could not create environment $E" }
+    & $note "environment $E"
+  }
+  if ($envPlan -in 'create', 'add-master') {
     if ((Invoke-Gh @('api', '-X', 'POST', "repos/$R/environments/$E/deployment-branch-policies", '-f', 'name=master', '-f', 'type=branch')).Code -ne 0) { Stop-Bootstrap 'could not restrict deployments to master' }
     & $note 'deployment branch policy master'
-  } elseif (($names -join ',') -ne 'branch:master') {
-    Stop-Bootstrap "environment $E allows other branches ($($names -join ', ')); remove them in GitHub, then rerun"
+    # Re-validate immediately after writing, before any account is touched.
+    $after = Get-EnvProblems (Invoke-Gh @('api', "repos/$R/environments/$E")) $R $E ([long]$user.id)
+    if ($after.Problems.Count -gt 0 -or $after.Policies.Count -ne 1) { Stop-Bootstrap "environment $E is not as expected after setup: $(@($after.Problems) -join '; ')" }
   }
-  & $Log '  ok  required reviewer and master-only deployments set'
+  & $Log $(if ($envPlan -eq 'keep') { '  ok  existing environment already compliant; not modified' } else { '  ok  required reviewer and master-only deployments set' })
 
   # ---- accounts
   $observed = @{ A = $null; B = $null }

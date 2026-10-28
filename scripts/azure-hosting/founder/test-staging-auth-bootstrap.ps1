@@ -29,6 +29,8 @@ function New-World([hashtable]$o = @{}) {
     Vars = @{ CBC_STG_NEXT_PUBLIC_SUPABASE_URL = "https://$STG.supabase.co"; CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY = $ANON; CBC_STG_NEXT_PUBLIC_APP_URL = "https://$APPHOST" }
     Settings = @{ external = @{ email = $true }; disable_signup = $false; mailer_autoconfirm = $true }
     EnvExists = $false; Reviewers = @(); Policies = @(); Secrets = @{}; EnvVars = @{}
+    Custom = $null; Protected = $false; DbpNull = $false; WaitTimer = $null; PreventSelfReview = $false; ReviewerType = 'User'
+    ExtraRule = $null; PoliciesFail = $false; PostMasterNoop = $false
     Users = @{}; Orgs = @($ORG1, $ORG2, $ORG1, $ORG2, $ORG1, $ORG2); RowsReadable = $true; ProfileMissing = $false; SignupFail = $false; FailSecret = $null
     GhLog = New-Object System.Collections.ArrayList; HttpLog = New-Object System.Collections.ArrayList
     Violations = New-Object System.Collections.ArrayList; SecretArgs = New-Object System.Collections.ArrayList
@@ -50,10 +52,17 @@ function global:Invoke-Gh([string[]]$GhArgs, [string]$StdIn = $null) {
       return @{ Code = 0; Out = '{}' } }
     '^api repos/[^ ]+/environments/staging-auth-test$' {
       if (-not $w.EnvExists) { return @{ Code = 1; Out = '{"message":"Not Found"}' } }
-      return (& $j @{ name = 'staging-auth-test'; deployment_branch_policy = @{ protected_branches = $false; custom_branch_policies = $w.Custom }
-        protection_rules = @(@{ type = 'required_reviewers'; reviewers = @($w.Reviewers | ForEach-Object { @{ type = 'User'; reviewer = @{ id = $_ } } }) }) }) }
-    '^api repos/[^ ]+/deployment-branch-policies$' { return (& $j @{ branch_policies = @($w.Policies | ForEach-Object { @{ name = $_; type = 'branch' } }) }) }
-    'deployment-branch-policies -f name=master' { $w.Policies = @($w.Policies) + 'master'; return @{ Code = 0; Out = '{}' } }
+      $rules = @()
+      if (@($w.Reviewers).Count) { $rules += @{ type = 'required_reviewers'; prevent_self_review = $w.PreventSelfReview; reviewers = @($w.Reviewers | ForEach-Object { @{ type = $w.ReviewerType; reviewer = @{ id = $_ } } }) } }
+      if ($w.WaitTimer) { $rules += @{ type = 'wait_timer'; wait_timer = $w.WaitTimer } }
+      if ($w.Custom -or $w.Protected) { $rules += @{ type = 'branch_policy' } }
+      if ($w.ExtraRule) { $rules += @{ type = $w.ExtraRule } }
+      $dbp = if ($w.DbpNull) { $null } else { @{ protected_branches = $w.Protected; custom_branch_policies = $w.Custom } }
+      return (& $j @{ name = 'staging-auth-test'; deployment_branch_policy = $dbp; protection_rules = $rules }) }
+    '^api repos/[^ ]+/deployment-branch-policies$' {
+      if ($w.PoliciesFail) { return @{ Code = 1; Out = '' } }
+      return (& $j @{ branch_policies = @($w.Policies | ForEach-Object { if ($_ -match '^tag:(.+)$') { @{ name = $Matches[1]; type = 'tag' } } else { @{ name = $_; type = 'branch' } } }) }) }
+    'deployment-branch-policies -f name=master' { if (-not $w.PostMasterNoop) { $w.Policies = @($w.Policies) + 'master' }; return @{ Code = 0; Out = '{}' } }
     '^secret set (\S+) ' { [void]$w.SecretArgs.Add($line); if ($w.FailSecret -eq $Matches[1]) { return @{ Code = 1; Out = '' } }; $w.Secrets[$Matches[1]] = $StdIn; return @{ Code = 0; Out = '' } }
     '^secret list ' { return (& $j @($w.Secrets.Keys | ForEach-Object { @{ name = $_ } })) }
     '^variable set (\S+) .* --body (\S+)$' { $w.EnvVars[$Matches[1]] = $Matches[2]; return @{ Code = 0; Out = '' } }
@@ -183,7 +192,50 @@ $rr = Run-Boot @{ EmailBase = 'not-an-address' }
 Check 'preflight: invalid -EmailBase -> STOP, nothing written' ($rr.Error -match 'EmailBase' -and (& $writes) -eq 0)
 New-World @{ EnvExists = $true; Custom = $true; Reviewers = @(4242); Policies = @('master', 'release') }
 $rr = Run-Boot
-Check 'environment allowing other branches -> STOP before any account' ($rr.Error -match 'allows other branches' -and $script:W.Users.Count -eq 0)
+Check 'environment allowing other branches -> STOP with zero writes (no PUT, no POST, no secret, no signup)' ($rr.Error -match 'not compatible, so nothing was changed' -and (& $writes) -eq 0 -and @($script:W.GhLog | Where-Object { $_ -match '^api -X' }).Count -eq 0) "$($rr.Error)"
+
+# ------------------------------------------------------------------ existing environment: validated before any write
+$compliant = @{ EnvExists = $true; Custom = $true; Reviewers = @(4242); Policies = @('master') }
+foreach ($case in @(
+    @{ N = 'an extra deployment branch'; O = @{ Policies = @('master', 'release') }; Want = 'other than branch master: branch:release' },
+    @{ N = 'a tag deployment policy'; O = @{ Policies = @('master', 'tag:v*') }; Want = 'other than branch master: tag:v\*' },
+    @{ N = 'an additional reviewer'; O = @{ Reviewers = @(4242, 777) }; Want = 'required reviewers are not exactly you' },
+    @{ N = 'someone else as the only reviewer'; O = @{ Reviewers = @(777) }; Want = 'required reviewers are not exactly you' },
+    @{ N = 'a team as reviewer'; O = @{ ReviewerType = 'Team' }; Want = 'required reviewers are not exactly you' },
+    @{ N = 'no required reviewers'; O = @{ Reviewers = @() }; Want = 'required reviewers are not exactly you' },
+    @{ N = 'deployments from any branch'; O = @{ DbpNull = $true }; Want = 'not restricted to selected branches' },
+    @{ N = 'protected-branches mode'; O = @{ Protected = $true; Custom = $false }; Want = 'not restricted to selected branches' },
+    @{ N = 'an unknown protection rule'; O = @{ ExtraRule = 'custom_deployment_protection' }; Want = 'unexpected protection rule type' },
+    @{ N = 'branch policies unreadable'; O = @{ PoliciesFail = $true }; Want = 'branch policies could not be read' }
+  )) {
+  $o = $compliant.Clone(); foreach ($k in $case.O.Keys) { $o[$k] = $case.O[$k] }
+  New-World $o
+  $rr = Run-Boot @{ Replace = $true; Generation = 2 }
+  $envWrites = @($script:W.GhLog | Where-Object { $_ -match '^api -X' }).Count
+  Check "existing env with $($case.N): STOP before any write (no environment, secret, variable or signup write)" (
+    $rr.Error -match 'not compatible, so nothing was changed' -and $rr.Error -match $case.Want -and (& $writes) -eq 0 -and $envWrites -eq 0) "$($rr.Error)"
+}
+New-World ($compliant.Clone())
+$script:W.WaitTimer = 15; $script:W.PreventSelfReview = $true
+$rr = Run-Boot
+Check 'compliant existing env (with wait timer and self-review prevention): never PUT, never re-POSTed, stricter settings kept' (
+  $null -eq $rr.Error -and @($script:W.GhLog | Where-Object { $_ -match '^api -X' }).Count -eq 0 -and $script:W.WaitTimer -eq 15 -and $script:W.PreventSelfReview -eq $true -and $rr.Log -match 'already compliant; not modified') "$($rr.Error)"
+$o = $compliant.Clone(); $o.Policies = @()
+New-World $o
+$rr = Run-Boot
+$envCalls = @($script:W.GhLog | Where-Object { $_ -match '^api -X' })
+Check 'compliant env missing only the master policy (earlier interrupted run): adds master only, no PUT' (
+  $null -eq $rr.Error -and $envCalls.Count -eq 1 -and $envCalls[0] -match '^api -X POST .*deployment-branch-policies -f name=master' -and ($script:W.Policies -join ',') -eq 'master') "$($rr.Error) $($envCalls -join ' | ')"
+New-World
+$rr = Run-Boot
+$firstWrite = [array]::IndexOf(@($script:W.GhLog), @($script:W.GhLog | Where-Object { $_ -match '^api -X|^secret set|^variable set' })[0])
+$lastPreflightRead = [array]::IndexOf(@($script:W.GhLog), @($script:W.GhLog | Where-Object { $_ -match '^api repos/.+/environments/staging-auth-test$' })[0])
+Check 'absent env: created (PUT) and restricted (POST master), then re-read and validated before any account' (
+  $null -eq $rr.Error -and @($script:W.GhLog | Where-Object { $_ -match '^api -X PUT' }).Count -eq 1 -and $firstWrite -gt $lastPreflightRead -and
+  (@($script:W.GhLog) | Select-String -Pattern 'deployment-branch-policies -f name=master' | Select-Object -First 1).LineNumber -lt (@($script:W.GhLog) | Select-String -Pattern '^secret set' | Select-Object -First 1).LineNumber)
+New-World @{ PostMasterNoop = $true }
+$rr = Run-Boot
+Check 'absent env whose master policy does not take effect: STOP before any account' ($rr.Error -match 'not as expected after setup' -and $script:W.Users.Count -eq 0 -and $script:W.Secrets.Count -eq 0)
 
 # ------------------------------------------------------------------ account and organization failures
 New-World

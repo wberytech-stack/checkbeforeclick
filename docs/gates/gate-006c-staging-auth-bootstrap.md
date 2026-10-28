@@ -47,6 +47,11 @@ gh auth login   # only if `gh auth status` does not show wberytech-stack
 - **Half-stored credentials are PARTIAL (R2).** If a signup succeeds but only one of its two secrets is stored, the run ends as **PARTIAL** (exit 3), never as a success. Every later rerun also reports PARTIAL and writes nothing, and `-AttestExisting` cannot cover it.
   - **Recovery:** rerun with `-Replace -Generation <N+1>`, which creates and verifies a fresh account and overwrites both secrets. Then delete the orphaned user (`+cbc-stg-test-<a|b>-g<earlier generation>`) in Supabase.
   - **If the first secret of a pair fails,** nothing is stored for that account, and the run stops (exit 1) with the same advice.
+- **Only a confirmed 404 means the environment is absent.** The preflight lookup uses `gh api -i`, so the HTTP status line is visible. It accepts exactly two answers:
+  - **absent:** status 404, a nonzero `gh` exit, and the JSON body `{"message":"Not Found"}`;
+  - **present:** status 200, `gh` exit 0, and a JSON body naming `staging-auth-test`.
+
+  Anything else stops the run in preflight with zero writes: 401, 403, 500, a CLI or network failure, no status line, a malformed body, or a status that contradicts the exit code. Only a confirmed 404 allows the environment to be created.
 - **An existing environment is never overwritten.** The script runs a `PUT` only to **create** an absent environment, because a `PUT` replaces its protections.
   - **Compliant environment:** left untouched, including stricter settings such as a wait timer or self-review prevention.
   - **Compliant but missing the `master` policy** (an earlier interrupted run): the only write is adding that policy.

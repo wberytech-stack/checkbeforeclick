@@ -45,6 +45,7 @@ function Test-GhAllowed([string[]]$GhArgs) {
     "^api repos/$r$",
     "^api repos/$r/actions/variables/CBC_STG_NEXT_PUBLIC_(SUPABASE_URL|SUPABASE_ANON_KEY|APP_URL)$",
     "^api repos/$r/environments/$e$",
+    "^api -i repos/$r/environments/$e$",
     "^api -X PUT repos/$r/environments/$e --input -$",
     "^api repos/$r/environments/$e/deployment-branch-policies$",
     "^api -X POST repos/$r/environments/$e/deployment-branch-policies -f name=master -f type=branch$",
@@ -183,6 +184,28 @@ function Get-EnvProblems($EnvResponse, [string]$R, [string]$E, [long]$FounderId)
   return @{ Problems = $problems; Policies = $policies }
 }
 
+# Does the environment exist? Read-only, with the HTTP status line (`gh api -i`), because a
+# nonzero gh exit code alone cannot tell "absent" from 403, 500, an auth or network error.
+# Only two answers are accepted:
+#   absent : status line 404, gh exit nonzero, JSON body {"message":"Not Found"}
+#   present: status line 200, gh exit 0, JSON body naming this environment
+# Anything else (no status line, any other status, a malformed body, or a status that
+# contradicts the exit code) stops the run; it is never read as permission to create.
+# Returns @{ Code = 0 (present) or 404 (absent); Out = the JSON body }.
+function Get-EnvLookup([string]$R, [string]$E) {
+  $res = Invoke-Gh @('api', '-i', "repos/$R/environments/$E")
+  $text = ([string]$res.Out) -replace "`r`n", "`n"
+  $m = [regex]::Match($text, '^HTTP/[0-9.]+ (\d{3})\b')
+  if (-not $m.Success) { Stop-Bootstrap "environment lookup returned no HTTP status (gh exit $($res.Code)); nothing was changed. Check 'gh auth status' and the network, then rerun" }
+  $status = [int]$m.Groups[1].Value
+  $sep = $text.IndexOf("`n`n")
+  $body = if ($sep -ge 0) { $text.Substring($sep + 2).Trim() } else { '' }
+  $json = ConvertFrom-JsonSafe $body
+  if ($status -eq 404 -and $res.Code -ne 0 -and $json -and $json.message -eq 'Not Found') { return @{ Code = 404; Out = $body } }
+  if ($status -eq 200 -and $res.Code -eq 0 -and $json -and $json.name -eq $E) { return @{ Code = 0; Out = $body } }
+  Stop-Bootstrap "environment lookup was not a clear 200 or 404 (HTTP $status, gh exit $($res.Code)); nothing was changed. The environment's existence is unknown, so it will not be created or modified"
+}
+
 # ------------------------------------------------------------------ bootstrap
 function Invoke-StagingAuthBootstrap {
   param(
@@ -236,7 +259,8 @@ function Invoke-StagingAuthBootstrap {
   $emails = @{ A = (Get-TestEmail $EmailBase 'a' $Generation); B = (Get-TestEmail $EmailBase 'b' $Generation) }
   foreach ($k in @('OrgIdA', 'OrgIdB')) { $v = (Get-Variable $k -ValueOnly); if ($v -and $v -notmatch $script:Cbc.Uuid) { Stop-Bootstrap "-$k must be a lowercase UUID" } }
 
-  $envNow = Invoke-Gh @('api', "repos/$R/environments/$E")
+  # Code 0 = confirmed present, 404 = confirmed absent; anything else has already stopped.
+  $envNow = Get-EnvLookup $R $E
   $secretNames = @(); $vars = @{}
   if ($envNow.Code -eq 0) {
     $secretNames = @((ConvertFrom-JsonSafe (Invoke-Gh @('secret', 'list', '--env', $E, '--repo', $R, '--json', 'name')).Out) | ForEach-Object { $_.name })

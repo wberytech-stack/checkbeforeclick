@@ -30,13 +30,23 @@ function New-World([hashtable]$o = @{}) {
     Settings = @{ external = @{ email = $true }; disable_signup = $false; mailer_autoconfirm = $true }
     EnvExists = $false; Reviewers = @(); Policies = @(); Secrets = @{}; EnvVars = @{}
     Custom = $null; Protected = $false; DbpNull = $false; WaitTimer = $null; PreventSelfReview = $false; ReviewerType = 'User'
-    ExtraRule = $null; PoliciesFail = $false; PostMasterNoop = $false
+    ExtraRule = $null; PoliciesFail = $false; PostMasterNoop = $false; EnvLookup = $null
     Users = @{}; Orgs = @($ORG1, $ORG2, $ORG1, $ORG2, $ORG1, $ORG2); RowsReadable = $true; ProfileMissing = $false; SignupFail = $false; FailSecret = $null
     GhLog = New-Object System.Collections.ArrayList; HttpLog = New-Object System.Collections.ArrayList
     Violations = New-Object System.Collections.ArrayList; SecretArgs = New-Object System.Collections.ArrayList
   }
   foreach ($k in $o.Keys) { $w[$k] = $o[$k] }
   $script:W = $w
+}
+
+function Get-MockEnvJson($w) {
+  $rules = @()
+  if (@($w.Reviewers).Count) { $rules += @{ type = 'required_reviewers'; prevent_self_review = $w.PreventSelfReview; reviewers = @($w.Reviewers | ForEach-Object { @{ type = $w.ReviewerType; reviewer = @{ id = $_ } } }) } }
+  if ($w.WaitTimer) { $rules += @{ type = 'wait_timer'; wait_timer = $w.WaitTimer } }
+  if ($w.Custom -or $w.Protected) { $rules += @{ type = 'branch_policy' } }
+  if ($w.ExtraRule) { $rules += @{ type = $w.ExtraRule } }
+  $dbp = if ($w.DbpNull) { $null } else { @{ protected_branches = $w.Protected; custom_branch_policies = $w.Custom } }
+  return (@{ name = 'staging-auth-test'; deployment_branch_policy = $dbp; protection_rules = $rules } | ConvertTo-Json -Depth 6 -Compress)
 }
 
 function global:Invoke-Gh([string[]]$GhArgs, [string]$StdIn = $null) {
@@ -52,13 +62,30 @@ function global:Invoke-Gh([string[]]$GhArgs, [string]$StdIn = $null) {
       return @{ Code = 0; Out = '{}' } }
     '^api repos/[^ ]+/environments/staging-auth-test$' {
       if (-not $w.EnvExists) { return @{ Code = 1; Out = '{"message":"Not Found"}' } }
-      $rules = @()
-      if (@($w.Reviewers).Count) { $rules += @{ type = 'required_reviewers'; prevent_self_review = $w.PreventSelfReview; reviewers = @($w.Reviewers | ForEach-Object { @{ type = $w.ReviewerType; reviewer = @{ id = $_ } } }) } }
-      if ($w.WaitTimer) { $rules += @{ type = 'wait_timer'; wait_timer = $w.WaitTimer } }
-      if ($w.Custom -or $w.Protected) { $rules += @{ type = 'branch_policy' } }
-      if ($w.ExtraRule) { $rules += @{ type = $w.ExtraRule } }
-      $dbp = if ($w.DbpNull) { $null } else { @{ protected_branches = $w.Protected; custom_branch_policies = $w.Custom } }
-      return (& $j @{ name = 'staging-auth-test'; deployment_branch_policy = $dbp; protection_rules = $rules }) }
+      return @{ Code = 0; Out = (Get-MockEnvJson $w) } }
+    # The preflight lookup: `gh api -i` prints the HTTP status line and headers, a blank
+    # line, then the body; gh exits nonzero for 4xx/5xx. EnvLookup selects a failure mode.
+    '^api -i repos/[^ ]+/environments/staging-auth-test$' {
+      $nf = '{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
+      $ok = "HTTP/2.0 200 OK`nContent-Type: application/json; charset=utf-8`nX-Github-Request-Id: ABC`n`n" + (Get-MockEnvJson $w)
+      $missing = "HTTP/2.0 404 Not Found`nContent-Type: application/json; charset=utf-8`n`n$nf"
+      switch ($w.EnvLookup) {
+        '403' { return @{ Code = 1; Out = "HTTP/2.0 403 Forbidden`nContent-Type: application/json`n`n{""message"":""Resource not accessible by integration"",""status"":""403""}" } }
+        '500' { return @{ Code = 1; Out = "HTTP/2.0 500 Internal Server Error`nContent-Type: application/json`n`n{""message"":""Server Error""}" } }
+        '401' { return @{ Code = 1; Out = "HTTP/2.0 401 Unauthorized`n`n{""message"":""Bad credentials""}" } }
+        'cli' { return @{ Code = 4; Out = '' } }
+        'network' { return @{ Code = 1; Out = '' } }
+        'malformed' { return @{ Code = 0; Out = 'HTTP/2.0 200 OK<html>gateway</html>' } }
+        'no-status' { return @{ Code = 1; Out = $nf } }
+        '404-exit0' { return @{ Code = 0; Out = $missing } }
+        '200-exit1' { return @{ Code = 1; Out = $ok } }
+        '404-other-body' { return @{ Code = 1; Out = "HTTP/2.0 404 Not Found`n`n{""message"":""Repository not found""}" } }
+        '404-no-body' { return @{ Code = 1; Out = "HTTP/2.0 404 Not Found`nContent-Type: text/html`n`n<html>404</html>" } }
+        '200-other-name' { return @{ Code = 0; Out = ($ok -replace '"name":"staging-auth-test"', '"name":"azure-production"') } }
+        'crlf' { $t = if ($w.EnvExists) { $ok } else { $missing }; return @{ Code = $(if ($w.EnvExists) { 0 } else { 1 }); Out = ($t -replace "`n", "`r`n") } }
+      }
+      if ($w.EnvExists) { return @{ Code = 0; Out = $ok } }
+      return @{ Code = 1; Out = $missing } }
     '^api repos/[^ ]+/deployment-branch-policies$' {
       if ($w.PoliciesFail) { return @{ Code = 1; Out = '' } }
       return (& $j @{ branch_policies = @($w.Policies | ForEach-Object { if ($_ -match '^tag:(.+)$') { @{ name = $Matches[1]; type = 'tag' } } else { @{ name = $_; type = 'branch' } } }) }) }
@@ -194,6 +221,53 @@ New-World @{ EnvExists = $true; Custom = $true; Reviewers = @(4242); Policies = 
 $rr = Run-Boot
 Check 'environment allowing other branches -> STOP with zero writes (no PUT, no POST, no secret, no signup)' ($rr.Error -match 'not compatible, so nothing was changed' -and (& $writes) -eq 0 -and @($script:W.GhLog | Where-Object { $_ -match '^api -X' }).Count -eq 0) "$($rr.Error)"
 
+# ------------------------------------------------------------------ environment lookup: only a confirmed 404 means absent
+# Any lookup that is not a clear 200 or 404 stops in preflight: no environment PUT/POST,
+# no secret, no variable, no signup. Each case also runs with -Replace so that, without
+# the fix, a run would otherwise go on to create the environment and the accounts.
+foreach ($case in @(
+    @{ N = 'HTTP 403'; Mode = '403'; Exists = $true; Want = 'not a clear 200 or 404 \(HTTP 403' },
+    @{ N = 'HTTP 403 on an absent environment'; Mode = '403'; Exists = $false; Want = 'not a clear 200 or 404 \(HTTP 403' },
+    @{ N = 'HTTP 500'; Mode = '500'; Exists = $true; Want = 'not a clear 200 or 404 \(HTTP 500' },
+    @{ N = 'HTTP 401 (authentication failure)'; Mode = '401'; Exists = $false; Want = 'not a clear 200 or 404 \(HTTP 401' },
+    @{ N = 'a GitHub CLI failure with no output'; Mode = 'cli'; Exists = $true; Want = 'returned no HTTP status \(gh exit 4' },
+    @{ N = 'a network failure or timeout (no response)'; Mode = 'network'; Exists = $false; Want = 'returned no HTTP status \(gh exit 1' },
+    @{ N = 'a malformed 200 response'; Mode = 'malformed'; Exists = $true; Want = 'not a clear 200 or 404 \(HTTP 200' },
+    @{ N = 'a Not Found body without a status line'; Mode = 'no-status'; Exists = $false; Want = 'returned no HTTP status' },
+    @{ N = 'a 404 status with gh exit 0 (contradictory)'; Mode = '404-exit0'; Exists = $false; Want = 'not a clear 200 or 404 \(HTTP 404, gh exit 0' },
+    @{ N = 'a 200 status with gh exit 1 (contradictory)'; Mode = '200-exit1'; Exists = $true; Want = 'not a clear 200 or 404 \(HTTP 200, gh exit 1' },
+    @{ N = 'a 404 for something other than the environment'; Mode = '404-other-body'; Exists = $false; Want = 'not a clear 200 or 404 \(HTTP 404' },
+    @{ N = 'a 404 with a non-JSON body'; Mode = '404-no-body'; Exists = $false; Want = 'not a clear 200 or 404 \(HTTP 404' },
+    @{ N = 'a 200 for a different environment'; Mode = '200-other-name'; Exists = $true; Want = 'not a clear 200 or 404 \(HTTP 200' }
+  )) {
+  $o = @{ EnvLookup = $case.Mode }
+  if ($case.Exists) { $o.EnvExists = $true; $o.Custom = $true; $o.Reviewers = @(4242); $o.Policies = @('master') }
+  New-World $o
+  $rr = Run-Boot @{ Replace = $true; Generation = 2 }
+  Check "lookup with $($case.N): STOP in preflight with zero writes" (
+    $rr.Type -eq 'CbcStop' -and $rr.Error -match $case.Want -and $rr.Error -match 'nothing was changed' -and (& $writes) -eq 0 -and
+    @($script:W.GhLog | Where-Object { $_ -match '^api -X' }).Count -eq 0 -and $script:W.Users.Count -eq 0 -and $script:W.Secrets.Count -eq 0) "$($rr.Error)"
+}
+New-World
+$rr = Run-Boot
+Check 'lookup: a confirmed 404 (status line, gh exit 1, Not Found body) permits creation' (
+  $null -eq $rr.Error -and @($script:W.GhLog | Where-Object { $_ -match '^api -i repos/.+/environments/staging-auth-test$' }).Count -eq 1 -and
+  @($script:W.GhLog | Where-Object { $_ -match '^api -X PUT' }).Count -eq 1 -and $rr.Report.Outcome -eq 'VERIFIED') "$($rr.Error)"
+New-World @{ EnvLookup = 'crlf' }
+$rr = Run-Boot
+Check 'lookup: a confirmed 404 with CRLF line endings is still recognised' ($null -eq $rr.Error -and @($script:W.GhLog | Where-Object { $_ -match '^api -X PUT' }).Count -eq 1) "$($rr.Error)"
+New-World @{ EnvExists = $true; Custom = $true; Reviewers = @(4242); Policies = @('master'); WaitTimer = 30; EnvLookup = 'crlf' }
+$rr = Run-Boot
+Check 'lookup: a confirmed 200 for a valid existing environment leaves it untouched (no PUT, no POST, wait timer kept)' (
+  $null -eq $rr.Error -and @($script:W.GhLog | Where-Object { $_ -match '^api -X' }).Count -eq 0 -and $script:W.WaitTimer -eq 30) "$($rr.Error)"
+Check 'gh allow-list: -i is allowed only for the staging-auth-test lookup' (
+  (Test-GhAllowed @('api', '-i', 'repos/wberytech-stack/checkbeforeclick/environments/staging-auth-test')) -and
+  -not (Test-GhAllowed @('api', '-i', 'repos/wberytech-stack/checkbeforeclick/environments/azure-production')) -and
+  -not (Test-GhAllowed @('api', '-i', '-X', 'PUT', 'repos/wberytech-stack/checkbeforeclick/environments/staging-auth-test')))
+$libSrc = Get-Content -Raw (Join-Path $here 'staging-auth-bootstrap.lib.ps1')
+Check 'source: preflight decides existence only through Get-EnvLookup' (
+  $libSrc -match '\$envNow = Get-EnvLookup \$R \$E' -and @([regex]::Matches($libSrc, "Invoke-Gh @\('api', '-i'")).Count -eq 1)
+
 # ------------------------------------------------------------------ existing environment: validated before any write
 $compliant = @{ EnvExists = $true; Custom = $true; Reviewers = @(4242); Policies = @('master') }
 foreach ($case in @(
@@ -229,7 +303,7 @@ Check 'compliant env missing only the master policy (earlier interrupted run): a
 New-World
 $rr = Run-Boot
 $firstWrite = [array]::IndexOf(@($script:W.GhLog), @($script:W.GhLog | Where-Object { $_ -match '^api -X|^secret set|^variable set' })[0])
-$lastPreflightRead = [array]::IndexOf(@($script:W.GhLog), @($script:W.GhLog | Where-Object { $_ -match '^api repos/.+/environments/staging-auth-test$' })[0])
+$lastPreflightRead = [array]::IndexOf(@($script:W.GhLog), @($script:W.GhLog | Where-Object { $_ -match '^api -i repos/.+/environments/staging-auth-test$' })[0])
 Check 'absent env: created (PUT) and restricted (POST master), then re-read and validated before any account' (
   $null -eq $rr.Error -and @($script:W.GhLog | Where-Object { $_ -match '^api -X PUT' }).Count -eq 1 -and $firstWrite -gt $lastPreflightRead -and
   (@($script:W.GhLog) | Select-String -Pattern 'deployment-branch-policies -f name=master' | Select-Object -First 1).LineNumber -lt (@($script:W.GhLog) | Select-String -Pattern '^secret set' | Select-Object -First 1).LineNumber)

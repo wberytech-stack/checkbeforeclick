@@ -9,8 +9,9 @@
       stdin, never in arguments) and two variables. No workflow command exists here.
     - HTTPS: on the staging Supabase project only POST /auth/v1/signup, POST
       /auth/v1/logout, GET /auth/v1/settings and a GET of the caller's own users row; on
-      the staging app only POST /api/auth/login, GET /api/scan/<uuid>/status and GET
-      /auth/signout. No admin endpoint, no service-role key, no direct database access.
+      the staging app only GET /api/healthz (unauthenticated warm-up), POST
+      /api/auth/login, GET /api/scan/<uuid>/status and GET /auth/signout. No admin
+      endpoint, no service-role key, no direct database access.
   Passwords are generated here (CSPRNG), sent only to the signup endpoint, the app login
   and GitHub's encrypted secret store, and never printed or written to a file.
   Windows PowerShell 5.1 compatible.
@@ -87,6 +88,7 @@ function Test-HttpAllowed([string]$Method, [string]$Url, [string]$AppHost) {
     return $false
   }
   if ($AppHost -and $u.Host -eq $AppHost -and $u.Host -match $script:Cbc.AppHost) {
+    if ($Method -eq 'GET' -and $path -eq '/api/healthz' -and $q -eq '') { return $true }
     if ($Method -eq 'POST' -and $path -eq '/api/auth/login' -and $q -eq '') { return $true }
     if ($Method -eq 'GET' -and $path -match '^/api/scan/[0-9a-f-]{36}/status$' -and $q -eq '') { return $true }
     if ($Method -eq 'GET' -and $path -eq '/auth/signout' -and $q -eq '') { return $true }
@@ -94,20 +96,30 @@ function Test-HttpAllowed([string]$Method, [string]$Url, [string]$AppHost) {
   return $false
 }
 
-# One HTTPS request; no redirects, no cookie store, 20 s timeout. Returns
-# @{ Status; Body; SetCookie }.
-function Invoke-CbcHttp([string]$Method, [string]$Url, [hashtable]$Headers = @{}, [string]$Body = $null, [string]$AppHost = $null) {
+# Builds the request message. A [string] parameter turns $null into '', so "no body" is
+# an empty string here, never $null. A GET never carries content: Windows PowerShell 5.1
+# (.NET Framework) refuses to send one ("Cannot send a content-body with this verb-type").
+function New-CbcHttpRequest([string]$Method, [string]$Url, [hashtable]$Headers = @{}, [string]$Body = $null) {
+  Add-Type -AssemblyName System.Net.Http
+  if ($Method -eq 'GET' -and $Body -ne '') { Stop-Bootstrap 'refused GET with a request body' }
+  $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::new($Method), $Url)
+  foreach ($k in $Headers.Keys) { $null = $req.Headers.TryAddWithoutValidation($k, [string]$Headers[$k]) }
+  if ($Body -ne '') { $req.Content = New-Object System.Net.Http.StringContent($Body, [Text.Encoding]::UTF8, 'application/json') }
+  return $req
+}
+
+# One HTTPS request; no redirects, no cookie store, 20 s timeout (only the preflight
+# warm-up passes 90). Returns @{ Status; Body; SetCookie }.
+function Invoke-CbcHttp([string]$Method, [string]$Url, [hashtable]$Headers = @{}, [string]$Body = $null, [string]$AppHost = $null, [int]$TimeoutSeconds = 20) {
   if (-not (Test-HttpAllowed $Method $Url $AppHost)) { Stop-Bootstrap "refused $Method outside the bootstrap allow-list" }
   Add-Type -AssemblyName System.Net.Http
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
   $h = New-Object System.Net.Http.HttpClientHandler
   $h.AllowAutoRedirect = $false; $h.UseCookies = $false
   $c = New-Object System.Net.Http.HttpClient($h)
-  $c.Timeout = [TimeSpan]::FromSeconds(20)
+  $c.Timeout = [TimeSpan]::FromSeconds($TimeoutSeconds)
   try {
-    $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::new($Method), $Url)
-    foreach ($k in $Headers.Keys) { $null = $req.Headers.TryAddWithoutValidation($k, [string]$Headers[$k]) }
-    if ($null -ne $Body) { $req.Content = New-Object System.Net.Http.StringContent($Body, [Text.Encoding]::UTF8, 'application/json') }
+    $req = New-CbcHttpRequest $Method $Url $Headers $Body
     $res = $c.SendAsync($req).GetAwaiter().GetResult()
     $text = $res.Content.ReadAsStringAsync().GetAwaiter().GetResult()
     $cookies = @(); $vals = $null
@@ -301,6 +313,15 @@ function Invoke-StagingAuthBootstrap {
     $envPlan = if ($check.Policies.Count -eq 0) { 'add-master' } else { 'keep' }
   }
   & $Log "  ok  environment $E $(if ($envNow.Code -eq 0) { "exists and is compatible ($envPlan)" } else { 'does not exist yet' }); account A $($state.A), account B $($state.B)"
+
+  # Staging scales to zero, and a cold start took 30-39 s, longer than the 20 s limit on
+  # every other request. Wake it here, before any write, so the login after signup cannot
+  # time out with an account already created. No headers: no credential, cookie or key.
+  $warm = $null
+  try { $warm = Invoke-CbcHttp 'GET' "$appUrl/api/healthz" @{} $null $appHost 90 }
+  catch { if ($_.Exception -is [CbcStop]) { throw }; Stop-Bootstrap 'staging app did not answer /api/healthz within 90 s (timeout or connection error), so nothing was changed. Rerun when staging is reachable' }
+  if ($warm.Status -ne 200) { Stop-Bootstrap "staging app /api/healthz returned HTTP $($warm.Status), not 200, so nothing was changed" }
+  & $Log '  ok  staging app awake (/api/healthz 200)'
 
   # ---- environment: founder as required reviewer, deployments from master only.
   # The existing environment was validated read-only in preflight. An existing

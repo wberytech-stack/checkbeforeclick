@@ -33,6 +33,7 @@ function New-World([hashtable]$o = @{}) {
     ExtraRule = $null; PoliciesFail = $false; PostMasterNoop = $false; EnvLookup = $null
     Users = @{}; Orgs = @($ORG1, $ORG2, $ORG1, $ORG2, $ORG1, $ORG2); RowsReadable = $true; ProfileMissing = $false; SignupFail = $false; FailSecret = $null
     GhLog = New-Object System.Collections.ArrayList; HttpLog = New-Object System.Collections.ArrayList
+    Seq = New-Object System.Collections.ArrayList; Warm = 200
     Violations = New-Object System.Collections.ArrayList; SecretArgs = New-Object System.Collections.ArrayList
   }
   foreach ($k in $o.Keys) { $w[$k] = $o[$k] }
@@ -50,7 +51,7 @@ function Get-MockEnvJson($w) {
 }
 
 function global:Invoke-Gh([string[]]$GhArgs, [string]$StdIn = $null) {
-  $w = $script:W; $line = $GhArgs -join ' '; [void]$w.GhLog.Add($line)
+  $w = $script:W; $line = $GhArgs -join ' '; [void]$w.GhLog.Add($line); [void]$w.Seq.Add("gh $line")
   if (-not (Test-GhAllowed $GhArgs)) { [void]$w.Violations.Add("gh $line"); Stop-Bootstrap "refused gh call outside the bootstrap allow-list" }
   $j = { param($o) @{ Code = 0; Out = ($o | ConvertTo-Json -Depth 6 -Compress) } }
   switch -regex ($line) {
@@ -98,11 +99,14 @@ function global:Invoke-Gh([string[]]$GhArgs, [string]$StdIn = $null) {
   [void]$w.Violations.Add("unmocked gh $line"); return @{ Code = 9; Out = '' }
 }
 
-function global:Invoke-CbcHttp([string]$Method, [string]$Url, [hashtable]$Headers = @{}, [string]$Body = $null, [string]$AppHost = $null) {
-  $w = $script:W; [void]$w.HttpLog.Add(@{ Method = $Method; Url = $Url; Headers = $Headers; Body = $Body })
+function global:Invoke-CbcHttp([string]$Method, [string]$Url, [hashtable]$Headers = @{}, [string]$Body = $null, [string]$AppHost = $null, [int]$TimeoutSeconds = 20) {
+  $w = $script:W; [void]$w.HttpLog.Add(@{ Method = $Method; Url = $Url; Headers = $Headers; Body = $Body; Timeout = $TimeoutSeconds }); [void]$w.Seq.Add("http $Method $Url")
   if (-not (Test-HttpAllowed $Method $Url $AppHost)) { [void]$w.Violations.Add("http $Method $Url"); Stop-Bootstrap "refused $Method outside the bootstrap allow-list" }
   $u = [Uri]$Url; $json = { param($s, $o) @{ Status = $s; Body = ($o | ConvertTo-Json -Depth 6 -Compress); SetCookie = @() } }
   if ($Headers.apikey -and $Headers.apikey -ne $ANON) { [void]$w.Violations.Add('wrong apikey') }
+  # Build every request with the real constructor, exactly as Invoke-CbcHttp passes it.
+  $req = New-CbcHttpRequest $Method $Url $Headers $Body
+  if ($Method -eq 'GET' -and $null -ne $req.Content) { [void]$w.Violations.Add("GET with content $Url") }
   switch ($u.AbsolutePath) {
     '/auth/v1/settings' { return (& $json 200 $w.Settings) }
     '/auth/v1/signup' {
@@ -123,6 +127,10 @@ function global:Invoke-CbcHttp([string]$Method, [string]$Url, [hashtable]$Header
       if (-not $usr -or $usr.pw -ne $b.password) { return (& $json 401 @{ error = 'x' }) }
       return @{ Status = 200; Body = '{"ok":true}'; SetCookie = @("sb-$STG-auth-token=base64-x; Path=/; HttpOnly") } }
     '/auth/signout' { return @{ Status = 307; Body = ''; SetCookie = @() } }
+    '/api/healthz' {
+      # Warm: an HTTP status, or 'timeout' for an HttpClient timeout (a canceled task).
+      if ($w.Warm -eq 'timeout') { throw [System.Threading.Tasks.TaskCanceledException]::new('A task was canceled.') }
+      return @{ Status = [int]$w.Warm; Body = $(if ($w.Warm -eq 200) { '{"status":"ok"}' } else { '' }); SetCookie = @() } }
   }
   if ($u.AbsolutePath -match '^/api/scan/[0-9a-f-]+/status$') { return @{ Status = $(if ($w.ProfileMissing) { 403 } else { 404 }); Body = '{}'; SetCookie = @() } }
   [void]$w.Violations.Add("unmocked http $Method $Url"); return @{ Status = 599; Body = ''; SetCookie = @() }
@@ -220,6 +228,43 @@ Check 'preflight: invalid -EmailBase -> STOP, nothing written' ($rr.Error -match
 New-World @{ EnvExists = $true; Custom = $true; Reviewers = @(4242); Policies = @('master', 'release') }
 $rr = Run-Boot
 Check 'environment allowing other branches -> STOP with zero writes (no PUT, no POST, no secret, no signup)' ($rr.Error -match 'not compatible, so nothing was changed' -and (& $writes) -eq 0 -and @($script:W.GhLog | Where-Object { $_ -match '^api -X' }).Count -eq 0) "$($rr.Error)"
+
+# ------------------------------------------------------------------ staging warm-up (cold start) before any write
+$isWrite = { param($s) $s -match '^gh (api -X|secret set|variable set)' -or $s -match '^http POST .*/auth/v1/signup$' }
+New-World
+$r = Run-Boot
+$hz = @($script:W.HttpLog | Where-Object { $_.Url -eq "https://$APPHOST/api/healthz" })
+$seq = @($script:W.Seq)
+$hzAt = [array]::IndexOf($seq, "http GET https://$APPHOST/api/healthz")
+$firstWrite = @(for ($i = 0; $i -lt $seq.Count; $i++) { if (& $isWrite $seq[$i]) { $i } })[0]
+Check 'warm-up: fresh run calls GET /api/healthz once on the staging app, with a 90 s limit, before the first write' (
+  $null -eq $r.Error -and $hz.Count -eq 1 -and $hz[0].Method -eq 'GET' -and $hz[0].Timeout -eq 90 -and $hzAt -ge 0 -and $null -ne $firstWrite -and $hzAt -lt $firstWrite -and $r.Log -match 'staging app awake') "$($r.Error) at=$hzAt firstWrite=$firstWrite"
+Check 'warm-up: sends no headers (no credential, cookie or key) and no body' ($hz[0].Headers.Count -eq 0 -and $hz[0].Body -eq '')
+Check 'warm-up: every other request keeps the 20 s limit' (@($script:W.HttpLog | Where-Object { $_.Url -notmatch '/api/healthz$' -and $_.Timeout -ne 20 }).Count -eq 0 -and @($script:W.HttpLog).Count -gt 1)
+Check 'warm-up: no call outside the allow-lists' ($script:W.Violations.Count -eq 0) ($script:W.Violations -join '; ')
+foreach ($case in @(
+    @{ N = 'timeout (no answer within 90 s)'; Warm = 'timeout'; Want = 'did not answer /api/healthz within 90 s (timeout or connection error), so nothing was changed' },
+    @{ N = 'HTTP 503'; Warm = 503; Want = 'returned HTTP 503, not 200, so nothing was changed' },
+    @{ N = 'HTTP 302 redirect (not followed)'; Warm = 302; Want = 'returned HTTP 302, not 200' },
+    @{ N = 'HTTP 404'; Warm = 404; Want = 'returned HTTP 404, not 200' }
+  )) {
+  New-World @{ Warm = $case.Warm }
+  $rr = Run-Boot
+  Check "warm-up $($case.N): STOP before any write (no environment, secret, variable or signup)" (
+    $rr.Type -eq 'CbcStop' -and $rr.Error -match [regex]::Escape($case.Want) -and (& $writes) -eq 0 -and
+    @($script:W.Seq | Where-Object { & $isWrite $_ }).Count -eq 0 -and $script:W.Users.Count -eq 0 -and $script:W.Secrets.Count -eq 0 -and -not $script:W.EnvExists) "$($rr.Type) $($rr.Error)"
+}
+New-World @{ Vars = @{ CBC_STG_NEXT_PUBLIC_SUPABASE_URL = "https://$STG.supabase.co"; CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY = $ANON; CBC_STG_NEXT_PUBLIC_APP_URL = 'https://checkbeforeclick.com' } }
+$rr = Run-Boot
+Check 'warm-up: never sent when the app URL is not the staging Container App' ($rr.Error -match 'not the staging Container App origin' -and @($script:W.HttpLog | Where-Object { $_.Url -match '/api/healthz' }).Count -eq 0)
+foreach ($bad in @(
+    @('GET', "https://$APPHOST/api/healthz?x=1"),
+    @('POST', "https://$APPHOST/api/healthz"),
+    @('GET', "http://$APPHOST/api/healthz"),
+    @('GET', 'https://checkbeforeclick.com/api/healthz'),
+    @('GET', "https://$STG.supabase.co/api/healthz")
+  )) { Check "HTTP allow-list refuses warm-up variant: $($bad -join ' ')" (-not (Test-HttpAllowed $bad[0] $bad[1] $APPHOST)) }
+Check 'HTTP allow-list accepts exactly GET https://<staging app>/api/healthz' (Test-HttpAllowed 'GET' "https://$APPHOST/api/healthz" $APPHOST)
 
 # ------------------------------------------------------------------ environment lookup: only a confirmed 404 means absent
 # Any lookup that is not a clear 200 or 404 stops in preflight: no environment PUT/POST,
@@ -364,6 +409,63 @@ foreach ($bad in @(
     @('POST', 'https://checkbeforeclick.com/api/auth/login')
   )) { Check "HTTP allow-list refuses: $($bad -join ' ')" (-not (Test-HttpAllowed $bad[0] $bad[1] $APPHOST)) }
 
+# ------------------------------------------------------------------ request construction (Windows PowerShell 5.1)
+# Invoke-CbcHttp's $Body is [string], so a $null body arrives as ''. Each case passes it the
+# same way. The first live preflight GET failed because '' still attached a JSON content.
+$sbUrl = "https://$STG.supabase.co"
+$get = New-CbcHttpRequest 'GET' "$sbUrl/auth/v1/settings" @{ apikey = $ANON } $null
+Check 'request: GET with a $null body carries no content' ($null -eq $get.Content -and $get.Method.Method -eq 'GET' -and $get.Headers.Contains('apikey'))
+$get2 = New-CbcHttpRequest 'GET' "https://$APPHOST/auth/signout" @{ cookie = 'c=1' }
+Check 'request: GET with the body omitted carries no content' ($null -eq $get2.Content)
+$json = '{"email":"a@example.com","password":"x"}'
+$post = New-CbcHttpRequest 'POST' "$sbUrl/auth/v1/signup" @{ apikey = $ANON } $json
+Check 'request: POST keeps its JSON body and content type' (
+  $null -ne $post.Content -and $post.Content.ReadAsStringAsync().GetAwaiter().GetResult() -eq $json -and $post.Content.Headers.ContentType.MediaType -eq 'application/json')
+$logout = New-CbcHttpRequest 'POST' "$sbUrl/auth/v1/logout" @{ apikey = $ANON } '{}'
+Check 'request: logout POST keeps its {} body' ($logout.Content.ReadAsStringAsync().GetAwaiter().GetResult() -eq '{}')
+$err = $null; try { $null = New-CbcHttpRequest 'GET' "$sbUrl/auth/v1/settings" @{} '{"x":1}' } catch { $err = $_.Exception.Message }
+Check 'request: GET with a non-empty body is refused' ($err -match 'refused GET with a request body') "$err"
+
+# Send a real GET on this runtime to a closed loopback port: nothing leaves the machine.
+# Exception types and codes are asserted, not message text (messages are localised).
+# On Windows PowerShell 5.1 a request that reaches the connection attempt fails as
+# HttpRequestException > WebException (ConnectFailure) > SocketException (ConnectionRefused);
+# the original bug failed before any connection with a ProtocolViolationException.
+function Send-Loopback($Req) {
+  $c = New-Object System.Net.Http.HttpClient; $c.Timeout = [TimeSpan]::FromSeconds(15)
+  $r = @{ Sent = $false; Types = @(); WebStatus = $null; SocketCode = $null; Chain = '' }
+  try { $null = $c.SendAsync($Req).GetAwaiter().GetResult(); $r.Sent = $true }
+  catch {
+    $e = $_.Exception
+    while ($e) {
+      $r.Types += $e.GetType().FullName
+      if ($e -is [Net.WebException]) { $r.WebStatus = [string]$e.Status }
+      if ($e -is [Net.Sockets.SocketException]) { $r.SocketCode = [string]$e.SocketErrorCode }
+      $e = $e.InnerException
+    }
+    $r.Chain = $r.Types -join ' > '
+  } finally { $c.Dispose() }
+  return $r
+}
+function Get-ClosedLoopbackPort {
+  $l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $l.Start(); $p = $l.LocalEndpoint.Port; $l.Stop(); return $p
+}
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+  $port = Get-ClosedLoopbackPort
+  $sent = Send-Loopback (New-CbcHttpRequest 'GET' "http://127.0.0.1:$port/auth/v1/settings" @{ apikey = 'x' } $null)
+  Check 'request: real GET on Windows PowerShell 5.1 reaches the connection attempt and is refused (ConnectFailure / ConnectionRefused)' (
+    -not $sent.Sent -and $sent.Types -contains 'System.Net.Http.HttpRequestException' -and $sent.WebStatus -eq 'ConnectFailure' -and
+    $sent.SocketCode -eq 'ConnectionRefused' -and $sent.Types -notcontains 'System.Net.ProtocolViolationException') "$($sent.Chain) status=$($sent.WebStatus) socket=$($sent.SocketCode)"
+  $port = Get-ClosedLoopbackPort
+  $bad = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$port/")
+  $bad.Content = New-Object System.Net.Http.StringContent('', [Text.Encoding]::UTF8, 'application/json')
+  $ctl = Send-Loopback $bad
+  Check 'request: control - Windows PowerShell 5.1 refuses a GET with an empty content before connecting (ProtocolViolationException)' (
+    -not $ctl.Sent -and $ctl.Types -contains 'System.Net.ProtocolViolationException' -and $null -eq $ctl.SocketCode) "$($ctl.Chain) socket=$($ctl.SocketCode)"
+} else {
+  Check 'request: this suite must run under Windows PowerShell 5.1 (powershell.exe), the runtime the bootstrap uses' $false "edition $($PSVersionTable.PSEdition)"
+}
+
 # ------------------------------------------------------------------ static source checks
 $lib = Get-Content -Raw (Join-Path $here 'staging-auth-bootstrap.lib.ps1')
 $entry = Get-Content -Raw (Join-Path $here 'Initialize-StagingAuthTest.ps1')
@@ -380,6 +482,16 @@ Check 'entry: PARTIAL is recognised by exception type and never reported as PASS
   $entryCode -match '\$partial = \$_\.Exception\.GetType\(\)\.Name -eq ''CbcPartial''' -and
   $entryCode -match 'if \(\$partial\) \{\s*Write-Host "PARTIAL' -and $entryCode -match 'Not a completed bootstrap')
 Check 'source: no workflow dispatch anywhere' ($code -notmatch 'workflow run|dispatches')
+$http = $lib.Substring($lib.IndexOf('function Invoke-CbcHttp'))
+$http = $http.Substring(0, $http.IndexOf("`n}") + 2)
+Check 'source: Invoke-CbcHttp checks the allow-list first, keeps redirects and cookies off, and builds requests only through New-CbcHttpRequest' (
+  $http -match '^function Invoke-CbcHttp[^\n]*\{\s*\n\s*if \(-not \(Test-HttpAllowed' -and $http -match 'AllowAutoRedirect = \$false' -and
+  $http -match 'UseCookies = \$false' -and $http -match 'New-CbcHttpRequest \$Method \$Url \$Headers \$Body' -and $http -notmatch 'HttpRequestMessage|StringContent')
+$calls = @([regex]::Matches($code, "Invoke-CbcHttp '[A-Z]+'[^\r\n]*") | ForEach-Object { $_.Value })
+$long = @($calls | Where-Object { $_ -match '\s\d+\s*\)?\s*\}?\s*$' })
+Check 'source: the default timeout is 20 s and only the /api/healthz warm-up passes another (90 s)' (
+  $http -match '\[int\]\$TimeoutSeconds = 20\)' -and $http -match '\$c\.Timeout = \[TimeSpan\]::FromSeconds\(\$TimeoutSeconds\)' -and
+  $long.Count -eq 1 -and $long[0] -match "^Invoke-CbcHttp 'GET' `"\`$appUrl/api/healthz`" @\{\} \`$null \`$appHost 90 \}$") "$($long -join ' | ')"
 
 Write-Host ''
 Write-Host "$($script:Pass) passed, $($script:Fail) failed"

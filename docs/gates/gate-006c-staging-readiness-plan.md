@@ -96,8 +96,8 @@ fix before B4.
 | B3 | `az bicep lint --file infra/azure/hosting/main.bicep` | No (offline) | No errors |
 | B4 | Phase A what-if: `az deployment group what-if --resource-group rg-cbc-prod-canadacentral-001 --template-file infra/azure/hosting/main.bicep --parameters infra/azure/hosting/main.parameters.json` | **Yes**: signs in and reads Azure; changes nothing. Founder authorization required | Exactly **6 Create**: `id-cbc-web-cc-001` (userAssignedIdentities), `crcbcprodcc001` (registries), `log-cbc-prod-cc-001` (workspaces), `cae-cbc-prod-cc-001` (managedEnvironments), and 2 roleAssignments (AcrPull on the registry; Key Vault Secrets User on `kv-cbc-prod-cc-001`). **No** Container Apps (`deployApps` defaults to `false`); **no** Modify or Delete on any existing resource. The Key Vault itself is only read (`existing`) |
 | B5 | Phase A create: the B4 command with `create` in place of `what-if` | **Yes**: creates the 6 resources. Founder authorization required | Succeeds; record outputs `registryLoginServer`, `identityClientId`, `stagingPublicOrigin` |
-| B6 | Phase B what-if: the B4 command plus `--parameters deployApps=true stagingImage=<stg ref> productionImage=<prod ref>`. First, no `REPLACE_WITH_` value may remain in `main.parameters.json` (those values feed only the Phase B app environments) | **Yes**: reads Azure; changes nothing. Founder authorization required, and only after the P8 decision | **2 Create**: `ca-cbc-web-stg-cc-001` and `ca-cbc-web-prod-cc-001` (containerApps, through the `web-staging` and `web-production` module deployments). The 6 Phase A resources show NoChange; no Modify or Delete |
-| B7 | Phase B create: the B6 command with `create` | **Yes**: creates both apps; the production app starts its always-on replica. Founder authorization required | Both apps provisioned; the staging revision becomes healthy once the Key Vault references resolve |
+| B6 | Phase B what-if: the B4 command plus `--parameters deployApps=true stagingImage=<stg ref> productionImage=<prod ref>`. **Revised 2026-10-24 (staging only):** pass `deployApps=true stagingImage=<stg ref>` only; `deployProductionApp` defaults to `false`, so the production app is not created and needs no image. Expect **1 Create** (`ca-cbc-web-stg-cc-001`), whose secrets do not include `google-web-risk-api-key`. Run it from a checkout of `master` at or after this change. First, no `REPLACE_WITH_` value may remain in `main.parameters.json` (those values feed only the Phase B app environments) | **Yes**: reads Azure; changes nothing. Founder authorization required, and only after the P8 decision | **2 Create**: `ca-cbc-web-stg-cc-001` and `ca-cbc-web-prod-cc-001` (containerApps, through the `web-staging` and `web-production` module deployments). The 6 Phase A resources show NoChange; no Modify or Delete |
+| B7 | Phase B create: the B6 command with `create`. **Revised 2026-10-24:** creates the staging app only; the production app is a later, separately approved deployment with `deployProductionApp=true` | **Yes**: creates both apps; the production app starts its always-on replica. Founder authorization required | Both apps provisioned; the staging revision becomes healthy once the Key Vault references resolve |
 
 The founder approved installing the Bicep CLI locally (2026-10-17), so Claude
 ran B1–B3 offline and fixed the compile error on a gate branch before any B4.
@@ -188,6 +188,10 @@ hours, compared with the estimate.
 7. **A** Dispatch `azure-deploy` for staging, then production, with the same
    master SHA. Both runs are **expected to fail after pushing their images**
    ("Container App … not found"); record both image refs.
+   **Revised 2026-10-24 (founder: no Azure Production yet):** dispatch
+   **staging only**. Phase B now creates staging alone (`deployProductionApp`
+   defaults to `false`), so no production image is needed. Step 10 is then
+   unnecessary: B7 already runs the staging image built from that SHA.
 8. **A** Authorize B6 (Phase B what-if; Azure access) and review it against
    section 3.
 9. **A** Authorize B7 (Phase B create; production replica cost starts per P8).

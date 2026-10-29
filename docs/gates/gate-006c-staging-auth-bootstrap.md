@@ -84,3 +84,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/azure-hosting/founde
 ```
 
 The tests run offline with stateful mocks of `gh` and HTTP. Every call still passes through the real allow-lists.
+
+## Fix: GET requests carried an empty body (first live run)
+
+The first founder-approved live run, from `master` at `e9c2a5f`, stopped in preflight at its first HTTP call (`GET /auth/v1/settings`) with `Cannot send a content-body with this verb-type.` and `Created this run: nothing` (exit 1).
+
+- **Cause:** `Invoke-CbcHttp` declares `[string]$Body = $null`. PowerShell converts `$null` to `''` for a `[string]` parameter, so `if ($null -ne $Body)` was always true and every GET got an empty JSON `StringContent`. Windows PowerShell 5.1 (.NET Framework `HttpClientHandler`) refuses to send content with a GET.
+- **Why the tests missed it:** the suite replaces `Invoke-CbcHttp` with a mock, so request construction never ran.
+- **Fix:** request construction moved to `New-CbcHttpRequest`. Content is attached only for a non-empty body, and a GET with a body is refused. `Invoke-CbcHttp` is otherwise unchanged: the allow-list is checked first, redirects and cookies stay off, and the 20 s timeout stays.
+- **Regression tests:**
+  - The HTTP mock now builds every request with the real `New-CbcHttpRequest`, and records a violation for a GET with content, in every scenario.
+  - Direct tests cover GET without a body, POST JSON bodies, and the refusal of a GET with a body.
+  - A real send on Windows PowerShell 5.1 goes to a closed loopback port, so nothing leaves the machine. A control shows the same runtime refuses a GET with empty content.

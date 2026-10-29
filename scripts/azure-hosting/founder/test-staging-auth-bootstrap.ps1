@@ -103,6 +103,9 @@ function global:Invoke-CbcHttp([string]$Method, [string]$Url, [hashtable]$Header
   if (-not (Test-HttpAllowed $Method $Url $AppHost)) { [void]$w.Violations.Add("http $Method $Url"); Stop-Bootstrap "refused $Method outside the bootstrap allow-list" }
   $u = [Uri]$Url; $json = { param($s, $o) @{ Status = $s; Body = ($o | ConvertTo-Json -Depth 6 -Compress); SetCookie = @() } }
   if ($Headers.apikey -and $Headers.apikey -ne $ANON) { [void]$w.Violations.Add('wrong apikey') }
+  # Build every request with the real constructor, exactly as Invoke-CbcHttp passes it.
+  $req = New-CbcHttpRequest $Method $Url $Headers $Body
+  if ($Method -eq 'GET' -and $null -ne $req.Content) { [void]$w.Violations.Add("GET with content $Url") }
   switch ($u.AbsolutePath) {
     '/auth/v1/settings' { return (& $json 200 $w.Settings) }
     '/auth/v1/signup' {
@@ -364,6 +367,42 @@ foreach ($bad in @(
     @('POST', 'https://checkbeforeclick.com/api/auth/login')
   )) { Check "HTTP allow-list refuses: $($bad -join ' ')" (-not (Test-HttpAllowed $bad[0] $bad[1] $APPHOST)) }
 
+# ------------------------------------------------------------------ request construction (Windows PowerShell 5.1)
+# Invoke-CbcHttp's $Body is [string], so a $null body arrives as ''. Each case passes it the
+# same way. The first live preflight GET failed because '' still attached a JSON content.
+$sbUrl = "https://$STG.supabase.co"
+$get = New-CbcHttpRequest 'GET' "$sbUrl/auth/v1/settings" @{ apikey = $ANON } $null
+Check 'request: GET with a $null body carries no content' ($null -eq $get.Content -and $get.Method.Method -eq 'GET' -and $get.Headers.Contains('apikey'))
+$get2 = New-CbcHttpRequest 'GET' "https://$APPHOST/auth/signout" @{ cookie = 'c=1' }
+Check 'request: GET with the body omitted carries no content' ($null -eq $get2.Content)
+$json = '{"email":"a@example.com","password":"x"}'
+$post = New-CbcHttpRequest 'POST' "$sbUrl/auth/v1/signup" @{ apikey = $ANON } $json
+Check 'request: POST keeps its JSON body and content type' (
+  $null -ne $post.Content -and $post.Content.ReadAsStringAsync().GetAwaiter().GetResult() -eq $json -and $post.Content.Headers.ContentType.MediaType -eq 'application/json')
+$logout = New-CbcHttpRequest 'POST' "$sbUrl/auth/v1/logout" @{ apikey = $ANON } '{}'
+Check 'request: logout POST keeps its {} body' ($logout.Content.ReadAsStringAsync().GetAwaiter().GetResult() -eq '{}')
+$err = $null; try { $null = New-CbcHttpRequest 'GET' "$sbUrl/auth/v1/settings" @{} '{"x":1}' } catch { $err = $_.Exception.Message }
+Check 'request: GET with a non-empty body is refused' ($err -match 'refused GET with a request body') "$err"
+
+# Send a real GET on this runtime to a closed loopback port: nothing leaves the machine.
+# A content-body error means the original failure is back; a connection error means the
+# request was accepted for sending. The control proves this runtime reproduces the failure.
+function Send-Loopback($Req) {
+  $c = New-Object System.Net.Http.HttpClient; $c.Timeout = [TimeSpan]::FromSeconds(5)
+  try { $null = $c.SendAsync($Req).GetAwaiter().GetResult(); return 'sent' }
+  catch { $e = $_.Exception; while ($e.InnerException -and $e.Message -notmatch 'content-body') { $e = $e.InnerException }; return $e.Message }
+  finally { $c.Dispose() }
+}
+$l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $l.Start(); $port = $l.LocalEndpoint.Port; $l.Stop()
+$sent = Send-Loopback (New-CbcHttpRequest 'GET' "http://127.0.0.1:$port/auth/v1/settings" @{ apikey = 'x' } $null)
+Check 'request: real GET send on this runtime is not refused for a content body' ($sent -notmatch 'content-body') "$sent"
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+  $bad = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$port/")
+  $bad.Content = New-Object System.Net.Http.StringContent('', [Text.Encoding]::UTF8, 'application/json')
+  $ctl = Send-Loopback $bad
+  Check 'request: control - Windows PowerShell 5.1 refuses a GET with an empty content' ($ctl -match 'content-body') "$ctl"
+} else { Write-Host 'note Windows PowerShell 5.1 control skipped: run this suite with powershell.exe' }
+
 # ------------------------------------------------------------------ static source checks
 $lib = Get-Content -Raw (Join-Path $here 'staging-auth-bootstrap.lib.ps1')
 $entry = Get-Content -Raw (Join-Path $here 'Initialize-StagingAuthTest.ps1')
@@ -380,6 +419,11 @@ Check 'entry: PARTIAL is recognised by exception type and never reported as PASS
   $entryCode -match '\$partial = \$_\.Exception\.GetType\(\)\.Name -eq ''CbcPartial''' -and
   $entryCode -match 'if \(\$partial\) \{\s*Write-Host "PARTIAL' -and $entryCode -match 'Not a completed bootstrap')
 Check 'source: no workflow dispatch anywhere' ($code -notmatch 'workflow run|dispatches')
+$http = $lib.Substring($lib.IndexOf('function Invoke-CbcHttp'))
+$http = $http.Substring(0, $http.IndexOf("`n}") + 2)
+Check 'source: Invoke-CbcHttp checks the allow-list first, keeps redirects and cookies off, and builds requests only through New-CbcHttpRequest' (
+  $http -match '^function Invoke-CbcHttp[^\n]*\{\s*\n\s*if \(-not \(Test-HttpAllowed' -and $http -match 'AllowAutoRedirect = \$false' -and
+  $http -match 'UseCookies = \$false' -and $http -match 'New-CbcHttpRequest \$Method \$Url \$Headers \$Body' -and $http -notmatch 'HttpRequestMessage|StringContent')
 
 Write-Host ''
 Write-Host "$($script:Pass) passed, $($script:Fail) failed"

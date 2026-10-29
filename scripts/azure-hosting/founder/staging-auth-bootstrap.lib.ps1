@@ -94,6 +94,18 @@ function Test-HttpAllowed([string]$Method, [string]$Url, [string]$AppHost) {
   return $false
 }
 
+# Builds the request message. A [string] parameter turns $null into '', so "no body" is
+# an empty string here, never $null. A GET never carries content: Windows PowerShell 5.1
+# (.NET Framework) refuses to send one ("Cannot send a content-body with this verb-type").
+function New-CbcHttpRequest([string]$Method, [string]$Url, [hashtable]$Headers = @{}, [string]$Body = $null) {
+  Add-Type -AssemblyName System.Net.Http
+  if ($Method -eq 'GET' -and $Body -ne '') { Stop-Bootstrap 'refused GET with a request body' }
+  $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::new($Method), $Url)
+  foreach ($k in $Headers.Keys) { $null = $req.Headers.TryAddWithoutValidation($k, [string]$Headers[$k]) }
+  if ($Body -ne '') { $req.Content = New-Object System.Net.Http.StringContent($Body, [Text.Encoding]::UTF8, 'application/json') }
+  return $req
+}
+
 # One HTTPS request; no redirects, no cookie store, 20 s timeout. Returns
 # @{ Status; Body; SetCookie }.
 function Invoke-CbcHttp([string]$Method, [string]$Url, [hashtable]$Headers = @{}, [string]$Body = $null, [string]$AppHost = $null) {
@@ -105,9 +117,7 @@ function Invoke-CbcHttp([string]$Method, [string]$Url, [hashtable]$Headers = @{}
   $c = New-Object System.Net.Http.HttpClient($h)
   $c.Timeout = [TimeSpan]::FromSeconds(20)
   try {
-    $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::new($Method), $Url)
-    foreach ($k in $Headers.Keys) { $null = $req.Headers.TryAddWithoutValidation($k, [string]$Headers[$k]) }
-    if ($null -ne $Body) { $req.Content = New-Object System.Net.Http.StringContent($Body, [Text.Encoding]::UTF8, 'application/json') }
+    $req = New-CbcHttpRequest $Method $Url $Headers $Body
     $res = $c.SendAsync($req).GetAwaiter().GetResult()
     $text = $res.Content.ReadAsStringAsync().GetAwaiter().GetResult()
     $cookies = @(); $vals = $null

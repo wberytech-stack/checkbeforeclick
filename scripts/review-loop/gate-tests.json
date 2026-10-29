@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "note": "Local tests the review loop runs after each Claude fix round. Each entry is a node script path (repository-relative) plus arguments; nothing else can run. A gate without an entry cannot use fix rounds.",
+  "gates": {
+    "007A": [
+      ["scripts/rate-limit/test-rate-limit.ts"],
+      ["scripts/rate-limit/test-provider-budget.ts"],
+      ["node_modules/typescript/bin/tsc", "--noEmit", "-p", "."]
+    ],
+    "999Z": [
+      ["scripts/loop-sandbox/test-redirect.ts"]
+    ]
+  }
+}

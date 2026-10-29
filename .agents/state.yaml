@@ -414,6 +414,11 @@ gates:
   "004B": {status: docs_on_master, evidence: [{type: gate_doc, ref: docs/gates/gate-004b-browser-extension-mvp-requirements.md}], verified_at: 2026-10-15}
   "004C": {status: docs_on_master, evidence: [{type: gate_doc, ref: docs/gates/gate-004c-dependency-vulnerability-audit-plan.md}], verified_at: 2026-10-15}
   "004D": {status: docs_on_master, evidence: [{type: gate_doc, ref: docs/gates/gate-004d-postcss-blocked-remediation-note.md}], verified_at: 2026-10-15}
+  "005H":
+    status: draft_pr_open
+    note: "Codex review loop (scripts/review-loop). Founder-started 2026-10-23; draft PR #44 (head 7cfaac8) plus local uncommitted live-test preparation (sandbox repo choice, permission probe, input flush). Offline suites: runner 298/0, parser 47/0, loop 131/0, probe 35/0. Founder-run live sandbox validation (gate 999Z): probe PASS; final loop run loop-999Z-20261023-090041 CLEAN (archive MANIFEST.sha256 4acfb354...). Merge founder-only."
+    evidence: [{type: gate_doc, ref: docs/gates/gate-005h-codex-review-loop.md}, {type: branch, ref: gate-005h-codex-review-loop}]
+    verified_at: 2026-10-23
 
 blockers:
   - id: tls-unverified-on-master

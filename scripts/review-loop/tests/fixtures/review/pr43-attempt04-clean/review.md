@@ -1,0 +1,1 @@
+The changes update documentation and project state only, consistently distinguishing founder-reported secret metadata from repository evidence and runtime validation. No actionable defects were identified.

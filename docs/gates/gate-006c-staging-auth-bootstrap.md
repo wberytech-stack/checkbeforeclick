@@ -59,7 +59,7 @@ gh auth login   # only if `gh auth status` does not show wberytech-stack
 - **Every run reports what it created.**
 - **Allow-lists enforced in code:**
   - **gh:** user, this repository, three staging repository variables, the `staging-auth-test` environment and its branch policy, four secrets, two variables. No workflow command.
-  - **HTTPS:** staging Supabase signup, logout, settings and the caller's own `users` row; on the staging app, login, a status probe and sign-out.
+  - **HTTPS:** staging Supabase signup, logout, settings and the caller's own `users` row; on the staging app, an unauthenticated `/api/healthz` warm-up, login, a status probe and sign-out.
 
 ## Outcomes and exit codes
 
@@ -96,3 +96,18 @@ The first founder-approved live run, from `master` at `e9c2a5f`, stopped in pref
   - The HTTP mock now builds every request with the real `New-CbcHttpRequest`, and records a violation for a GET with content, in every scenario.
   - Direct tests cover GET without a body, POST JSON bodies, and the refusal of a GET with a body.
   - A real send on Windows PowerShell 5.1 goes to a closed loopback port, so nothing leaves the machine. A control shows the same runtime refuses a GET with empty content.
+
+## Staging cold-start warm-up
+
+Staging runs at `minReplicas: 0` (`infra/azure/hosting/staging-app.bicep`), so it scales to zero when idle. Unauthenticated GETs of staging `/api/healthz` from idle took 30.1 s and 31.7 s (2026-10-28) and 38.6 s (2026-10-29), against 0.57 s when warm. Every bootstrap request has a 20 s limit, and the first request to the app (the login) comes after an account is signed up and its secrets stored. From idle, that login would time out and leave an account and credentials behind.
+
+- **Warm-up:** the last preflight step, before any write, is `GET https://<staging app>/api/healthz`. It sends no headers, no cookie and no key, and allows up to 90 s.
+- **Fail closed:** anything but HTTP 200 stops the run with nothing changed. That covers a timeout, a connection error, a redirect (not followed), or any other status.
+- **Unchanged:** every other request keeps the 20 s limit. The allow-list gains exactly `GET /api/healthz` on the staging app host, with no query string.
+- **Tests:**
+  - the warm-up runs once, before the first write, with a 90 s limit and no headers;
+  - every other request uses 20 s;
+  - a timeout, 503, 302 or 404 stops the run with zero writes;
+  - it is never sent to a host other than the staging app;
+  - the allow-list refuses any variation of the URL or method;
+  - a source check confirms that only the warm-up passes a non-default timeout.

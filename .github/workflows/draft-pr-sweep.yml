@@ -1,0 +1,60 @@
+# Gate 005G - draft PR sweep (AGENTS.md section 6.6 capability 3, once Gate 005F is merged).
+#
+# INERT BY DEFAULT: runs only when the founder sets CBC_DRAFT_PR_ENABLED=enabled, and
+# only if AGENTS.md on master contains section 6.6. Scheduled (runs master's definition),
+# so a gate branch cannot alter it. Opens DRAFT PRs into master for gate-* branches that
+# have never had a PR (open or closed). Never marks ready, approves, merges, closes,
+# deletes or pushes anything.
+name: draft-pr-sweep
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cbc-draft-pr-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: vars.CBC_DRAFT_PR_ENABLED == 'enabled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+
+      - name: Install from lockfile (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Constitutional authorization (Gate 005F section 6.6 on master)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/reviewer/cli.ts authorized
+
+      - name: Open draft PRs for gate branches without one
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git ls-remote --heads origin 'refs/heads/gate-*' | while read -r sha ref; do
+            branch="${ref#refs/heads/}"
+            node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/reviewer/cli.ts check-branch "$branch" || continue
+            count="$(gh pr list --state all --head "$branch" --json number --jq 'length')"
+            [ "$count" = "0" ] || continue
+            gh pr create --draft --base master --head "$branch" \
+              --title "Gate ${branch} (draft, opened by automation)" \
+              --body "Opened by the draft-PR sweep (Gate 005G; AGENTS.md section 6.6 capability 3). This is a DRAFT and is not approval of anything. Only the founder may mark it ready or merge it."
+          done

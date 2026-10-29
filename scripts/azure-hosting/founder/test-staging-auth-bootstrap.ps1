@@ -385,23 +385,44 @@ $err = $null; try { $null = New-CbcHttpRequest 'GET' "$sbUrl/auth/v1/settings" @
 Check 'request: GET with a non-empty body is refused' ($err -match 'refused GET with a request body') "$err"
 
 # Send a real GET on this runtime to a closed loopback port: nothing leaves the machine.
-# A content-body error means the original failure is back; a connection error means the
-# request was accepted for sending. The control proves this runtime reproduces the failure.
+# Exception types and codes are asserted, not message text (messages are localised).
+# On Windows PowerShell 5.1 a request that reaches the connection attempt fails as
+# HttpRequestException > WebException (ConnectFailure) > SocketException (ConnectionRefused);
+# the original bug failed before any connection with a ProtocolViolationException.
 function Send-Loopback($Req) {
-  $c = New-Object System.Net.Http.HttpClient; $c.Timeout = [TimeSpan]::FromSeconds(5)
-  try { $null = $c.SendAsync($Req).GetAwaiter().GetResult(); return 'sent' }
-  catch { $e = $_.Exception; while ($e.InnerException -and $e.Message -notmatch 'content-body') { $e = $e.InnerException }; return $e.Message }
-  finally { $c.Dispose() }
+  $c = New-Object System.Net.Http.HttpClient; $c.Timeout = [TimeSpan]::FromSeconds(15)
+  $r = @{ Sent = $false; Types = @(); WebStatus = $null; SocketCode = $null; Chain = '' }
+  try { $null = $c.SendAsync($Req).GetAwaiter().GetResult(); $r.Sent = $true }
+  catch {
+    $e = $_.Exception
+    while ($e) {
+      $r.Types += $e.GetType().FullName
+      if ($e -is [Net.WebException]) { $r.WebStatus = [string]$e.Status }
+      if ($e -is [Net.Sockets.SocketException]) { $r.SocketCode = [string]$e.SocketErrorCode }
+      $e = $e.InnerException
+    }
+    $r.Chain = $r.Types -join ' > '
+  } finally { $c.Dispose() }
+  return $r
 }
-$l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $l.Start(); $port = $l.LocalEndpoint.Port; $l.Stop()
-$sent = Send-Loopback (New-CbcHttpRequest 'GET' "http://127.0.0.1:$port/auth/v1/settings" @{ apikey = 'x' } $null)
-Check 'request: real GET send on this runtime is not refused for a content body' ($sent -notmatch 'content-body') "$sent"
+function Get-ClosedLoopbackPort {
+  $l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $l.Start(); $p = $l.LocalEndpoint.Port; $l.Stop(); return $p
+}
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
+  $port = Get-ClosedLoopbackPort
+  $sent = Send-Loopback (New-CbcHttpRequest 'GET' "http://127.0.0.1:$port/auth/v1/settings" @{ apikey = 'x' } $null)
+  Check 'request: real GET on Windows PowerShell 5.1 reaches the connection attempt and is refused (ConnectFailure / ConnectionRefused)' (
+    -not $sent.Sent -and $sent.Types -contains 'System.Net.Http.HttpRequestException' -and $sent.WebStatus -eq 'ConnectFailure' -and
+    $sent.SocketCode -eq 'ConnectionRefused' -and $sent.Types -notcontains 'System.Net.ProtocolViolationException') "$($sent.Chain) status=$($sent.WebStatus) socket=$($sent.SocketCode)"
+  $port = Get-ClosedLoopbackPort
   $bad = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$port/")
   $bad.Content = New-Object System.Net.Http.StringContent('', [Text.Encoding]::UTF8, 'application/json')
   $ctl = Send-Loopback $bad
-  Check 'request: control - Windows PowerShell 5.1 refuses a GET with an empty content' ($ctl -match 'content-body') "$ctl"
-} else { Write-Host 'note Windows PowerShell 5.1 control skipped: run this suite with powershell.exe' }
+  Check 'request: control - Windows PowerShell 5.1 refuses a GET with an empty content before connecting (ProtocolViolationException)' (
+    -not $ctl.Sent -and $ctl.Types -contains 'System.Net.ProtocolViolationException' -and $null -eq $ctl.SocketCode) "$($ctl.Chain) socket=$($ctl.SocketCode)"
+} else {
+  Check 'request: this suite must run under Windows PowerShell 5.1 (powershell.exe), the runtime the bootstrap uses' $false "edition $($PSVersionTable.PSEdition)"
+}
 
 # ------------------------------------------------------------------ static source checks
 $lib = Get-Content -Raw (Join-Path $here 'staging-auth-bootstrap.lib.ps1')

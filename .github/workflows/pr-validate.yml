@@ -64,11 +64,23 @@ jobs:
       - name: Gate 007A domain age (react-server condition for the server-only marker)
         run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-domain-age.ts
 
+      - name: Gate 007A web risk (real module, fake fetch; react-server condition for the server-only marker)
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-web-risk.ts
+
       - name: Gate 007A tenant guard
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-tenant-guard.ts
 
       - name: Hosting and workflow safety
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-hosting-safety.ts
+
+      # Gate 006C staging verifiers, offline: synthetic responses and environments only (no network, no
+      # credentials). They also check app/api/scan statically, so a route change that breaks the
+      # signed-out 401 that staging-verify relies on fails here, before merge.
+      - name: Gate 006C staging integration verifier (offline)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-staging-integration.ts
+
+      - name: Gate 006C staging auth journeys verifier (offline)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-staging-auth-journeys.ts
 
       - name: Production build (next build, no secrets, telemetry off)
         env:

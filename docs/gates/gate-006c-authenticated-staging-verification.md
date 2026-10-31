@@ -8,6 +8,36 @@ Status: tooling prepared on a gate branch. Nothing here has run against staging.
 
 Every live step below is founder-only.
 
+### Security stop before authenticated testing (read-only catalog preflight, 2026-10-31)
+
+The staging database currently fails a conservative, **read-only** authorization preflight. Run
+[`gate-006c-staging-rls-preflight.sql`](sql/gate-006c-staging-rls-preflight.sql)
+only in the verified **staging** Supabase SQL editor. It queries PostgreSQL catalogs, not user
+rows, and performs no writes. Its three rows must all say `PASS` before requesting a
+separately approved authenticated journey.
+
+The preflight was executed read-only on staging project `zgxmvpbvvakpsnzcymsf`
+on 2026-10-31 UTC and returned:
+
+| Check | Result | Reason |
+| --- | --- | --- |
+| `users_identity_guard_trigger` | **BLOCK** | The draft migration 002 guard is not installed/enabled |
+| `organizations_server_owned_columns` | **BLOCK** | `authenticated` can UPDATE `plan` and `scan_count_this_month` |
+| `scans_server_owned_columns` | **BLOCK** | `authenticated` can UPDATE `status`, `verdict`, and `risk_score` |
+
+RLS is enabled, but its own-organization UPDATE policies do not restrict these columns.
+The `users` identity guard proposed in Gate 007A addresses a **different** risk; it
+does not revoke the organization or scan UPDATE privileges. These are catalog-level
+exposures, not a live exploit demonstration.
+
+**Stop condition:** do not treat J0–J12, bootstrap completion, or RLS isolation as safe
+to sign off while any row is `BLOCK`. A reviewed, separately approved staging-only
+remediation (with disposable-database negative controls) and a fresh read-only recheck
+are required. No agent may apply migrations, create test accounts, dispatch workflows,
+deploy, or touch production as part of this preflight. A `PASS` still does **not**
+prove RLS correctness, function-body safety, or cross-tenant isolation; those require
+their own reviews and founder-approved tests.
+
 ## 1. What the audit found (repository evidence, 2026-10-25)
 
 | Area | Finding | Source |

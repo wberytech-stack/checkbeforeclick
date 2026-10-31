@@ -763,6 +763,81 @@ section 16).
 | `docs/gates/gate-007a-scanner-rate-limiting.md` | This document |
 | `.github/workflows/pr-validate.yml` | **CI, new:** read-only pull-request validation |
 | `scripts/azure-hosting/test-hosting-safety.ts` | **CI:** invariants for `pr-validate.yml` (19 after round 1) |
+| `scripts/rate-limit/test-web-risk.ts` | **Round 5, new:** behavioural tests of the real Web Risk module (fake `fetch`) |
+| `scripts/azure-hosting/test-staging-integration.ts` | **Round 5 (from `master`, Gate 006C):** the static scan-route 401 check follows the `scanFlow` delegation |
+| `scripts/azure-hosting/test-hosting-safety.ts` | **Round 5:** merge conflict with `master` resolved (both check blocks kept); invariants cover eleven suites |
+| `.github/workflows/pr-validate.yml` | **Round 5:** also runs `test-web-risk.ts` and the two offline Gate 006C staging verifiers |
+
+## Round 5: integration with `master` (Gate 006C staging authentication)
+
+PR #45 had a merge conflict with `master` after Gate 006C (PRs #46–#53). This
+round integrates `master` into the 007A code and closes the gaps found while
+doing so. **Gate 007A behaviour is unchanged:** no file under `app/`, `lib/` or
+`inngest/` differs from `fe91972`. The only `infra/` changes are master's own
+Gate 006C changes, brought in by the merge.
+
+1. **Merge conflict.** `scripts/azure-hosting/test-hosting-safety.ts`: the
+   `pr-validate` block (007A) and the staging Web Risk key block (006C) were
+   independent additions at the same place. Both are kept unchanged.
+2. **Broken cross-gate check (would have failed `staging-verify` on deploy).**
+   After the merge, master's offline verifier `test-staging-integration.ts`
+   failed one check: *POST returns 401 before org context, providers or any
+   insert*. It searched `app/api/scan/route.ts` by text position. Since 007A the
+   route is a thin adapter over `lib/scan/scanFlow.ts`, so the dependency
+   wiring (`getUserOrgContext`, `getFastProviders`) appears before the flow's
+   401. **The behaviour was correct** (`scanFlow` returns 401 straight after
+   `getUser()`); the check could not see the delegation. The check now:
+   - keeps the original text check for a route that holds the flow itself;
+   - for a delegating route, requires: no org, provider, RPC, insert or
+     `getUser` work and no `return`/`Response` before `handleScanRequest(`;
+     exactly one return after it, `NextResponse.json(result.body, { status:
+     result.status, headers: result.headers })`; and in `handleScanRequest` the
+     401 straight after `deps.getUser(` and before every other `deps.*` call.
+   - **Mutation check: 8/8 killed** (org lookup or body read before the 401;
+     org lookup in the route; status replaced; early return in the route, on one
+     line or in a block; a return after the call; a status rewrite).
+3. **Behavioural pin of the same invariant.** `test-scan-flow.ts` F01b: a
+   signed-out request never looks up the organization, never reads the body and
+   never calls `failScan` (scan flow: 86 checks).
+4. **Real Web Risk module tested (new `test-web-risk.ts`, 23 checks).** Before,
+   it was covered only statically (S01–S11) and through a mock (V05). Gate 006C
+   gives Azure staging no `GOOGLE_WEB_RISK_API_KEY`, so staging's "no paid
+   request" guarantee rests on `callWebRiskGuarded()` returning before any
+   reservation or request when the key is absent or empty (W01–W03). Also
+   covered:
+   - refused, failed or malformed reservations → 503 and no request;
+   - deadline before or during the request;
+   - exactly one request, with the key only in `X-Goog-Api-Key`;
+   - the target as one encoded `uri` parameter (no query injection);
+   - redirects refused;
+   - a bounded error body;
+   - a JSON 403 never read as "clean";
+   - `run()` never makes a request.
+   - **Mutation check: 8/8 killed** (one survivor was found first, a JSON error
+     body read as clean, and W16b was added to catch it).
+   - The suite maps the `@/` alias with an in-process `node:module` resolve hook.
+     It adds no dependency.
+5. **CI.** `pr-validate` now also runs `test-web-risk.ts` and the two offline
+   Gate 006C verifiers. A future route change that breaks staging-verify's
+   signed-out 401 therefore fails on the pull request, not at deploy time. Both
+   verifiers were confirmed hermetic: they pass with an empty environment and an
+   unreachable proxy.
+
+**Cross-gate compatibility, checked by reading the code (not exercised live):**
+- **J1/J2** sign in through `POST /api/auth/login`, expecting 200 and a
+  staging session cookie. The 007A route keeps both, sets the cookies only on
+  success, and keeps `Cache-Control: no-store, private`. Two sign-ins per run
+  stay well inside the 10 per IP / 5 per email limits.
+- **J5** (a localhost target, expecting 201) goes through admission
+  (`cbc_admit_scan`, one of the user's 50 a day) and then finishes as `unknown`
+  before any provider runs. This needs migration 001 on the **staging Supabase
+  project that the Azure staging app uses**. The runbook records 001 on staging
+  (founder-reported, 2026-10-23), but **which project** that was is not proven
+  by repository evidence. Without 001, J5 returns 503.
+- **staging-verify smoke** (`POST /api/scan` signed out → 401) is unchanged.
+- **Azure topology:** master's Bicep has no Front Door. Container Apps ingress
+  matches the rightmost-`X-Forwarded-For` assumption (R10 remains for Front
+  Door).
 
 ## Continuous validation (`.github/workflows/pr-validate.yml`)
 
@@ -781,7 +856,9 @@ section 16).
   4. the eight offline suites (rate limit, provider budget, scan flow, worker
      flow and domain age with `--conditions=react-server`, login flow, tenant
      guard, hosting and workflow safety; worker flow added in round 1, domain age
-     in round 3);
+     in round 3); **round 5:** plus `test-web-risk.ts` and the offline Gate 006C
+     verifiers `test-staging-integration.ts` and `test-staging-auth-journeys.ts`
+     (eleven suites);
   5. **round 1:** `next build` (no secrets, telemetry off).
 - **What it never does:** it deploys nothing and makes no database, Supabase,
   Google, Vercel or Azure call. The disposable-database validators and the smoke

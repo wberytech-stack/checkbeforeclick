@@ -68,7 +68,7 @@ gh auth login   # only if `gh auth status` does not show wberytech-stack
 | 0 | **VERIFIED** | This run signed up and checked both accounts, and observed both organizations |
 | 2 | **ATTESTED** | Configuration is complete, but part of it rests on your attestation (`-AttestExisting`, or `-OrgIdA`/`-OrgIdB` because RLS hides the rows). The first `staging-auth-journeys` run verifies it |
 | 3 | **PARTIAL** | A user exists with only one of its two secrets stored. Founder recovery is required (above). Do not dispatch `staging-auth-journeys` |
-| 1 | **STOP** | A precondition failed. Anything created is listed, and rerunning is safe |
+| 1 | **STOP** | A precondition or later step failed. Remote writes may have succeeded even if not confirmed; inspect state and obtain separate founder approval before any retry or recovery. |
 
 ## What it verifies at the end (read-only)
 

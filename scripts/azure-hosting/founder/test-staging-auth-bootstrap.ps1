@@ -481,7 +481,7 @@ Check 'entry: exit 0 only for VERIFIED; ATTESTED exits 2; PARTIAL exits 3; STOP 
 Check 'entry: PARTIAL is recognised by exception type and never reported as PASS' (
   $entryCode -match '\$partial = \$_\.Exception\.GetType\(\)\.Name -eq ''CbcPartial''' -and
   $entryCode -match 'if \(\$partial\) \{\s*Write-Host "PARTIAL' -and $entryCode -match 'Not a completed bootstrap')
-Check 'source: no workflow dispatch anywhere' ($code -notmatch 'workflow run|dispatches')
+Check 'entry: STOP never promises a safe automatic rerun after uncertain writes' (`n  $entryCode -notmatch 'Rerunning is safe' -and`n  $entryCode -match 'RESULT: STOP\. Remote state may be partial or uncertain; do not rerun automatically')`nCheck 'source: no workflow dispatch anywhere' ($code -notmatch 'workflow run|dispatches')
 $http = $lib.Substring($lib.IndexOf('function Invoke-CbcHttp'))
 $http = $http.Substring(0, $http.IndexOf("`n}") + 2)
 Check 'source: Invoke-CbcHttp checks the allow-list first, keeps redirects and cookies off, and builds requests only through New-CbcHttpRequest' (

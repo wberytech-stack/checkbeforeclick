@@ -88,7 +88,7 @@ function makeWorld(opts: {
   domainAgeDeferred?: Deferred<ScanProviderResult>;
 } = {}) {
   const sig: { reserve: AbortSignal | undefined; call: AbortSignal | undefined } = { reserve: undefined, call: undefined };
-  const n = { requestAborted: 0, timers: 0, timerMs: 0, cleared: 0, getUser: 0, org: 0, admitRpc: 0, createScan: 0, mark: 0, reserve: 0, webRiskRequest: 0, domainAge: 0, persist: 0, failScan: 0, errors: 0, otherPaid: 0 };
+  const n = { requestAborted: 0, timers: 0, timerMs: 0, cleared: 0, getUser: 0, org: 0, readBody: 0, admitRpc: 0, createScan: 0, mark: 0, reserve: 0, webRiskRequest: 0, domainAge: 0, persist: 0, failScan: 0, errors: 0, otherPaid: 0 };
   const seen: { webRiskUrls: string[]; domainAgeUrls: string[]; persisted: any[]; reservedFor: string[] } = { webRiskUrls: [], domainAgeUrls: [], persisted: [], reservedFor: [] };
   const userId = opts.user === undefined ? "user-1" : opts.user?.id;
   const burst = createSlidingWindowLimiter({ limit: opts.burstLimit ?? 5, windowMs: 60_000, reason: "user_burst_limit" });
@@ -155,7 +155,7 @@ function makeWorld(opts: {
   const deps: ScanFlowDeps = {
     getUser: async () => { n.getUser++; if (opts.getUserThrows) throw new Error("auth down"); return opts.user === undefined ? { id: "user-1" } : opts.user; },
     getOrgContext: async (id) => { n.org++; return opts.org === undefined ? { userId: id, organizationId: "org-1" } : opts.org; },
-    readBody: async () => { if (opts.bodyThrows) throw new SyntaxError("bad json"); return opts.body === undefined ? { input: "https://example.com/a", input_type: "url" } : opts.body; },
+    readBody: async () => { n.readBody++; if (opts.bodyThrows) throw new SyntaxError("bad json"); return opts.body === undefined ? { input: "https://example.com/a", input_type: "url" } : opts.body; },
     admit: (uid, inputType) => admitScan({
       userId: uid, inputType, burst,
       callAdmission: async () => {
@@ -210,6 +210,9 @@ async function main() {
   {
     const w = makeWorld({ user: null }); const r = await run(w);
     check("F01 signed out -> 401, nothing admitted, no scan row, no provider call", r.status === 401 && w.n.admitRpc === 0 && noWork(w));
+    // The 401 is decided before any tenant lookup or body parsing (the invariant staging-integration checks statically).
+    check("F01b signed out -> organization context never looked up, body never read, no failScan",
+      w.n.getUser === 1 && w.n.org === 0 && w.n.readBody === 0 && w.n.failScan === 0, JSON.stringify(w.n));
   }
   {
     const w = makeWorld({ org: null }); const r = await run(w);

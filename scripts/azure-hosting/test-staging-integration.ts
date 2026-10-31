@@ -240,10 +240,36 @@ for (const [name, sc, id, want] of [
   check("smoke.ts: printed Location headers and errors are bounded", /-> \$\{bounded\(loc\)\}/.test(smoke) && /\$\{bounded\(\(e as Error\)\.message\)\}/.test(smoke));
   const route = read("app/api/scan/route.ts");
   const post = route.slice(route.indexOf("export async function POST"));
-  const first401 = post.indexOf("status: 401");
-  check("app/api/scan: POST returns 401 before org context, providers or any insert",
-    first401 > 0 && first401 < post.indexOf("getUserOrgContext(") && first401 < post.indexOf("getFastProviders(") &&
-    (post.indexOf(".insert(") < 0 || first401 < post.indexOf(".insert(")));
+  if (!post.includes("handleScanRequest(")) {
+    // Route holds the request flow itself (pre-Gate 007A shape).
+    const first401 = post.indexOf("status: 401");
+    check("app/api/scan: POST returns 401 before org context, providers or any insert",
+      first401 > 0 && first401 < post.indexOf("getUserOrgContext(") && first401 < post.indexOf("getFastProviders(") &&
+      (post.indexOf(".insert(") < 0 || first401 < post.indexOf(".insert(")));
+  } else {
+    // Gate 007A: the route only wires effects into lib/scan/scanFlow.ts handleScanRequest. The route must do
+    // no tenant, provider, RPC or insert work before handing off and must return the flow's own status; the
+    // flow must return 401 right after getUser() and before any other dependency (tenant lookup, body,
+    // admission, scan row, providers, paid call, persistence).
+    const before = post.slice(0, post.indexOf("handleScanRequest("));
+    check("app/api/scan: POST does no org, provider, RPC or insert work before delegating to handleScanRequest",
+      !/getUserOrgContext\(|getFastProviders\(|\.rpc\(|\.insert\(|\.from\(|getUser\(/.test(before));
+    check("app/api/scan: POST returns the flow's status and body unchanged, with no other return path",
+      !/\breturn\b|Response/.test(before) &&
+      /\n  const result = await handleScanRequest\(\{/.test(post) &&
+      // after the handleScanRequest({...}) call closes, the only remaining statement is the final return
+      /\n  \}\)\n\n  return NextResponse\.json\(result\.body, \{ status: result\.status, headers: result\.headers \}\)\n\}\n/.test(post) &&
+      post.indexOf("\n  })\n") === post.lastIndexOf("\n  })\n", post.search(/\n\}\n/)));
+    const flow = read("lib/scan/scanFlow.ts");
+    const handler = flow.slice(flow.indexOf("export async function handleScanRequest"));
+    const getUserAt = handler.indexOf("deps.getUser(");
+    const first401 = handler.indexOf("status: 401");
+    const others = [...handler.matchAll(/deps\.(\w+)\(/g)].filter((m) => m[1] !== "getUser").map((m) => m.index ?? -1);
+    check("scanFlow: handleScanRequest returns 401 right after getUser(), before any other dependency is called",
+      getUserAt > 0 && first401 > getUserAt && others.length > 0 && others.every((i) => i > first401) &&
+      !/deps\./.test(handler.slice(getUserAt + "deps.getUser(".length, first401)),
+      `getUser@${getUserAt} 401@${first401} firstOther@${Math.min(...others)}`);
+  }
   const dep = read(".github/workflows/azure-deploy.yml");
   const job = dep.match(/\n {2}verify-staging:\n((?: {4}.*\n?)+)/)?.[1] ?? "";
   check("azure-deploy: verify-staging runs after the staging job via the reusable workflow, staging only",

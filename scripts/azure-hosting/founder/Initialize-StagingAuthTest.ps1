@@ -87,6 +87,6 @@ try {
   }
   Write-Host "STOP  $($_.Exception.Message)" -ForegroundColor Red
   Write-Created
-  Write-Host 'RESULT: STOP. Rerunning is safe.' -ForegroundColor Red
+  Write-Host 'RESULT: STOP. Remote state may be partial or uncertain; do not rerun automatically. Inspect created items and obtain founder approval for any recovery.' -ForegroundColor Red
   exit 1
 }

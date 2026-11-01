@@ -59,3 +59,5 @@ jobs:
 
       - name: Offline Azure logout route and committed PostgreSQL revocation tests
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-logout-route.ts
+      - name: Offline Azure login-start route and committed PostgreSQL state tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-login-start-route.ts

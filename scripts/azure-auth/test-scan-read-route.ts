@@ -20,7 +20,7 @@ const scan = {
 };
 const evidence = { signal_type: "url", severity: "low", title: "Observed", detail: null, score_impact: 0 };
 type Options = {
-  id?: unknown; method?: string; cookie?: string;
+  id?: unknown; method?: string; cookie?: string; query?: string;
   sessions?: Record<string, unknown>[];
   scans?: Record<string, unknown>[];
   evidence?: Record<string, unknown>[];
@@ -29,7 +29,7 @@ type Options = {
 function fixture(options: Options = {}) {
   const calls: { sql: string; values: unknown[] }[] = [];
   const events: string[] = [];
-  const request = new Request("https://cbc.example/api/azure/scans/" + SCAN, {
+  const request = new Request("https://cbc.example/api/azure/scans/" + SCAN + (options.query ?? ""), {
     method: options.method ?? "GET",
     headers: options.cookie === undefined ? { cookie } : options.cookie ? { cookie: options.cookie } : {},
   });
@@ -178,7 +178,7 @@ await check("S19 malformed session identity fails closed", async () => {
   await status(f, 503); assert.ok(!f.events.includes("scan"));
 });
 await check("S20 no tenant ID is read from request query parameters", async () => {
-  const f = fixture(); await status(f, 200);
+  const f = fixture({ query: "?organization_id=" + OTHER + "&role=owner" }); await status(f, 200);
   assert.ok(f.calls.every(c => !c.values.includes(OTHER)));
 });
 console.log("\n=== Azure scan read boundary: " + passed + " passed, " + failed + " failed ===");

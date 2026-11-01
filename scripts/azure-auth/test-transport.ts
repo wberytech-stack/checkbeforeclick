@@ -1,7 +1,6 @@
 /** Gate 008B offline OIDC transport tests. Fake fetch only; no live network. */
 import { strict as assert } from "node:assert";
-import { TrustedOidcTransport } from "../../src/security/azureOidcTransport.ts";
-import { OidcValidationError } from "../../src/security/azureOidc.ts";
+import { TrustedOidcTransport, OidcTransportError } from "../../src/security/azureOidcTransport.ts";
 
 const ISSUER = "https://tenant.ciamlogin.com/tenant-id/v2.0";
 const DISCOVERY = `${ISSUER}/.well-known/openid-configuration`;
@@ -19,7 +18,7 @@ async function check(label: string, action: () => unknown | Promise<unknown>) {
   catch (e) { failed++; console.error(`FAIL ${label}: ${String(e)}`); }
 }
 async function rejects(label: string, action: () => unknown | Promise<unknown>) {
-  await check(label, async () => { await assert.rejects(async () => action(), OidcValidationError); });
+  await check(label, async () => { await assert.rejects(async () => action(), OidcTransportError); });
 }
 function json(value: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" }, ...init });
@@ -86,7 +85,7 @@ for (const [name, issuer] of [
   ["T13 issuer with credentials", "https://user:pass@tenant.ciamlogin.com/tenant-id/v2.0"],
   ["T14 issuer without v2.0", "https://tenant.ciamlogin.com/tenant-id"],
 ] as const) {
-  await check(name, () => assert.throws(() => new TrustedOidcTransport(issuer), OidcValidationError));
+  await check(name, () => assert.throws(() => new TrustedOidcTransport(issuer), OidcTransportError));
 }
 for (const [name, overrides] of [
   ["T15 metadata wrong issuer", { issuer: "https://evil.invalid/tenant/v2.0" }],
@@ -120,7 +119,7 @@ await check("T38 failed discovery never cached", async () => {
   const transport = new TrustedOidcTransport(ISSUER, async () => {
     count++; if (count === 1) return json({ issuer: "wrong" }); return json(metadata);
   });
-  await assert.rejects(() => transport.metadata(), OidcValidationError);
+  await assert.rejects(() => transport.metadata(), OidcTransportError);
   await transport.metadata(); assert.equal(count, 2);
 });
 console.log(`\n=== Gate 008B trusted OIDC transport: ${passed} passed, ${failed} failed ===`);

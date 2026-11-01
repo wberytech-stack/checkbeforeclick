@@ -7,7 +7,7 @@
  * AES-GCM alone does NOT prevent replay. No callback may bypass consumeLoginState.
  */
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import type { LoginChallenge } from "./azureOidc.ts";
+import type { LoginChallenge } from "./azureOidc";
 
 export class AuthStateError extends Error {
   constructor() { super("Invalid or expired login state"); this.name = "AuthStateError"; }

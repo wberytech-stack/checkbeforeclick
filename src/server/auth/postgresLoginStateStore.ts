@@ -14,7 +14,7 @@ import "server-only";
 import type { LoginStateStore } from "../../security/azureAuthState";
 
 export type CommittedStateQuery = {
-  query(sql: string, values: readonly unknown[]): Promise<{
+  query(sql: string, values: unknown[]): Promise<{
     rows: ReadonlyArray<Record<string, unknown>>;
   }>;
 };
@@ -34,7 +34,7 @@ function validSeconds(value: unknown): value is number {
 async function accepted(
   query: CommittedStateQuery,
   sql: string,
-  params: readonly unknown[],
+  params: unknown[],
   column: "accepted" | "consumed"
 ): Promise<boolean> {
   try {

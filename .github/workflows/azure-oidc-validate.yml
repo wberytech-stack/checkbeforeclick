@@ -35,3 +35,6 @@ jobs:
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-transport.ts
       - name: Offline sealed one-time OIDC login-state security tests
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-state.ts
+
+      - name: Offline PostgreSQL OIDC state adapter tests
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-state.ts

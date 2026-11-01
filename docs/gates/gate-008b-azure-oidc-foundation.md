@@ -86,7 +86,7 @@ rotation window and never accept unknown key IDs.
   `LoginChallenge` (not committed). This is **not** a full repository typecheck.
 - The exact committed Git blob SHAs were independently compared with the tested
   local files: `src/security/azureAuthState.ts` =
-  `009174d849d4565c6d6d641846f93e4d700a9e37`;
+  `1b649bf0e6daf0e2a5647d5a67b13eb2837fe84f`;
   `scripts/azure-auth/test-state.ts` =
   `76adddbe47a2fa6f83bbe4a61088a8533632df9b`.
 - The PR validation workflow now includes this suite. GitHub CI on the

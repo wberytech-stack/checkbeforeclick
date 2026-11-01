@@ -130,9 +130,9 @@ try {
   check("L22 newly reserved state still consumes successfully", await consume(cleanup));
   check("L23 ledger stores only digest, expiry and creation time",
     (await owner.query(
-      "SELECT array_agg(column_name ORDER BY ordinal_position) AS names " +
+      "SELECT string_agg(column_name, ',' ORDER BY ordinal_position) AS names " +
       "FROM information_schema.columns WHERE table_schema='public' AND table_name='oidc_login_states'"
-    )).rows[0].names.join(",") === "state_digest,expires_at,created_at");
+    )).rows[0].names === "state_digest,expires_at,created_at");
   assert.equal((await owner.query("SELECT to_regclass('public.users') IS NOT NULL AS exists")).rows[0].exists, true);
   check("L24 SQL injection did not alter the existing users table", true);
 } catch (error) {

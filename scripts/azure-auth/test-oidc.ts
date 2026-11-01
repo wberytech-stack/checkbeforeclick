@@ -72,7 +72,7 @@ rejects("J10 JWKS key for signing only rejected", () => validate({ jwks: { keys:
 rejects("J11 non-RSA key rejected", () => validate({ jwks: { keys: [{ ...jwk, kty: "oct" }] } }));
 const wrong = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
 rejects("J12 wrong signing key rejected", () => validate({ token: jwt(base, undefined, wrong) }));
-rejects("J13 tampered payload rejected", () => validate({ token: jwt().replace(/.$/, "A") }));
+rejects("J13 tampered payload rejected", () => { const [h, , sig] = jwt().split("."); return validate({ token: `${h}.${Buffer.from(JSON.stringify({ ...base, sub: "tampered" })).toString("base64url")}.${sig}` }); });
 badClaims("J14 wrong issuer rejected", { iss: "https://attacker.invalid/tenant" });
 badClaims("J15 wrong audience rejected", { aud: "another-client" });
 badClaims("J16 multiple audiences without azp rejected", { aud: [CLIENT, "other-client"] });

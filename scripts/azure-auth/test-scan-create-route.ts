@@ -209,7 +209,7 @@ await check("C26 COMMIT failure cannot return scan id", async () => {
   assert.equal(f.events.at(-1), "ROLLBACK");
 });
 await check("C27 malformed, ambiguous or uppercase DB scan IDs fail closed", async () => {
-  for (const rows of [[], [{ id: SCAN }, { id: SCAN }], [{ id: "not-uuid" }], [{ id: SCAN.toUpperCase() }]]) {
+  for (const rows of [[], [{ id: SCAN }, { id: SCAN }], [{ id: "not-uuid" }], [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".toUpperCase() }]]) {
     const f = fixture({ create: rows }); await status(f, 503); assert.equal(f.events.at(-1), "ROLLBACK");
   }
 });

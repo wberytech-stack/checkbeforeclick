@@ -42,3 +42,5 @@ jobs:
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-callback.ts
       - name: Offline opaque Azure session cookie security tests
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-session.ts
+      - name: Offline PostgreSQL Azure session adapter security tests
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-session.ts

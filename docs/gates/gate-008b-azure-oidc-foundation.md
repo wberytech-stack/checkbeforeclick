@@ -121,3 +121,42 @@ The callback:
 **Actual offline validation:** `node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-callback.ts` → **22 passed, 0 failed** on Node 22.16.0. A standalone strict TypeScript check of the two modules and tests returned exit 0 using local temporary type declarations; this is **not** a full repository typecheck. The three new committed file blob hashes were independently compared to the locally tested source. The read-only PR CI now runs the callback suite; verify the new-head CI separately.
 
 **Still needed before a working login:** server-side `/auth/login` and `/auth/callback` routes, always clearing the state cookie on callback success/failure; durable revocable session creation/rotation/logout; `signInWithIdentity` integration with Gate 008A's database; runtime configuration and a separately approved live Entra compatibility test. No production database, Azure resource, secret, deployment, dependency, manual workflow dispatch or master merge was changed.
+
+## Opaque authenticated session credentials (follow-up)
+
+`src/security/azureSession.ts` now provides cryptographically random, 256-bit,
+canonical base64url session tokens and a purpose-separated SHA-256 digest for
+database lookup. **Only the digest may be persisted**; no claims, identity,
+tenant, or expiry are trusted from the browser. Cookies use the host-only
+`__Host-cbc-session` prefix, `Path=/`, `Secure`, `HttpOnly`,
+`SameSite=Lax`, and a maximum 12-hour browser lifetime. Cookie parsing
+rejects duplicates, non-canonical encoding, CRLF, and oversized headers.
+Logout cookie deletion uses the same name and path.
+
+**This is not yet an authenticated session.** The token generator is explicitly
+named `createUnpersistedAzureSessionToken`. No route may set the cookie
+until an Azure PostgreSQL transaction has committed the token digest,
+verified identity binding and server-side expiry. Each authenticated request
+must check durable expiry and revocation. Rotation must atomically revoke the
+old digest and commit the new one before setting the replacement cookie.
+On logout, revoke the durable digest and clear the cookie; if revocation
+fails, fail closed and never imply that server-side access was revoked.
+Use POST plus origin/CSRF protection for logout and other mutations;
+SameSite=Lax alone is not a complete CSRF defense.
+
+**Offline validation (2026-11-01):**
+`node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-session.ts`
+→ **34 passed, 0 failed** on local Node 22.16.0. The committed Git blob
+SHAs matched the locally tested files: source
+`49d95c53f5afd74f04c5116c03f3323fb501d71a`, test
+`36a1830c3c8c4c707384a118b5647d71ef19974f`.
+The PR's read-only GitHub CI now runs this suite. Full repository TypeScript
+and CI for these commits must be checked separately; local standalone
+TypeScript validation was not available due to missing Node type definitions.
+No database, Entra tenant, Azure resource, secrets, deployment, or paid
+API were touched.
+
+**Next implementation:** add draft migration 007 in PR #58 for a
+least-privileged, digest-only, expiring/revocable session ledger with
+atomic rotation and tenant-safe identity lookup; then implement the
+server-only adapter and browser routes in PR #59.

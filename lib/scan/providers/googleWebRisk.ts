@@ -6,7 +6,6 @@ import { guardedPaidCall, WEB_RISK_PROVIDER, type GuardedOutcome } from "@/lib/s
 // reserves exactly one unit of the execution-time budget (cbc_reserve_provider_call) and then makes exactly one
 // request. fetchWebRisk is deliberately not exported, and the provider's run() never makes a request.
 const TIMEOUT_MS = 7000
-const MAX_ERROR_BODY_CHARS = 500
 
 function notConfiguredResult(): ScanProviderResult {
   return {
@@ -63,17 +62,17 @@ async function fetchWebRisk(url: string, deadline?: AbortSignal): Promise<ScanPr
     const responseTimeMs = Date.now() - startTime
 
     if (!response.ok) {
-      // Stored in vendor_results: keep only a bounded excerpt of Google's error body.
-      const errorText = (await response.text()).slice(0, MAX_ERROR_BODY_CHARS)
+      // Never persist the upstream error body: it can echo the scanned URL, request metadata or credentials.
+      // The HTTP status is enough for diagnosis without storing untrusted provider content.
       return {
         verdict: "error",
-        error: `API error ${response.status}: ${errorText}`,
+        error: `API error ${response.status}`,
         scoreImpact: 0,
         confidenceImpact: -15,
         evidenceTitle: "Google Web Risk check could not complete",
         evidenceDetail: `Check failed: API error ${response.status}`,
         evidenceSeverity: "info",
-        rawResponse: { status: response.status, body: errorText },
+        rawResponse: { status: response.status },
         responseTimeMs,
       }
     }
@@ -106,15 +105,17 @@ async function fetchWebRisk(url: string, deadline?: AbortSignal): Promise<ScanPr
       rawResponse: data,
       responseTimeMs,
     }
-  } catch (error) {
+  } catch {
     const timedOut = controller.signal.aborted
     return {
       verdict: "error",
-      error: timedOut ? "Timeout" : String(error),
+      // Fetch/JSON exceptions may include the URL or credential-bearing request details.
+      // Store a fixed error category, never exception text.
+      error: timedOut ? "Timeout" : "Provider request failed",
       scoreImpact: 0,
       confidenceImpact: -15,
       evidenceTitle: timedOut ? "Google Web Risk check timed out" : "Google Web Risk check could not complete",
-      evidenceDetail: timedOut ? "The check did not complete in time. Result may be incomplete." : `Check failed: ${String(error)}`,
+      evidenceDetail: timedOut ? "The check did not complete in time. Result may be incomplete." : "The check could not be completed. Result may be incomplete.",
       evidenceSeverity: "info",
       rawResponse: null,
       responseTimeMs: Date.now() - startTime,

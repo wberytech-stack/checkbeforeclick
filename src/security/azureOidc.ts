@@ -150,7 +150,7 @@ export function verifyIdToken(input: {
     fail("OIDC signing key not valid for RS256 verification");
   }
   let publicKey: ReturnType<typeof createPublicKey>;
-  try { publicKey = createPublicKey({ key: jwk as unknown as JsonWebKey, format: "jwk" }); }
+  try { publicKey = createPublicKey({ key: jwk, format: "jwk" } as Parameters<typeof createPublicKey>[0]); }
   catch { return fail("OIDC signing key is malformed"); }
   if (publicKey.asymmetricKeyType !== "rsa" || (publicKey.asymmetricKeyDetails?.modulusLength ?? 0) < 2048) fail("OIDC signing key too weak");
   const signature = exactBase64Url(encodedSignature, 512);

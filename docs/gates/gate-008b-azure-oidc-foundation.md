@@ -50,3 +50,46 @@ The earlier 49 OIDC foundation tests and GitHub CI success at commit `2b7d1ce` a
 
 - No Entra tenant/app registration, Azure resources, database, secrets, environment changes, deployments, master merge, staging bootstrap, Supabase migration or paid API calls.
 - No claim that the application already authenticates with Azure.
+
+## One-time login-state protection (follow-up implementation)
+
+`src/security/azureAuthState.ts` adds a purpose-bound AES-256-GCM encrypted OIDC login-state
+cookie, bound to the exact issuer/client ID. The cookie uses a random 96-bit IV,
+authenticated key ID, a five-minute lifetime, and `__Secure-cbc-oidc` with
+`Secure; HttpOnly; SameSite=Lax; Path=/auth/callback`. The callback must clear
+the cookie with the identical path on *every* outcome. No provider tokens or
+application credentials are stored in the cookie.
+
+**Critical:** encryption does **not** make a login state one-time. Issuance must
+atomically reserve the SHA-256 digest of the random state in a shared durable
+store, and callback must atomically consume the unexpired record. The
+`LoginStateStore` interface deliberately has **no in-memory production
+implementation**. The PostgreSQL implementation must use a unique digest
+constraint and a single atomic `DELETE ... WHERE expires_at > now() RETURNING`
+(or equivalent) with a short TTL. A failed reservation or consumption denies
+login; the callback must not exchange an authorization code without a successful
+consume. Concurrent callbacks must never both succeed. Do not use a process
+Map or a non-atomic SELECT-then-DELETE in Azure Container Apps.
+
+The state cookie is not an authenticated application session. Implement session
+rotation, logout, expiry/invalidation and the verified Entra callback separately.
+Key material is supplied by a server-only caller and is **not** read from any
+environment variable by this module; runtime secret configuration remains a
+founder-only operation. Maintain a previous decryption key during a bounded
+rotation window and never accept unknown key IDs.
+
+### Verification for this follow-up
+
+- Node 22.16.0, offline: `node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-state.ts` → **29 passed, 0 failed**.
+- Standalone strict TypeScript check for the new module/test → exit 0, using
+  installed local Node type definitions and a local-only type stub for
+  `LoginChallenge` (not committed). This is **not** a full repository typecheck.
+- The exact committed Git blob SHAs were independently compared with the tested
+  local files: `src/security/azureAuthState.ts` =
+  `009174d849d4565c6d6d641846f93e4d700a9e37`;
+  `scripts/azure-auth/test-state.ts` =
+  `76adddbe47a2fa6f83bbe4a61088a8533632df9b`.
+- The PR validation workflow now includes this suite. GitHub CI on the
+  new head must be checked independently; no live Entra sign-in, Azure DB,
+  production build or browser callback was exercised.
+- No secrets, environment, dependency, cloud or database settings changed.

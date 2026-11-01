@@ -109,7 +109,9 @@ async function fixture(options: Options = {}) {
             });
             if (opt.exchangeError) throw new Error("provider secret=never-disclose");
             const jwt = token(challenge.nonce, opt.tokenClaims);
-            return opt.badSignature ? jwt.slice(0, -1) + (jwt.endsWith("A") ? "B" : "A") : jwt;
+            const signatureStart = jwt.lastIndexOf(".") + 1;
+            return opt.badSignature ? jwt.slice(0, signatureStart) +
+              (jwt[signatureStart] === "A" ? "B" : "A") + jwt.slice(signatureStart + 1) : jwt;
           },
           async jwks(forceRefresh?: boolean) {
             events.push(forceRefresh ? "refresh" : "jwks");

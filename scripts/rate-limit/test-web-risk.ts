@@ -139,8 +139,9 @@ async function main() {
     const out = await callWebRiskGuarded({ admissionId: ADMISSION, url: "https://example.com/", reserve: reserver(GRANT).fn });
     const res = "result" in out ? out.result : undefined;
     const stored = JSON.stringify(res?.rawResponse ?? "");
-    check("W16 non-OK response -> error verdict (never clean), stored body bounded to 500 chars",
-      res?.verdict === "error" && stored.length < 600 && (res?.error ?? "").length < 600, `len=${stored.length}`);
+    check("W16 non-OK response -> error verdict (never clean), no upstream body persisted",
+      res?.verdict === "error" && res.error === "API error 429" &&
+      stored === '{"status":429}' && !JSON.stringify(res).includes(huge), JSON.stringify(res));
   }
   {
     // Google answers errors (bad key, quota) with a JSON body; it must never be read as "no threat".
@@ -155,6 +156,33 @@ async function main() {
     const res = "result" in out ? out.result : undefined;
     check("W17 network error or refused redirect -> error verdict, key not in any stored field",
       res?.verdict === "error" && !JSON.stringify(res).includes(DUMMY_KEY));
+  }
+  {
+    // A fetch exception can echo the API key, scanned URL or headers. None may be persisted.
+    const privateUrl = "https://private.example/secret-path?session=private-token";
+    respond = async () => { throw new Error(`request failed: ${DUMMY_KEY} ${privateUrl}`); };
+    const out = await callWebRiskGuarded({ admissionId: ADMISSION, url: privateUrl, reserve: reserver(GRANT).fn });
+    const res = "result" in out ? out.result : undefined;
+    const persisted = JSON.stringify(res);
+    check("W21 network exceptions never persist the key, target URL or exception text",
+      res?.verdict === "error" && res.error === "Provider request failed" &&
+      !persisted.includes(DUMMY_KEY) && !persisted.includes(privateUrl) &&
+      !persisted.includes("request failed:"), persisted);
+  }
+  {
+    // The upstream body may contain sensitive request metadata. Do not even read it.
+    let bodyReads = 0;
+    const secretBody = `sensitive upstream details: ${DUMMY_KEY}`;
+    respond = async () => ({
+      ok: false, status: 401,
+      text: async () => { bodyReads++; return secretBody; },
+    }) as unknown as Response;
+    const out = await callWebRiskGuarded({ admissionId: ADMISSION, url: "https://example.com/", reserve: reserver(GRANT).fn });
+    const res = "result" in out ? out.result : undefined;
+    check("W22 upstream HTTP error body is never read or persisted",
+      bodyReads === 0 && res?.verdict === "error" && res.error === "API error 401" &&
+      JSON.stringify(res.rawResponse) === '{"status":401}' &&
+      !JSON.stringify(res).includes(DUMMY_KEY), JSON.stringify(res));
   }
   {
     // The deadline fires while the request is in flight: the request's own signal must abort.

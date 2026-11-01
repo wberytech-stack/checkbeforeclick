@@ -65,3 +65,5 @@ jobs:
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-callback-route.ts
       - name: Offline Azure tenant-session and protected DB transaction tests
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-tenant-session.ts
+      - name: Offline Azure scan and evidence read tenant isolation tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-read-route.ts

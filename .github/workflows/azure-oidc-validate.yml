@@ -33,3 +33,5 @@ jobs:
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-oidc.ts
       - name: Offline issuer-pinned OIDC transport security tests
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-transport.ts
+      - name: Offline sealed one-time OIDC login-state security tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-state.ts

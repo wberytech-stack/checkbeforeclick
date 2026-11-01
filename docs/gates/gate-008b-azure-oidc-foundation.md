@@ -179,3 +179,18 @@ server-only adapter and browser routes in PR #59.
 - `handleAzureLoginStartHttp` accepts only an exact configured HTTPS origin and `GET /auth/azure/start` without query/fragment. It validates the full authorization URL (tenant path, client ID, fixed callback, PKCE S256, state, nonce and scope) and canonical state cookie before emitting a no-store 303 response. It rejects browser-provided redirects and sanitizes failures.
 - `scripts/azure-auth/test-login-start.ts` covers 31 offline initiation, injection and failure cases, now included in read-only PR CI. No real identity-provider, PostgreSQL, route, secret or cloud call is performed.
 - **Not yet wired to the Next.js route**: the existing legacy Supabase login/callback remains unchanged until secure Azure PostgreSQL pool and runtime config from PR #58 are integrated. No claim of a working browser login or deployment.
+
+
+### Fail-closed runtime configuration (2026-11-01)
+
+`src/server/auth/azureRuntimeConfig.ts` validates fixed server-side settings before either browser route can initiate Entra login. The following are **configuration names, not values**; none are created or changed by this PR:
+
+- `CBC_AZURE_PUBLIC_ORIGIN`: exact canonical HTTPS origin; never derive from `Host` or `X-Forwarded-Host`.
+- `CBC_AZURE_OIDC_ISSUER`: exact issuer-pinned HTTPS Entra External ID issuer ending in a tenant path and `/v2.0`.
+- `CBC_AZURE_OIDC_CLIENT_ID`: registered application client ID.
+- `CBC_AZURE_OIDC_STATE_ACTIVE_KID`: active AES-GCM key identifier.
+- `CBC_AZURE_OIDC_STATE_KEYS`: comma-separated `kid:base64url(32 random bytes)` values. Operator-provisioned secret; **never commit a real value**. At most three keys, no duplicate IDs, and the active key must be present.
+
+For rotation, add the new key, switch the active ID, retain the previous key for at least the five-minute login-state lifetime plus clock tolerance, then retire it separately. Invalid/missing config, noncanonical origins, malformed key material and ambiguous key IDs all fail closed without exposing the environment.
+
+The offline `test-runtime-config.ts` suite exercises 37 positive/negative cases with random ephemeral fixture keys. It performs no network or cloud calls. This is a prerequisite for route wiring, **not** a live login route. No secrets were provisioned and no Azure configuration was modified.

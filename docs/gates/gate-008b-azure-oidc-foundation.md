@@ -105,3 +105,19 @@ The new server-only module **src/server/auth/postgresLoginStateStore.ts** implem
 **Critical transaction boundary:** the injected query executor must COMMIT each reserve or consume before resolving (e.g., a PostgreSQL pool's autocommit query method, or a dedicated short transaction). Do not wrap state consumption, Entra token exchange and session issuance in a single database transaction: rolling back after an external token exchange would resurrect the replay record. The callback must consume before exchanging a code. This module is not yet wired to a route or a live database.
 
 **Validation:** scripts/azure-auth/test-postgres-state.ts contains 18 offline checks for bound parameters, strict boolean responses, malformed inputs, fail-closed errors, and database-clock authority. The read-only PR CI workflow invokes it with the react-server condition. A separate disposable PostgreSQL suite for migration 006 lives in PR #58. CI results for these new changes must be checked before marking them passed; no Azure resource or real database has been touched.
+
+
+## Server-side callback sequencing (follow-up)
+
+Added `src/security/azureOidcCallback.ts` (testable orchestration) and `src/server/auth/redeemAzureCallback.ts` (server-only binding to the real `consumeLoginState`, `verifyIdToken`, and pinned `TrustedOidcTransport`). This is **not yet a browser route or authenticated session**.
+
+The callback:
+1. Rejects ambiguous provider error/code responses, invalid code characters/length and unsafe callback redirects before any external request.
+2. **Atomically consumes the durable login-state record before code exchange**; replay or database failure prevents token exchange.
+3. Uses the sealed cookie's PKCE verifier and nonce, and server-configured issuer, audience and redirect; no browser-supplied identity is accepted.
+4. Verifies the ID token signature, issuer, audience, nonce and expiry. A signing-key mismatch permits **one** forced JWKS refresh and one final verification; nonce/issuer/audience/time errors never refresh.
+5. Returns only a verified identity, never a session or unverified token. Errors are generic and do not expose token, state, provider or database details.
+
+**Actual offline validation:** `node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-callback.ts` → **21 passed, 0 failed** on Node 22.16.0. A standalone strict TypeScript check of the two modules and tests returned exit 0 using local temporary type declarations; this is **not** a full repository typecheck. The three new committed file blob hashes were independently compared to the locally tested source. The read-only PR CI now runs the callback suite; verify the new-head CI separately.
+
+**Still needed before a working login:** server-side `/auth/login` and `/auth/callback` routes, always clearing the state cookie on callback success/failure; durable revocable session creation/rotation/logout; `signInWithIdentity` integration with Gate 008A's database; runtime configuration and a separately approved live Entra compatibility test. No production database, Azure resource, secret, deployment, dependency, manual workflow dispatch or master merge was changed.

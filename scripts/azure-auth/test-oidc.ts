@@ -91,7 +91,7 @@ rejects("J28 missing token rejected", () => validate({ token: "" }));
 rejects("J29 JWT with extra segment rejected", () => validate({ token: jwt() + ".extra" }));
 rejects("J30 JWT with malformed JSON rejected", () => validate({ token: `e30.${Buffer.from("not json").toString("base64url")}.x` }));
 rejects("J31 oversized token rejected", () => validate({ token: "a".repeat(20_000) }));
-rejects("J32 noncanonical encoding rejected", () => validate({ token: jwt().replace(/-/g, "+") }));
+rejects("J32 noncanonical encoding rejected", () => validate({ token: jwt() + "=" }));
 check("J33 invalid email is never used for linking", verifyIdToken({ token: jwt({ ...base, email: null }), jwks: { keys: [jwk] }, issuer: ISSUER, audience: CLIENT, nonce: NONCE, nowSeconds: NOW }).email === null);
 console.log(`\n=== Gate 008B OIDC foundation: ${passed} passed, ${failed} failed ===`);
 process.exitCode = failed ? 1 : 0;

@@ -160,3 +160,15 @@ API were touched.
 least-privileged, digest-only, expiring/revocable session ledger with
 atomic rotation and tenant-safe identity lookup; then implement the
 server-only adapter and browser routes in PR #59.
+
+
+## 2026-11-01 — strict callback HTTP boundary (draft, no route switch)
+
+- Added `src/security/azureCallbackHttp.ts`: framework-neutral `Request` → `Response` handler for the **future** Entra `/auth/callback` route. It accepts only an exact configured HTTPS public origin and pinned issuer, never Host or X-Forwarded-* as redirect authority.
+- It rejects duplicate and unknown callback query keys (including percent-encoded aliases), invalid/missing state or code, provider errors, issuer mix-up, malformed or duplicated encrypted login-state cookies, and oversized requests **before** calling `completeAzureLogin`.
+- Success emits only the canonical, committed `__Host-cbc-session` cookie returned by `completeAzureLogin`; all paths clear `__Secure-cbc-oidc`, use fixed 303 redirects and private/no-store responses. Invalid configuration returns 503 without redirect.
+- Added `scripts/azure-auth/test-callback-http.ts` with **30** offline positive/negative HTTP boundary checks; read-only PR CI runs them via the existing test-only TypeScript resolver. No provider, database or cloud access.
+- The local Node 22.16.0 run passed **30/30** with the actual new source/test files and temporary stand-ins for the already-tested `azureAuthState` and `azureSession` primitives. Those stand-ins are **not committed** and are not evidence of a full integration test. Both committed Git blob SHAs match the locally executed new files: source `74cd6b0`, test `562d479`. GitHub CI must validate against the actual repository dependencies.
+- **Not yet wired:** the existing `app/auth/callback/route.ts` still handles legacy Supabase callback traffic. Switching it must use a real committed/autocommit Azure PostgreSQL executor from draft PR #58, verified Entra transport and configured keys, and must not reuse the insecure legacy database pool on master. No deployment, secret, live database or identity-provider changes were made.
+
+**Next coding action:** implement the secure server-only Entra runtime binding (issuer/client/origin/key validation, PR #58 verified-TLS/autocommit database pool) and wire the Next.js `/auth/callback` route to this handler, with route-level regression tests. Do not deploy before separate founder approval.

@@ -58,7 +58,7 @@ export async function redeemAzureOidcCallback(input: {
     const redirect = new URL(input.redirectUri);
     if (redirect.protocol !== "https:" || !redirect.hostname || redirect.username || redirect.password ||
         redirect.hash || redirect.search || redirect.href !== input.redirectUri ||
-        !redirect.pathname.endsWith("/auth/callback")) throw new Error("invalid redirect");
+        redirect.pathname !== "/auth/callback") throw new Error("invalid redirect");
 
     // Must commit the atomic state consumption BEFORE any external code exchange.
     const { nonce, codeVerifier } = await input.operations.consumeState({

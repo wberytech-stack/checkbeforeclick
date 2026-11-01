@@ -110,6 +110,7 @@ await check("S02 SQL uses DB-derived tenant for both scan and evidence", async (
   assert.deepEqual(f.calls[3].values, [SCAN, ORG]);
   assert.match(f.calls[2].sql, /organization_id = \$2::uuid/);
   assert.match(f.calls[3].sql, /INNER JOIN public.scans/);
+  assert.match(f.calls[3].sql, /e.organization_id = \$2::uuid/);
   assert.match(f.calls[3].sql, /s.organization_id = \$2::uuid/);
   assert.ok(!JSON.stringify(f.calls).includes(token));
 });

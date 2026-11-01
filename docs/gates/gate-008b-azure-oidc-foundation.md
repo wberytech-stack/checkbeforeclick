@@ -41,7 +41,7 @@ node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/az
 # === Gate 008B trusted OIDC transport: 40 passed, 0 failed ===
 
 tsc --noEmit --target ES2017 --lib esnext,dom --module esnext --moduleResolution bundler --allowImportingTsExtensions --skipLibCheck --strict --types node src/security/azureOidcTransport.ts scripts/azure-auth/test-transport.ts
-# exit 0 (local Node type definitions; pre-existing azureOidc.ts was represented by a test-only matching type/error stub)
+# exit 0 (local Node type definitions; transport is independently typecheckable without a stub)
 ```
 
 The earlier 49 OIDC foundation tests and GitHub CI success at commit `2b7d1ce` are separate evidence. CI for the new commits must be inspected independently. No real Entra sign-in, live network, database test, browser test or production build was run for this transport slice. No Azure resource, Supabase account, secret, deployment, migration or paid service was touched.

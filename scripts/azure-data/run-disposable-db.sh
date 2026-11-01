@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gate 008A - disposable PostgreSQL 16 validation of migrations 001-006 and the Azure data-plane code.
+# Gate 008A - disposable PostgreSQL 16 validation of migrations 001-007 and the Azure data-plane code.
 #
 # Creates a throwaway cluster in a temporary directory, listening ONLY on 127.0.0.1 (no Unix socket outside
 # the temp directory), with random one-time passwords. Applies the migrations as the cluster owner, creates
@@ -48,7 +48,7 @@ PSQL=(psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -U cbc_owner)
 "${PSQL[@]}" -d cbc_test -c "CREATE ROLE cbc_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '$APP_PW'" \
   -c "REVOKE ALL ON DATABASE cbc_test FROM PUBLIC" -c "GRANT CONNECT ON DATABASE cbc_test TO cbc_app" \
   -c "REVOKE CREATE ON SCHEMA public FROM PUBLIC"
-for m in "$ROOT"/infra/db/migrations/00[1-6]_*.sql; do
+for m in "$ROOT"/infra/db/migrations/00[1-7]_*.sql; do
   echo "apply $(basename "$m")"
   PGOPTIONS="-c client_min_messages=warning" "${PSQL[@]}" -d cbc_test -f "$m"
 done
@@ -64,3 +64,6 @@ node --conditions=react-server --experimental-transform-types --disable-warning=
 
 # Separate, short-lived runtime-role tests for the OIDC one-time replay ledger.
 node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-oidc-state-db.ts
+
+# Session security: durable identity binding, expiry, revocation, and atomic rotation.
+node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-auth-sessions-db.ts

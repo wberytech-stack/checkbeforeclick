@@ -2,6 +2,7 @@
 -- Target: checkbeforeclick-staging Supabase SQL editor (verify project ref
 -- zgxmvpbvvakpsnzcymsf before running). Never run against production.
 --
+-- Checks sensitive scan-column UPDATE privileges and browser-role TRUNCATE grants.
 -- Catalog metadata only: no user rows, tokens, secrets, network requests,
 -- data mutations, schema changes, or migrations. Every row must say PASS
 -- before considering authenticated staging verification.
@@ -17,9 +18,22 @@ WITH expected(table_name, column_name) AS (
   VALUES
     ('organizations', 'plan'),
     ('organizations', 'scan_count_this_month'),
+    ('scans', 'id'),
+    ('scans', 'organization_id'),
+    ('scans', 'user_id'),
+    ('scans', 'input_type'),
+    ('scans', 'raw_input'),
+    ('scans', 'email_parsed_data'),
+    ('scans', 'extracted_indicators'),
     ('scans', 'status'),
+    ('scans', 'risk_score'),
+    ('scans', 'confidence_score'),
     ('scans', 'verdict'),
-    ('scans', 'risk_score')
+    ('scans', 'ai_explanation'),
+    ('scans', 'recommended_action'),
+    ('scans', 'scan_duration_ms'),
+    ('scans', 'created_at'),
+    ('scans', 'completed_at')
 ),
 columns_checked AS (
   SELECT e.table_name, e.column_name,
@@ -58,8 +72,22 @@ checks AS (
   FROM columns_checked WHERE table_name = 'organizations'
   UNION ALL
   SELECT 'scans_server_owned_columns',
-         count(*) = 3 AND bool_and(column_exists AND NOT authenticated_can_update)
+         count(*) = 16 AND bool_and(column_exists AND NOT authenticated_can_update)
   FROM columns_checked WHERE table_name = 'scans'
+  UNION ALL
+  -- TRUNCATE is not covered by RLS or row-level triggers. Direct SQL execution
+  -- is not exposed by ordinary PostgREST table routes, but these grants are
+  -- unnecessary attack surface for browser roles and must be reviewed.
+  SELECT 'public_tables_truncate_grants',
+         count(*) = 3 AND bool_and(
+           NOT has_table_privilege('anon', c.oid, 'TRUNCATE')
+           AND NOT has_table_privilege('authenticated', c.oid, 'TRUNCATE')
+         )
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public'
+    AND c.relkind IN ('r', 'p')
+    AND c.relname IN ('users', 'organizations', 'scans')
 )
 SELECT check_id, CASE WHEN coalesce(passes, false) THEN 'PASS' ELSE 'BLOCK' END AS status
 FROM checks ORDER BY check_id;

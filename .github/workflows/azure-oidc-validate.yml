@@ -31,3 +31,5 @@ jobs:
         run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
       - name: Offline OIDC and PKCE security tests
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-oidc.ts
+      - name: Offline issuer-pinned OIDC transport security tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-transport.ts

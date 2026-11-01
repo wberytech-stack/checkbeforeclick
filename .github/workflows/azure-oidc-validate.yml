@@ -50,3 +50,5 @@ jobs:
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-login-completion.ts
       - name: Offline Azure callback HTTP boundary security tests
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-callback-http.ts
+      - name: Offline Entra login initiation and HTTP boundary tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-login-start.ts

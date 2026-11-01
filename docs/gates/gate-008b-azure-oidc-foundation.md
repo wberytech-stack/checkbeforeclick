@@ -172,3 +172,10 @@ server-only adapter and browser routes in PR #59.
 - **Not yet wired:** the existing `app/auth/callback/route.ts` still handles legacy Supabase callback traffic. Switching it must use a real committed/autocommit Azure PostgreSQL executor from draft PR #58, verified Entra transport and configured keys, and must not reuse the insecure legacy database pool on master. No deployment, secret, live database or identity-provider changes were made.
 
 **Next coding action:** implement the secure server-only Entra runtime binding (issuer/client/origin/key validation, PR #58 verified-TLS/autocommit database pool) and wire the Next.js `/auth/callback` route to this handler, with route-level regression tests. Do not deploy before separate founder approval.
+
+## 2026-11-01 — issuer-pinned login initiation (draft)
+
+- `startAzureLogin` obtains authorization metadata through the trusted issuer-pinned transport, generates independent PKCE/state/nonce, and **awaits committed one-time PostgreSQL state reservation** before returning the encrypted HttpOnly state cookie and authorization URL.
+- `handleAzureLoginStartHttp` accepts only an exact configured HTTPS origin and `GET /auth/azure/start` without query/fragment. It validates the full authorization URL (tenant path, client ID, fixed callback, PKCE S256, state, nonce and scope) and canonical state cookie before emitting a no-store 303 response. It rejects browser-provided redirects and sanitizes failures.
+- `scripts/azure-auth/test-login-start.ts` covers 31 offline initiation, injection and failure cases, now included in read-only PR CI. No real identity-provider, PostgreSQL, route, secret or cloud call is performed.
+- **Not yet wired to the Next.js route**: the existing legacy Supabase login/callback remains unchanged until secure Azure PostgreSQL pool and runtime config from PR #58 are integrated. No claim of a working browser login or deployment.

@@ -93,3 +93,15 @@ rotation window and never accept unknown key IDs.
   new head must be checked independently; no live Entra sign-in, Azure DB,
   production build or browser callback was exercised.
 - No secrets, environment, dependency, cloud or database settings changed.
+
+
+## PostgreSQL-backed replay store adapter (follow-up)
+
+The new server-only module **src/server/auth/postgresLoginStateStore.ts** implements LoginStateStore against the two functions introduced in **Gate 008A draft migration 006**:
+- reserve: parameterized call to app_reserve_oidc_login_state, with a SHA-256 digest and expiry seconds;
+- consume: parameterized call to app_consume_oidc_login_state, with a digest only. The database clock is authoritative and the caller's nowSeconds is deliberately not passed to SQL.
+- The adapter accepts only a canonical lowercase 64-character digest and safe integer timestamps, requires exactly one boolean-true database result, and fails closed with a generic error on query failure. It never logs or returns SQL errors, connection details, state digests or secrets.
+
+**Critical transaction boundary:** the injected query executor must COMMIT each reserve or consume before resolving (e.g., a PostgreSQL pool's autocommit query method, or a dedicated short transaction). Do not wrap state consumption, Entra token exchange and session issuance in a single database transaction: rolling back after an external token exchange would resurrect the replay record. The callback must consume before exchanging a code. This module is not yet wired to a route or a live database.
+
+**Validation:** scripts/azure-auth/test-postgres-state.ts contains 18 offline checks for bound parameters, strict boolean responses, malformed inputs, fail-closed errors, and database-clock authority. The read-only PR CI workflow invokes it with the react-server condition. A separate disposable PostgreSQL suite for migration 006 lives in PR #58. CI results for these new changes must be checked before marking them passed; no Azure resource or real database has been touched.

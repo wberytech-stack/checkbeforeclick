@@ -3,14 +3,14 @@
 import { useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { createClient } from "@/lib/supabase/client"
+import { safeNextPath } from "@/lib/security/loginFlow"
 import { Mail, Lock, ArrowRight } from "lucide-react"
 import { AuthShell } from "@/components/auth/AuthShell"
 
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const next = searchParams.get("next") || "/dashboard"
+  const next = safeNextPath(searchParams.get("next"))
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -22,17 +22,34 @@ export default function LoginPage() {
     setError("")
     setLoading(true)
 
-    const supabase = createClient()
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    })
+    // Gate 007A: sign in through the server route, which applies the attempt limits before Supabase is called
+    // and sets the session cookies. The browser never calls Supabase Auth directly from this page.
+    let response: Response
+    try {
+      response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+        credentials: "same-origin",
+        cache: "no-store",
+      })
+    } catch {
+      setLoading(false)
+      setError("Could not reach the server. Please try again.")
+      return
+    }
 
     setLoading(false)
 
-    if (error) {
-      setError("Invalid email or password.")
+    if (response.status === 429) {
+      const retryAfter = Number(response.headers.get("Retry-After"))
+      const minutes = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter / 60) : 15
+      setError(`Too many sign-in attempts. Please wait about ${minutes} minute${minutes === 1 ? "" : "s"} and try again.`)
+      return
+    }
+
+    if (!response.ok) {
+      setError(response.status === 401 ? "Invalid email or password." : "Sign-in failed. Please try again.")
       return
     }
 

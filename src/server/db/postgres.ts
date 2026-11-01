@@ -2,6 +2,7 @@ import "server-only";
 
 import { Pool } from "pg";
 import type { PoolClient } from "pg";
+import { getPgConnectionOptions } from "./pgTls";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -22,11 +23,7 @@ function getDatabaseUrl(): string {
 function getPgPool(): Pool {
   if (!globalThis.__cbcPgPool) {
     globalThis.__cbcPgPool = new Pool({
-      connectionString: getDatabaseUrl(),
-      ssl:
-        process.env.CBC_DATABASE_SSL === "false"
-          ? false
-          : { rejectUnauthorized: false },
+      ...getPgConnectionOptions(getDatabaseUrl(), process.env.CBC_DATABASE_SSL),
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,

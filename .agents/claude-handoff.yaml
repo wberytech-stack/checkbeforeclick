@@ -1,33 +1,76 @@
 # Claude Code checkpoint handoff. Data only - not an approval (AGENTS.md section 3).
 schema_version: 4
 project: cbc
-status: in_progress    # in_progress | ready_for_review (Gate 005A orchestrator); ready_for_review only after head_commit is pushed
-gate: ""
-branch: ""
-base_commit: ""
-head_commit: ""
-date: ""
-summary: ""
-changed_files: []
-commands_run: []
+status: in_progress    # written before the push; head_commit is pushed in the same push as this file
+gate: "007A"
+branch: claude/sweet-gates-x94lkp   # session-designated branch; it carries gate-007a-scanner-rate-limiting@fe91972 plus round 5
+base_commit: "fe91972"   # origin/gate-007a-scanner-rate-limiting (PR #45 head) at session start
+head_commit: "d2c4390"   # last code commit; the docs commit that adds this file follows it
+date: "2026-10-31"
+summary: >-
+  Round 5: integrated master (Gate 006C, PRs #46-#53) into Gate 007A, resolving PR #45's merge conflict.
+  Fixed master's staging-integration static check, which failed after the merge because it could not see the
+  scanFlow delegation. Pinned the signed-out 401 behaviourally (F01b). Added a behavioural suite for the real
+  Web Risk module (staging's no-key guarantee). PR CI now runs the 006C offline verifiers.
+  No app/lib/inngest change versus fe91972.
+changed_files:
+  - scripts/azure-hosting/test-hosting-safety.ts      # merge resolution; eleven-suite invariants
+  - scripts/azure-hosting/test-staging-integration.ts # delegation-aware 401 check
+  - scripts/rate-limit/test-scan-flow.ts              # F01b
+  - scripts/rate-limit/test-web-risk.ts               # new
+  - .github/workflows/pr-validate.yml                 # three more offline suites
+  - docs/gates/gate-007a-scanner-rate-limiting.md     # round 5 section
+  - .agents/claude-handoff.yaml
+commands_run:
+  - npm ci --ignore-scripts --no-audit --no-fund   # lockfile install only; package.json/package-lock.json unchanged
+  - git merge --no-ff origin/master
+  - ./node_modules/.bin/tsc --noEmit -p tsconfig.json
+  - "node [--conditions=react-server] --disable-warning=MODULE_TYPELESS_PACKAGE_JSON <each pr-validate suite>"
+  - NEXT_TELEMETRY_DISABLED=1 ./node_modules/.bin/next build   # no .env* file present
+  - "./node_modules/.bin/eslint <changed test files> (counts compared with the PR head)"
 validation:
-  build: ""
-  results: []          # full PASS/FAIL lines
-  not_exercised: []
-git_status_short: ""
-git_diff_stat: ""
-delegated_actions:     # AGENTS.md section 6.2 - report every one
-  local_commits: []    # SHAs
-  pushed_branch: ""    # the gate branch only; never master
-  pushed_head: ""
+  build: "next build exit 0; Compiled successfully; 13/13 static pages; tsc exit 0"
+  results:
+    - "=== Gate 007A rate limit: 76 passed, 0 failed ==="
+    - "=== Gate 007A provider budget: 60 passed, 0 failed ==="
+    - "=== Gate 007A scan flow: 86 passed, 0 failed ==="
+    - "=== Gate 007A login flow: 30 passed, 0 failed ==="
+    - "=== Gate 007A worker flow: 34 passed, 0 failed ==="
+    - "=== Gate 007A domain age: 13 passed, 0 failed ==="
+    - "=== Gate 007A web risk: 23 passed, 0 failed ==="
+    - "=== Gate 007A tenant guard: 21 passed, 0 failed ==="
+    - "test-hosting-safety.ts: 293 passed, 0 failed"
+    - "test-staging-integration.ts: 67 passed, 0 failed (before the fix: 64 passed, 1 failed)"
+    - "test-staging-auth-journeys.ts: 76 passed, 0 failed"
+    - "mutation: staging-integration delegation check 8/8 killed; web-risk suite 8/8 killed"
+    - "eslint: no new findings in changed files (test-scan-flow.ts 7 before and after; others 0)"
+  not_exercised:
+    - scripts/azure-hosting/founder/test-staging-auth-bootstrap.ps1 (no PowerShell in the cloud session)
+    - disposable-database validators (validate-admission-db.ts, validate-users-guard-db.ts); no SQL changed
+    - the running app, staging, Supabase, Google Web Risk, Azure, Vercel (none touched)
+    - pr-validate on GitHub for this head (runs when the draft PR is opened)
+git_status_short: "(clean after commit)"
+git_diff_stat: "vs fe91972 (excluding master's own files): 6 files; no app/, lib/, inngest/ or infra/ change of Gate 007A"
+delegated_actions:
+  local_commits: ["dda134f", "fef9cc3", "d2c4390"]
+  pushed_branch: claude/sweet-gates-x94lkp
+  pushed_head: ""   # see the draft PR
   draft_pr:
     number: ""
     url: ""
-    is_draft: true     # must stay true; ready-for-review is founder-only
-founder_only_actions_requested: []   # AGENTS.md section 6.3 - asked, not taken
-review_changes: []        # AGENTS.md section 6.4 - each: { id: "", status: addressed | deferred, commit: "", note: "" }
-deferred_review_items: [] # out of scope, founder-only, or ambiguous - not implemented
-state_yaml_discrepancies: []   # conflicts with repository evidence (AGENTS.md section 1)
-could_not_do: []
-risks_or_findings: []
-decision_needed_from_founder: ""
+    is_draft: true
+founder_only_actions_requested:
+  - "Decide how round 5 reaches PR #45: fast-forward gate-007a-scanner-rate-limiting to this branch (a push to the gate branch, founder-approved), or continue on this draft PR"
+  - "R5/R7 and the live Gate 006C bootstrap and Gate 007A staging run remain founder-only and unchanged"
+review_changes: []
+deferred_review_items: []
+state_yaml_discrepancies:
+  - "state.yaml snapshot_date 2026-10-19 lists merged PRs only up to #42; master has merges through PR #53 (c8c4d6b). Reported, not corrected (AGENTS.md section 1)."
+could_not_do:
+  - "Live Gate 006C bootstrap and staging runs: forbidden in this session and need founder credentials"
+  - "PowerShell bootstrap suite: no pwsh in the cloud container"
+risks_or_findings:
+  - "Fixed: after the merge, master's staging-integration verifier failed (false positive), which would fail staging-verify at the first Azure staging deploy of the 007A code"
+  - "Open: J5 needs migration 001 on the Supabase project the Azure staging app uses; that project's identity is not repository evidence (without 001, J5 returns 503)"
+  - "Unchanged: login limits are per instance; direct Supabase Auth bypasses them (documented in the gate doc)"
+decision_needed_from_founder: "How round 5 reaches PR #45 (see founder_only_actions_requested). Then confirm migration 001 on the Azure staging Supabase project before running J1-J12."

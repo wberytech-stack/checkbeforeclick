@@ -231,11 +231,12 @@ export async function loadScanForProcessing(scanId: string): Promise<{
   organization_id: string | null
   raw_input: string
   input_type: string
+  status: string | null
 } | null> {
   const db = createPrivilegedClient()
   const { data, error } = await db
     .from("scans")
-    .select("id, organization_id, raw_input, input_type")
+    .select("id, organization_id, raw_input, input_type, status")
     .eq("id", scanId)
     .single()
 

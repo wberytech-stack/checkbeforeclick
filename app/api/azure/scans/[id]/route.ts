@@ -1,7 +1,7 @@
 /** Azure-only protected scan read; legacy Supabase routes remain separate. */
 import "server-only";
-import { runAzureScanReadRoute } from "../../../../../../src/server/data/azureScanReadRoute";
-import { withPgTransaction } from "../../../../../../src/server/db/postgres";
+import { runAzureScanReadRoute } from "../../../../../src/server/data/azureScanReadRoute";
+import { withPgTransaction } from "../../../../../src/server/db/postgres";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

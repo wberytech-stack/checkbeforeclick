@@ -7,13 +7,14 @@
 -- Safe for read-only baseline inspection of staging; never apply 003 there
 -- without a new, explicit founder decision.
 WITH required(name) AS (
-  VALUES ('users'), ('organizations'), ('scans'), ('scan_cache')
+  VALUES ('users'), ('organizations'), ('scans'), ('scan_cache'),
+         ('evidence_items'), ('vendor_results')
 ), roles(name) AS (
   VALUES ('anon'), ('authenticated')
 ), checks AS (
   SELECT 'required_tables_exist'::text AS check_id,
          (SELECT count(*) FROM required r
-          WHERE to_regclass('public.' || r.name) IS NOT NULL) = 4 AS passes
+          WHERE to_regclass('public.' || r.name) IS NOT NULL) = 6 AS passes
   UNION ALL
   SELECT 'no_browser_truncate_on_any_public_table',
          NOT EXISTS (
@@ -37,7 +38,27 @@ WITH required(name) AS (
                   OR EXISTS (
                     SELECT 1 FROM pg_attribute a
                     WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-                      AND has_column_privilege(r.name, c.oid, a.attnum, 'UPDATE')
+                      AND (has_column_privilege(r.name, c.oid, a.attnum, 'INSERT')
+                           OR has_column_privilege(r.name, c.oid, a.attnum, 'UPDATE'))
+                  ))
+         )
+  UNION ALL
+  SELECT 'no_browser_evidence_or_vendor_writes',
+         NOT EXISTS (
+           SELECT 1 FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           CROSS JOIN roles r
+           WHERE n.nspname = 'public'
+             AND c.relname IN ('evidence_items', 'vendor_results')
+             AND c.relkind IN ('r', 'p')
+             AND (has_table_privilege(r.name, c.oid, 'INSERT')
+                  OR has_table_privilege(r.name, c.oid, 'UPDATE')
+                  OR has_table_privilege(r.name, c.oid, 'DELETE')
+                  OR EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND (has_column_privilege(r.name, c.oid, a.attnum, 'INSERT')
+                           OR has_column_privilege(r.name, c.oid, a.attnum, 'UPDATE'))
                   ))
          )
   UNION ALL
@@ -46,6 +67,12 @@ WITH required(name) AS (
            SELECT 1 FROM roles r
            WHERE has_table_privilege(r.name, 'public.users', 'INSERT')
               OR has_table_privilege(r.name, 'public.users', 'DELETE')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_attribute a CROSS JOIN roles r
+           WHERE a.attrelid = to_regclass('public.users')
+             AND a.attnum > 0 AND NOT a.attisdropped
+             AND has_column_privilege(r.name, a.attrelid, a.attnum, 'INSERT')
          )
          AND NOT EXISTS (
            SELECT 1 FROM pg_attribute a CROSS JOIN roles r
@@ -68,6 +95,18 @@ WITH required(name) AS (
               OR has_table_privilege(r.name, 'public.scan_cache', 'INSERT')
               OR has_table_privilege(r.name, 'public.scan_cache', 'UPDATE')
               OR has_table_privilege(r.name, 'public.scan_cache', 'DELETE')
+              OR has_table_privilege(r.name, 'public.scan_cache', 'TRUNCATE')
+              OR has_table_privilege(r.name, 'public.scan_cache', 'REFERENCES')
+              OR has_table_privilege(r.name, 'public.scan_cache', 'TRIGGER')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_attribute a CROSS JOIN roles r
+           WHERE a.attrelid = to_regclass('public.scan_cache')
+             AND a.attnum > 0 AND NOT a.attisdropped
+             AND (has_column_privilege(r.name, a.attrelid, a.attnum, 'SELECT')
+                  OR has_column_privilege(r.name, a.attrelid, a.attnum, 'INSERT')
+                  OR has_column_privilege(r.name, a.attrelid, a.attnum, 'UPDATE')
+                  OR has_column_privilege(r.name, a.attrelid, a.attnum, 'REFERENCES'))
          )
   UNION ALL
   SELECT 'service_role_data_writes_preserved',

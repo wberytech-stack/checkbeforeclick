@@ -3,7 +3,10 @@
  * No endpoint or URL is ever derived from a browser request or JWT header.
  * Only use this module from server-side auth routes; never expose code verifiers.
  */
-import { OidcValidationError, type RsaJwk } from "./azureOidc.ts";
+export class OidcTransportError extends Error {
+  constructor() { super("OIDC provider request or configuration invalid"); this.name = "OidcTransportError"; }
+}
+export type RsaJwk = { kty: string; kid: string; n?: string; e?: string; alg?: string; use?: string; key_ops?: string[] };
 
 export type TrustedOidcMetadata = {
   issuer: string;
@@ -15,7 +18,7 @@ type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 const CACHE_MS = 5 * 60 * 1000;
 const TIMEOUT_MS = 5000;
 
-function fail(): never { throw new OidcValidationError("OIDC provider request or configuration invalid"); }
+function fail(): never { throw new OidcTransportError(); }
 function trustedUrl(raw: string, origin?: string): URL {
   let url: URL;
   try { url = new URL(raw); } catch { return fail(); }

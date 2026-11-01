@@ -13,7 +13,7 @@ Every live step below is founder-only.
 The staging database currently fails a conservative, **read-only** authorization preflight. Run
 [`gate-006c-staging-rls-preflight.sql`](sql/gate-006c-staging-rls-preflight.sql)
 only in the verified **staging** Supabase SQL editor. It queries PostgreSQL catalogs, not user
-rows, and performs no writes. Its three rows must all say `PASS` before requesting a
+rows, and performs no writes. Every returned check must say `PASS` before requesting a
 separately approved authenticated journey.
 
 The preflight was executed read-only on staging project `zgxmvpbvvakpsnzcymsf`
@@ -29,6 +29,40 @@ RLS is enabled, but its own-organization UPDATE policies do not restrict these c
 The `users` identity guard proposed in Gate 007A addresses a **different** risk; it
 does not revoke the organization or scan UPDATE privileges. These are catalog-level
 exposures, not a live exploit demonstration.
+
+#### Expanded preflight follow-up (2026-11-01 UTC; staging only)
+
+A fresh read-only catalog inspection confirmed **both** `anon` and `authenticated`
+retain table-level `TRUNCATE` privileges on `public.users`, `public.organizations`
+and `public.scans`. PostgreSQL `TRUNCATE` is **not subject to row-level security**
+or the row-level identity guard trigger. Ordinary PostgREST table endpoints do
+**not** expose arbitrary `TRUNCATE` statements, so this is a dangerous privilege
+exposure, **not** evidence that a browser user can truncate tables today.
+Any SQL execution or vulnerable SECURITY DEFINER pathway would require separate
+investigation; no exploit or data-changing probe was attempted.
+
+The preflight now checks these TRUNCATE grants and **all 16 scan columns** for
+`authenticated` UPDATE privileges, including the tenant pointer, user pointer,
+raw input, confidence score, explanation and timestamps (not just the three
+original verdict/status fields). Table-level UPDATE privileges were confirmed,
+so the additional fields are not protected by column-level grants. RLS still
+restricts eligible rows; this is not proof of cross-tenant modification.
+
+The expanded SQL was **actually executed read-only** against staging project
+`zgxmvpbvvakpsnzcymsf` on 2026-11-01 UTC and returned:
+
+| Check | Expanded result |
+| --- | --- |
+| `users_identity_guard_trigger` | **BLOCK** |
+| `organizations_server_owned_columns` | **BLOCK** |
+| `scans_server_owned_columns` (16 fields) | **BLOCK** |
+| `public_tables_truncate_grants` (both browser roles, three tables) | **BLOCK** |
+
+The 2026-10-31 three-check results above are retained as historical evidence.
+Do not revoke privileges on the live database as part of this PR. A reviewed,
+new migration and disposable-DB regression tests must establish that tightening
+grants preserves legitimate application/RPC operations before any separately
+approved human-applied staging change.
 
 **Stop condition:** do not treat J0–J12, bootstrap completion, or RLS isolation as safe
 to sign off while any row is `BLOCK`. A reviewed, separately approved staging-only

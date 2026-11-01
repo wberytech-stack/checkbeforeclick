@@ -142,3 +142,19 @@ The disposable-DB suite runs the **real** modules as `cbc_app`: `postgres.ts`, `
 - **008C:** port the 007A admission and budget functions to Azure; scan and status routes on `azureStore`.
 - **008D:** remove Inngest (scans are synchronous). Add a Container Apps cron job only if scheduled work appears.
 - **008E:** Bicep for the Entra app settings, the DB principal and the app settings; then the cutover runbook (founder-executed) and Vercel and Supabase retirement.
+
+
+## 6. OIDC replay ledger (migration 006, Gate 008B dependency)
+
+Added as a separate draft migration, without changing 001–005:
+- **infra/db/migrations/006_oidc_login_state.sql**: pre-authentication SHA-256 state digests and expiry only; no user identifiers, PKCE verifiers, tokens, cookies or secrets. RLS is enabled with **no policy**. The runtime role has **no direct table grants**.
+- **app_reserve_oidc_login_state(text,bigint)**: SECURITY DEFINER, fixed pg_catalog/pg_temp search path, strict 64-character lowercase digest, database-clock expiry validation (up to six minutes including bounded clock skew), unique digest insertion, and bounded expired-record cleanup (128 per reservation, SKIP LOCKED).
+- **app_consume_oidc_login_state(text)**: one atomic DELETE with expiry predicate and RETURNING; concurrent callbacks cannot both succeed. No caller-supplied clock is trusted for consumption.
+- PUBLIC EXECUTE is revoked on both functions; only the non-admin cbc_app role may call them. This is a pre-login global replay ledger, so there is deliberately no tenant context or organization identifier in either function.
+- **scripts/azure-data/validate-oidc-state-db.ts**: 24 disposable-PostgreSQL checks for role privileges, RLS, direct-access denial, function grants, replay, concurrency, invalid inputs, DB-clock expiry and lazy cleanup. The existing disposable runner now applies 001–006 and invokes this suite.
+
+**Status:** migration 006 is **not applied** to any persistent database. The new PostgreSQL test suite has not yet been observed completing on GitHub CI at the time of this documentation update; do not count its assertions as passed until the run is inspected. The local execution environment has no PostgreSQL binaries. The existing Gate 008A validation results above predate migration 006 and do not validate it.
+
+**Failure recovery:** a failed reserve denies login before a cookie is returned; a failed consume denies authorization-code exchange. A callback that fails after consume cannot replay the state and must restart sign-in. An orphaned reservation expires in five minutes and is lazily deleted on a subsequent reservation. No background job is needed for correctness. The application must never reuse the digest as a session identifier. Only an operator-approved disposable validation may execute this migration; Azure deployment, real database apply, and cleanup of legacy services remain founder-only.
+
+**Next integration:** Gate 008B must implement a server-only LoginStateStore backed by these two parameterized functions, then integrate a callback that consumes state **before** exchanging the code, verifies the ID token, and creates a rotated secure session.

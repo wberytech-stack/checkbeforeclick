@@ -180,7 +180,9 @@ check("S18 scan flow is pure (type-only imports, no env, no fetch)", !/^import (
 check("K01 the API key is sent in the X-Goog-Api-Key header, never in the URL",
   /headers: \{ "X-Goog-Api-Key": apiKey \}/.test(wr) && !/key: apiKey/.test(wr) && !/[?&]key=/.test(wr));
 check("K02 redirects are refused (the key header is never forwarded to another host)", /redirect: "error"/.test(wr));
-check("K03 Google's error body is stored only as a bounded excerpt", /const MAX_ERROR_BODY_CHARS = 500/.test(wr) && /\(await response\.text\(\)\)\.slice\(0, MAX_ERROR_BODY_CHARS\)/.test(wr));
+check("K03 upstream HTTP errors store only status, not provider body or exception text",
+  /rawResponse: \{ status: response\.status \}/.test(wr) && !/response\.text\(/.test(wr) &&
+  !/String\(error\)/.test(wr) && /error: timedOut \? "Timeout" : "Provider request failed"/.test(wr));
 const keyReaders = appFiles.filter((f) => /process\.env(\.GOOGLE_WEB_RISK_API_KEY|\[\s*["']GOOGLE_WEB_RISK_API_KEY)/.test(readFileSync(f, "utf8"))).map(rel).sort();
 check("K04 only lib/scan/providers/googleWebRisk.ts reads GOOGLE_WEB_RISK_API_KEY in application code", keyReaders.join(",") === "lib/scan/providers/googleWebRisk.ts", keyReaders.join(","));
 const scriptsUsingHost = walk(path.join(root, "scripts")).filter((f) => !/[\\/]rate-limit[\\/]test-/.test(f) && readFileSync(f, "utf8").includes("webrisk.googleapis.com")).map(rel);

@@ -56,3 +56,6 @@ jobs:
         run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-runtime-config.ts
       - name: Offline Azure logout HTTP CSRF and revocation tests
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-logout-http.ts
+
+      - name: Offline Azure logout route and committed PostgreSQL revocation tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-logout-route.ts

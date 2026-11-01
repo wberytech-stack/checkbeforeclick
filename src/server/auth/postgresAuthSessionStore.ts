@@ -68,7 +68,8 @@ export function createPostgresAuthSessionStore(query: CommittedSessionQuery): Po
   async function oneBoolean(sql: string, values: unknown[]): Promise<boolean> {
     try {
       const result = await query.query(sql, values);
-      return result.rows.length === 1 && result.rows[0]?.ok === true;
+      if (result.rows.length !== 1 || typeof result.rows[0]?.ok !== "boolean") throw storageError();
+      return result.rows[0].ok;
     } catch { throw storageError(); }
   }
   return {

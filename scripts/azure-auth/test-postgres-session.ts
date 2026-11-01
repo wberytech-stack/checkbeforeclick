@@ -33,9 +33,9 @@ await check("S02 SQL text never contains identity or digest", async () => {
   assert.ok(!f.calls[0].sql.includes(A)); assert.ok(!f.calls[0].sql.includes(identity.subject));
 });
 await check("S03 false creation denies cookie issuance", async () => assert.equal(await fixture([{ ok: false }]).store.create(identity, A, EXPIRY), false));
-await check("S04 string truthiness cannot authorize creation", async () => assert.equal(await fixture([{ ok: "true" }]).store.create(identity, A, EXPIRY), false));
-await check("S05 empty create result fails closed", async () => assert.equal(await fixture([]).store.create(identity, A, EXPIRY), false));
-await check("S06 multiple create rows fail closed", async () => assert.equal(await fixture([{ ok: true }, { ok: true }]).store.create(identity, A, EXPIRY), false));
+await check("S04 string truthiness cannot authorize creation", async () => assert.rejects(fixture([{ ok: "true" }]).store.create(identity, A, EXPIRY), /session storage unavailable/));
+await check("S05 empty create result fails closed", async () => assert.rejects(fixture([]).store.create(identity, A, EXPIRY), /session storage unavailable/));
+await check("S06 multiple create rows fail closed", async () => assert.rejects(fixture([{ ok: true }, { ok: true }]).store.create(identity, A, EXPIRY), /session storage unavailable/));
 await check("S07 malformed digest never reaches SQL", async () => {
   const f = fixture(); assert.equal(await f.store.create(identity, "x'); DROP TABLE users;--", EXPIRY), false); assert.equal(f.calls.length, 0);
 });
@@ -116,6 +116,10 @@ await check("S29 no raw cookie is accepted as a digest", async () => {
 await check("S30 invalid SQL shape fails closed", async () => {
   const db: CommittedSessionQuery = { query: async () => ({ rows: null as never }) };
   await assert.rejects(createPostgresAuthSessionStore(db).resolve(A), /session storage unavailable/);
+});
+await check("S31 malformed revoke result cannot masquerade as successful logout", async () => {
+  await assert.rejects(fixture([]).store.revoke(A), /session storage unavailable/);
+  await assert.rejects(fixture([{ ok: "false" }]).store.revoke(A), /session storage unavailable/);
 });
 console.log(`\n=== Gate 008B PostgreSQL session adapter: ${passed} passed, ${failed} failed ===`);
 process.exitCode = failed ? 1 : 0;

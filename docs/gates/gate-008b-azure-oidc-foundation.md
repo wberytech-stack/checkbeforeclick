@@ -194,3 +194,11 @@ server-only adapter and browser routes in PR #59.
 For rotation, add the new key, switch the active ID, retain the previous key for at least the five-minute login-state lifetime plus clock tolerance, then retire it separately. Invalid/missing config, noncanonical origins, malformed key material and ambiguous key IDs all fail closed without exposing the environment.
 
 The offline `test-runtime-config.ts` suite exercises 37 positive/negative cases with random ephemeral fixture keys. It performs no network or cloud calls. This is a prerequisite for route wiring, **not** a live login route. No secrets were provisioned and no Azure configuration was modified.
+
+
+### Azure logout route wiring (draft, 2026-11-01)
+
+- Added POST-only \`/auth/azure/logout\`, invoking the existing CSRF-safe HTTP boundary and digest-only PostgreSQL revocation adapter inside a transaction that must commit before a successful redirect.
+- The route uses the verified-TLS, managed-identity PostgreSQL pool from draft PR #58, copied **unchanged** into this PR as a temporary cross-PR dependency. It must not use the legacy \`rejectUnauthorized: false\` pool. When integrating #58 and #59, preserve the secure shared implementation without duplicating pools.
+- Malformed database boolean results now raise a sanitized storage error rather than being interpreted as an idempotent logout. A failed revocation returns HTTP 503 and clears the browser cookie, but does not claim the durable credential was revoked.
+- Added offline route-level regression tests and CI wiring. **Not deployed**, not executed against any persistent database; migration 007 and managed-identity principal require separate founder approval. Existing Supabase logout remains unchanged until cutover.

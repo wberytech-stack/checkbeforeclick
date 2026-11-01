@@ -46,3 +46,5 @@ jobs:
         run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-session.ts
       - name: Offline PostgreSQL Azure identity provisioning security tests
         run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-identity.ts
+      - name: Offline verified callback to committed Azure session tests
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-login-completion.ts

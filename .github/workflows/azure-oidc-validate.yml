@@ -40,3 +40,5 @@ jobs:
         run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-state.ts
       - name: Offline OIDC callback ordering and fail-closed tests
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-callback.ts
+      - name: Offline opaque Azure session cookie security tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-session.ts

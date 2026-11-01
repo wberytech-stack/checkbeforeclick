@@ -51,7 +51,7 @@ BEGIN
     IF p_digest IS NULL OR p_digest !~ '^[0-9a-f]{64}$' THEN
         RAISE EXCEPTION 'invalid login-state digest' USING ERRCODE = '22023';
     END IF;
-    v_epoch := pg_catalog.floor(pg_catalog.extract(epoch FROM v_now))::bigint;
+    v_epoch := pg_catalog.floor(EXTRACT(EPOCH FROM v_now))::bigint;
     IF p_expires_at_seconds IS NULL OR p_expires_at_seconds <= v_epoch
        OR p_expires_at_seconds > v_epoch + 360 THEN
         RAISE EXCEPTION 'invalid login-state expiry' USING ERRCODE = '22023';
@@ -73,7 +73,7 @@ BEGIN
     VALUES (p_digest, pg_catalog.to_timestamp(p_expires_at_seconds))
     ON CONFLICT (state_digest) DO NOTHING
     RETURNING true INTO v_inserted;
-    RETURN pg_catalog.coalesce(v_inserted, false);
+    RETURN COALESCE(v_inserted, false);
 END;
 $function$;
 
@@ -95,7 +95,7 @@ BEGIN
     DELETE FROM public.oidc_login_states
     WHERE state_digest = p_digest AND expires_at > pg_catalog.clock_timestamp()
     RETURNING true INTO v_consumed;
-    RETURN pg_catalog.coalesce(v_consumed, false);
+    RETURN COALESCE(v_consumed, false);
 END;
 $function$;
 

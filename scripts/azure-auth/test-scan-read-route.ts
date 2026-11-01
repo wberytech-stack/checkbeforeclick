@@ -134,7 +134,7 @@ await check("S07 invalid scan UUID rejected before connection", async () => {
   const f = fixture({ id: SCAN + "' OR true --" }); await status(f, 400); assert.deepEqual(f.events, []);
 });
 await check("S08 uppercase/noncanonical scan UUID rejected", async () => {
-  const f = fixture({ id: SCAN.toUpperCase() }); await status(f, 400); assert.deepEqual(f.events, []);
+  const f = fixture({ id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA" }); await status(f, 400); assert.deepEqual(f.events, []);
 });
 await check("S09 POST cannot access data", async () => {
   const f = fixture({ method: "POST" }); await status(f, 405); assert.deepEqual(f.events, []);

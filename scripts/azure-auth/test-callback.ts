@@ -83,6 +83,9 @@ await check("C10 redirect cannot have query or fragment", async () => {
 await check("C11 redirect must be callback path", async () => {
   const f = fixture(); await rejects(f, { redirectUri: "https://cbc.example/other" }); assert.deepEqual(f.calls, []);
 });
+await check("C11b prefixed callback path denied", async () => {
+  const f = fixture(); await rejects(f, { redirectUri: "https://cbc.example/prefix/auth/callback" }); assert.deepEqual(f.calls, []);
+});
 await check("C12 failed state consumption never exchanges code", async () => {
   const f = fixture(); f.operations.consumeState = async () => { f.calls.push("consume"); throw Error("replayed"); };
   await rejects(f); assert.deepEqual(f.calls, ["consume"]);

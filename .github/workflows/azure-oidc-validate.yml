@@ -38,3 +38,5 @@ jobs:
 
       - name: Offline PostgreSQL OIDC state adapter tests
         run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-state.ts
+      - name: Offline OIDC callback ordering and fail-closed tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-callback.ts

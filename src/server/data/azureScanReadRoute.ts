@@ -28,7 +28,8 @@ const SCAN_SQL = `SELECT id, input_type, raw_input, status, verdict, risk_score,
 const EVIDENCE_SQL = `SELECT e.signal_type, e.severity, e.title, e.detail, e.score_impact
   FROM public.evidence_items AS e
   INNER JOIN public.scans AS s ON s.id = e.scan_id
-  WHERE e.scan_id = $1::uuid AND s.organization_id = $2::uuid
+  WHERE e.scan_id = $1::uuid AND e.organization_id = $2::uuid
+    AND s.organization_id = $2::uuid
   ORDER BY e.created_at, e.id LIMIT 501`;
 
 function respond(status: number, body: Record<string, unknown>): Response {

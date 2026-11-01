@@ -6,12 +6,15 @@
 -- Staging catalog evidence (2026-11-01 UTC, project zgxmvpbvvakpsnzcymsf):
 --   anon/authenticated have direct DML and TRUNCATE grants on ten public tables;
 --   scan_cache has global authenticated SELECT/INSERT/UPDATE policies;
---   organizations and scans have own-org UPDATE policies but no column restrictions.
+--   organizations and scans have own-org UPDATE policies but no column restrictions;
+--   evidence_items and vendor_results have own-org INSERT policies and
+--   browser INSERT grants despite server-only evidence/provider writes.
 -- This is a privilege/policy exposure, not an exploit demonstration.
 --
 -- Design: browser sessions may read tenant-scoped data under existing RLS and
 -- authenticated users may edit their own full_name. Scan creation, verdict
--- writes, organization changes, and shared cache access remain server-owned.
+-- writes, organization changes, evidence/vendor writes, and shared cache
+-- access remain server-owned.
 -- The existing server-side data chokepoint uses service_role; cbc_admit_scan and
 -- cbc_reserve_provider_call are SECURITY DEFINER RPCs called as authenticated.
 -- No policy, trigger, RPC, function ownership, service_role grant or data is changed.
@@ -36,6 +39,12 @@ REVOKE TRUNCATE ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
 -- likewise must not be writable directly from the browser.
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.scans FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON TABLE public.organizations FROM anon, authenticated;
+
+-- Evidence and provider results are produced by the privileged server-side
+-- scan lifecycle. Direct authenticated INSERT under the existing own-org RLS
+-- policy could forge results for scans in that organization. Preserve reads
+-- under RLS but deny direct browser writes (including future UPDATE/DELETE).
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.evidence_items, public.vendor_results FROM anon, authenticated;
 
 -- Profile identity and tenant pointer are server-owned. Retain only a narrow
 -- direct self-profile edit under the existing users_update_own_profile RLS

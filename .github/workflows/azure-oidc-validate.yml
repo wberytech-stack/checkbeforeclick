@@ -1,0 +1,33 @@
+# Gate 008B: pure offline OIDC/PKCE security validation. No secrets or cloud access.
+name: azure-oidc-validate
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-oidc-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  oidc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.14.0"
+      - name: Install from lockfile without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: TypeScript
+        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
+      - name: Offline OIDC and PKCE security tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-oidc.ts

@@ -1,0 +1,47 @@
+# Gate 008A - Azure data plane validation for pull requests into master.
+#
+# Read-only: contents: read, no secrets, no environment, no cloud credentials. It deploys nothing and never
+# connects to a real database: the database suite runs against a throwaway PostgreSQL 16 cluster that
+# scripts/azure-data/run-disposable-db.sh creates in a temporary directory on 127.0.0.1 with random one-time
+# passwords, and deletes when it finishes (the runner image ships the PostgreSQL 16 binaries).
+name: data-plane-validate
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: data-plane-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  data-plane:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.14.0"
+
+      - name: Install from lockfile (no lifecycle scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: TypeScript (tsc --noEmit)
+        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
+
+      - name: Gate 008A db config, tokens, transactions (offline)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/test-db-config.ts
+
+      - name: Gate 008A migrations 001-005 and data plane (disposable loopback PostgreSQL 16)
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+        run: bash scripts/azure-data/run-disposable-db.sh

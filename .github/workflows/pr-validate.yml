@@ -70,6 +70,9 @@ jobs:
       - name: Gate 007A tenant guard
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/rate-limit/test-tenant-guard.ts
 
+      - name: Azure PostgreSQL verified TLS (offline, no database)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-pg-tls.mjs
+
       - name: Hosting and workflow safety
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-hosting-safety.ts
 

@@ -14,6 +14,8 @@ const sources = {
   webDb: read('src/server/db/postgres.ts'),
   dbConfig: read('src/server/db/config.ts'),
   webAuth: read('src/server/auth/azureRuntimeConfig.ts'),
+  webCallback: read('src/server/auth/azureCallbackRoute.ts'),
+  webAssertion: read('src/server/auth/azureClientAssertion.ts'),
   workerPg: read('src/server/workers/azureWorkerPg.ts'),
   workerRuntime: read('src/server/workers/azureWorkerRuntime.ts'),
   workerEntry: read('src/server/workers/azureUrlWorkerEntry.ts'),
@@ -82,6 +84,17 @@ function validate(s) {
     assert.ok(!worker.has(key), 'OIDC secret/config leaked to worker: ' + key);
   }
   requireEnv(web, 'CBC_AZURE_OIDC_STATE_KEYS', 'secretRef', "'oidc-state-keys'");
+  for (const [key, secret] of [
+    ['CBC_AZURE_OIDC_CLIENT_PRIVATE_KEY_PEM_B64', 'oidc-client-private-key'],
+    ['CBC_AZURE_OIDC_CLIENT_CERT_PEM_B64', 'oidc-client-certificate'],
+  ]) {
+    requireEnv(web, key, 'secretRef', "'" + secret + "'");
+    assert.ok(s.webCallback.includes('deps.env.' + key), 'Callback does not consume ' + key);
+    assert.ok(!worker.has(key), 'Confidential client secret leaked to worker: ' + key);
+  }
+  mustHave(s.webAssertion, /RSA_PKCS1_PSS_PADDING/, 'Confidential client must sign PS256');
+  mustHave(s.webIaC, /scope:\s*clientKeySecret/, 'Client private key access must be secret scoped');
+  mustHave(s.webIaC, /scope:\s*clientCertSecret/, 'Client certificate access must be secret scoped');
   requireEnv(web, 'CBC_AZURE_ONLY_MODE', 'value', "'1'");
   mustHave(s.webIaC, /scope:\s*stateSecret/, 'Web vault access must be secret scoped');
   mustHave(s.workerIaC, /scope:\s*providerSecret/, 'Worker vault access must be secret scoped');
@@ -122,6 +135,8 @@ const mutations = [
   ['web token accidentally uses worker identity', s => s.webIaC = s.webIaC.replace('value: webIdentity!.properties.clientId', 'value: workerIdentity!.properties.clientId')],
   ['web identity mistakenly assigned to worker', s => s.workerIaC = s.workerIaC.replace("'\${workerIdentity!.id}': {}", "'\${webIdentity.id}': {}")],
   ['OIDC state key accidentally becomes plaintext', s => s.webIaC = s.webIaC.replace("secretRef: 'oidc-state-keys'", "value: 'unsafe'")],
+  ['OIDC client key accidentally becomes plaintext', s => s.webIaC = s.webIaC.replace("secretRef: 'oidc-client-private-key'", "value: 'unsafe'")],
+  ['OIDC client cert accidentally becomes plaintext', s => s.webIaC = s.webIaC.replace("secretRef: 'oidc-client-certificate'", "value: 'unsafe'")],
   ['provider key accidentally leaks to web', s => s.webIaC = s.webIaC.replace("{ name: 'PORT', value: '3000' }", "{ name: 'CBC_WEB_RISK_API_KEY', value: 'unsafe' }")],
   ['worker secret accidentally becomes plaintext', s => s.workerIaC = s.workerIaC.replace("secretRef: 'web-risk-key'", "value: 'unsafe'")],
   ['worker token provider falls back to web identity', s => s.workerPg = s.workerPg.replace('AZURE_CLIENT_ID: env.CBC_WORKER_AZURE_CLIENT_ID', 'AZURE_CLIENT_ID: env.AZURE_CLIENT_ID')],
@@ -135,4 +150,4 @@ for (const [name, mutate] of mutations) {
   assert.throws(() => validate(altered), undefined, 'Contract regression escaped: ' + name);
 }
 console.log('Azure clean-start deployment contracts passed: ' + actual.webVariables +
-  ' web and ' + actual.workerVariables + ' worker env bindings, 10 detected regressions; offline only');
+  ' web and ' + actual.workerVariables + ' worker env bindings, 12 detected regressions; offline only');

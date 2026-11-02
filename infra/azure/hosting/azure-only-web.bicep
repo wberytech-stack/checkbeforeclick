@@ -16,6 +16,8 @@ param oidcIssuer string
 param oidcClientId string
 param oidcStateActiveKid string
 param oidcStateSecretName string
+param oidcClientKeySecretName string
+param oidcClientCertSecretName string
 
 // Immutable manifest digest from the approved Azure-only Dockerfile build.
 @minLength(64)
@@ -46,6 +48,14 @@ resource stateSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
   parent: vault
   name: oidcStateSecretName
 }
+resource clientKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: oidcClientKeySecretName
+}
+resource clientCertSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: oidcClientCertSecretName
+}
 
 // Fresh web-only identity: do not reuse the legacy vault-wide hosting identity
 // or the independently restricted scan-worker identity.
@@ -69,6 +79,25 @@ resource webAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (d
 resource webStateSecretRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployWeb) {
   name: guid(stateSecret.id, webIdentity!.id, kvSecretsUserRole)
   scope: stateSecret
+  properties: {
+    principalId: webIdentity!.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRole)
+  }
+}
+
+resource webClientKeyRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployWeb) {
+  name: guid(clientKeySecret.id, webIdentity!.id, kvSecretsUserRole)
+  scope: clientKeySecret
+  properties: {
+    principalId: webIdentity!.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRole)
+  }
+}
+resource webClientCertRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployWeb) {
+  name: guid(clientCertSecret.id, webIdentity!.id, kvSecretsUserRole)
+  scope: clientCertSecret
   properties: {
     principalId: webIdentity!.properties.principalId
     principalType: 'ServicePrincipal'
@@ -113,6 +142,16 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployWeb) {
           keyVaultUrl: '${vault.properties.vaultUri}secrets/${oidcStateSecretName}'
           identity: webIdentity!.id
         }
+        {
+          name: 'oidc-client-private-key'
+          keyVaultUrl: '${vault.properties.vaultUri}secrets/${oidcClientKeySecretName}'
+          identity: webIdentity!.id
+        }
+        {
+          name: 'oidc-client-certificate'
+          keyVaultUrl: '${vault.properties.vaultUri}secrets/${oidcClientCertSecretName}'
+          identity: webIdentity!.id
+        }
       ]
     }
     template: {
@@ -131,6 +170,8 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployWeb) {
             { name: 'CBC_AZURE_OIDC_CLIENT_ID', value: oidcClientId }
             { name: 'CBC_AZURE_OIDC_STATE_ACTIVE_KID', value: oidcStateActiveKid }
             { name: 'CBC_AZURE_OIDC_STATE_KEYS', secretRef: 'oidc-state-keys' }
+            { name: 'CBC_AZURE_OIDC_CLIENT_PRIVATE_KEY_PEM_B64', secretRef: 'oidc-client-private-key' }
+            { name: 'CBC_AZURE_OIDC_CLIENT_CERT_PEM_B64', secretRef: 'oidc-client-certificate' }
             { name: 'CBC_DATABASE_URL', value: 'postgres://cbc_app@${databaseHost}:5432/${databaseName}' }
             { name: 'CBC_DATABASE_AUTH', value: 'entra' }
             { name: 'AZURE_CLIENT_ID', value: webIdentity!.properties.clientId }
@@ -168,6 +209,8 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployWeb) {
   dependsOn: [
     webAcrPull
     webStateSecretRead
+    webClientKeyRead
+    webClientCertRead
   ]
 }
 

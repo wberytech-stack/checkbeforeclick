@@ -15,7 +15,7 @@ concurrency:
 jobs:
   oidc:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -72,3 +72,9 @@ jobs:
 
       - name: Offline Azure scan UI validation and fail-safe verdict tests
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-ui.ts
+
+      - name: Azure-only web routing fail-closed regression tests
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-azure-web-routing.ts
+
+      - name: Build standalone Azure web image without Supabase build arguments
+        run: docker build --file Dockerfile.azure-web --tag cbc-azure-web:ci .

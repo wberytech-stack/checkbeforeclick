@@ -13,12 +13,18 @@ const guards = [
   ['registry existing', /resource registry 'Microsoft\.ContainerRegistry\/registries@[^']+' existing =/],
   ['vault existing', /resource vault 'Microsoft\.KeyVault\/vaults@[^']+' existing =/],
   ['state secret existing', /resource stateSecret 'Microsoft\.KeyVault\/vaults\/secrets@[^']+' existing =/],
+  ['client key secret existing', /resource clientKeySecret 'Microsoft\.KeyVault\/vaults\/secrets@[^']+' existing =/],
+  ['client cert secret existing', /resource clientCertSecret 'Microsoft\.KeyVault\/vaults\/secrets@[^']+' existing =/],
   ['web identity opt-in', /resource webIdentity 'Microsoft\.ManagedIdentity\/userAssignedIdentities@[^']+' = if \(deployWeb\)/],
   ['ACR role opt-in', /resource webAcrPull 'Microsoft\.Authorization\/roleAssignments@[^']+' = if \(deployWeb\)/],
   ['state secret grant opt-in', /resource webStateSecretRead 'Microsoft\.Authorization\/roleAssignments@[^']+' = if \(deployWeb\)/],
+  ['client key grant opt-in', /resource webClientKeyRead 'Microsoft\.Authorization\/roleAssignments@[^']+' = if \(deployWeb\)/],
+  ['client cert grant opt-in', /resource webClientCertRead 'Microsoft\.Authorization\/roleAssignments@[^']+' = if \(deployWeb\)/],
   ['app opt-in', /resource web 'Microsoft\.App\/containerApps@[^']+' = if \(deployWeb\)/],
   ['registry RBAC scoped', /name: guid\(registry\.id, webIdentity!\.id, acrPullRole\)\s+scope: registry/],
   ['secret RBAC scoped', /name: guid\(stateSecret\.id, webIdentity!\.id, kvSecretsUserRole\)\s+scope: stateSecret/],
+  ['client key RBAC scoped', /name: guid\(clientKeySecret\.id, webIdentity!\.id, kvSecretsUserRole\)\s+scope: clientKeySecret/],
+  ['client cert RBAC scoped', /name: guid\(clientCertSecret\.id, webIdentity!\.id, kvSecretsUserRole\)\s+scope: clientCertSecret/],
   ['identity attached to web', /userAssignedIdentities:\s*\{\s*'\$\{webIdentity!\.id\}': \{\}/],
   ['identity pulls image', /server: registry\.properties\.loginServer\s+identity: webIdentity!\.id/],
   ['identity reads secret', /keyVaultUrl: '\$\{vault\.properties\.vaultUri\}secrets\/\$\{oidcStateSecretName\}'\s+identity: webIdentity!\.id/],
@@ -29,6 +35,8 @@ const guards = [
   ['restricted web database role', /name: 'CBC_DATABASE_URL', value: 'postgres:\/\/cbc_app@\$\{databaseHost\}:5432\/\$\{databaseName\}'/],
   ['web identity client ID', /name: 'AZURE_CLIENT_ID', value: webIdentity!\.properties\.clientId/],
   ['OIDC state secret reference', /name: 'CBC_AZURE_OIDC_STATE_KEYS', secretRef: 'oidc-state-keys'/],
+  ['client key secret reference', /name: 'CBC_AZURE_OIDC_CLIENT_PRIVATE_KEY_PEM_B64', secretRef: 'oidc-client-private-key'/],
+  ['client cert secret reference', /name: 'CBC_AZURE_OIDC_CLIENT_CERT_PEM_B64', secretRef: 'oidc-client-certificate'/],
   ['public origin explicit', /name: 'CBC_AZURE_PUBLIC_ORIGIN', value: publicOrigin/],
   ['issuer explicit', /name: 'CBC_AZURE_OIDC_ISSUER', value: oidcIssuer/],
   ['client ID explicit', /name: 'CBC_AZURE_OIDC_CLIENT_ID', value: oidcClientId/],
@@ -44,9 +52,10 @@ function violations(text) {
   if (/scope:\s*vault\b/.test(text)) missing.push('vault-wide access');
   if (/name:\s*'(?:SUPABASE_[A-Z_]+|INNGEST_[A-Z_]+|GOOGLE_WEB_RISK_API_KEY|CBC_WEB_RISK_API_KEY)'/.test(text)) missing.push('legacy/paid provider env');
   if (/name: 'CBC_AZURE_OIDC_STATE_KEYS', value:/.test(text)) missing.push('plain-text OIDC state keys');
+  if (/name: 'CBC_AZURE_OIDC_CLIENT_(?:PRIVATE_KEY|CERT)_PEM_B64', value:/.test(text)) missing.push('plain-text client credential');
   if (/name: 'CBC_DATABASE_URL', secretRef:/.test(text)) missing.push('database must use managed identity');
   if (/image:.*:latest/.test(text)) missing.push('mutable image');
-  if (/resource (?:web|webIdentity|webAcrPull|webStateSecretRead) '[^']+' = \{/.test(text)) missing.push('unguarded provision');
+  if (/resource (?:web|webIdentity|webAcrPull|webStateSecretRead|webClientKeyRead|webClientCertRead) '[^']+' = \{/.test(text)) missing.push('unguarded provision');
   if (/password\s*:|adminUserEnabled\s*:/.test(text)) missing.push('password/admin config');
   return missing;
 }
@@ -58,6 +67,9 @@ const mutations = [
   ['vault-wide grant', s => s.replace('scope: stateSecret', 'scope: vault')],
   ['wrong image', s => s.replace('cbc-azure-web@sha256:', 'cbc-azure-web:latest-')],
   ['state key in plain text', s => s.replace("secretRef: 'oidc-state-keys'", "value: 'plaintext'")],
+  ['client key in plain text', s => s.replace("secretRef: 'oidc-client-private-key'", "value: 'plaintext'")],
+  ['client cert in plain text', s => s.replace("secretRef: 'oidc-client-certificate'", "value: 'plaintext'")],
+  ['client key vault-wide grant', s => s.replace('scope: clientKeySecret', 'scope: vault')],
   ['database password auth', s => s.replace("name: 'CBC_DATABASE_AUTH', value: 'entra'", "name: 'CBC_DATABASE_AUTH', value: 'password'")],
   ['insecure ingress', s => s.replace('allowInsecure: false', 'allowInsecure: true')],
   ['legacy credential', s => s.replace("name: 'CBC_AZURE_ONLY_MODE'", "name: 'SUPABASE_SERVICE_ROLE_KEY'")],

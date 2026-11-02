@@ -29,9 +29,9 @@ function envBlock(iac) {
   assert.ok(end !== -1, 'Container env block not terminated');
   const block = iac.slice(start, end);
   const result = new Map();
-  for (const m of block.matchAll(/name:\s*'([^']+)'\s*,?\s*(value|secretRef):\s*([^\n}]+)/g)) {
+  for (const m of block.matchAll(/name:\s*'([^']+)'\s*,?\s*(value|secretRef):\s*([^\n]+)/g)) {
     assert.ok(!result.has(m[1]), 'Duplicate environment variable: ' + m[1]);
-    result.set(m[1], { kind: m[2], value: m[3].trim().replace(/,$/, '') });
+    result.set(m[1], { kind: m[2], value: m[3].trim().replace(/\s*}\s*$/, '').replace(/,$/, '').trim() });
   }
   assert.ok(result.size >= 3, 'No container environment entries parsed');
   return result;

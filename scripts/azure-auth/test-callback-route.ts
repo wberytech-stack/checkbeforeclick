@@ -44,6 +44,8 @@ type Options = {
   tokenClaims?: Record<string, unknown>;
   badSignature?: boolean;
   exchangeError?: boolean;
+  omitAssertionFactory?: boolean;
+  signerError?: boolean;
 };
 async function fixture(options: Options = {}) {
   const events: string[] = [];
@@ -97,15 +99,19 @@ async function fixture(options: Options = {}) {
         events.push("commit" + number);
         return result;
       },
+      clientAssertionFactory: opt.omitAssertionFactory ? undefined : () => {
+        if (opt.signerError) throw new Error("client key secret=never-disclose");
+        return "abc.def.ghi";
+      },
       transportFactory(actualIssuer) {
         transportFactories++;
         assert.equal(actualIssuer, issuer);
         return {
-          async exchangeCode(args: { code: string; codeVerifier: string; clientId: string; redirectUri: string }) {
+          async exchangeCode(args: { code: string; codeVerifier: string; clientId: string; redirectUri: string; clientAssertion: string }) {
             events.push("exchange");
             assert.deepEqual(args, {
               code: "authorization-code", codeVerifier: challenge.codeVerifier,
-              clientId, redirectUri: origin + "/auth/callback",
+              clientId, redirectUri: origin + "/auth/callback", clientAssertion: "abc.def.ghi",
             });
             if (opt.exchangeError) throw new Error("provider secret=never-disclose");
             const jwt = token(challenge.nonce, opt.tokenClaims);
@@ -242,6 +248,15 @@ await check("C21 session function false cannot issue credential", async () => {
 });
 await check("C22 malformed session result cannot issue credential", async () => {
   const f = await fixture(); denied(await f.invoke({ sessionRows: [{ ok: "true" }] }));
+});
+await check("C23 missing confidential-client credential denies before state consumption", async () => {
+  const f = await fixture(); denied(await f.invoke({ omitAssertionFactory: true }), 503);
+  assert.deepEqual(f.calls, []); assert.equal(f.transportFactories, 0);
+});
+await check("C24 signing failure prevents code exchange and session", async () => {
+  const f = await fixture(); denied(await f.invoke({ signerError: true }));
+  assert.deepEqual(f.events, ["consume", "commit1"]);
+  assert.equal(f.transactions, 1);
 });
 console.log("\n=== Azure callback route integration: " + passed + " passed, " + failed + " failed ===");
 process.exitCode = failed ? 1 : 0;

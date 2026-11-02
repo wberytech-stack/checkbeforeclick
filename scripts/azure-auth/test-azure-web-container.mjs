@@ -59,9 +59,12 @@ try {
   const ui = await request(base, "/azure");
   check(ui.status === 200, "Azure scan UI must render without Supabase");
   const html = await ui.text();
-  check(html.includes("Check a link before opening it"), "scan form must be visible");
+  check(html.includes("Link intelligence") && html.includes("URL to investigate"), "security overview and scan form must be visible");
   check(html.includes("/auth/azure/start"), "Entra login entrypoint must be visible");
-  check(html.includes("Check URL"), "scan submission control must be visible");
+  check(html.includes("Analyze URL"), "scan submission control must be visible");
+  check(html.includes("Investigation"), "investigation panel must be visible");
+  check(html.includes("Light") && html.includes("Dark") && html.includes("System"),
+    "all three theme choices must be visible");
 
   for (const path of ["/login", "/register", "/dashboard", "/api/inngest",
     "/api/inngest/hook.js", "/api/legacy.svg", "/api/azure/scans/not-a-uuid"]) {

@@ -162,7 +162,7 @@ await check("C02 replay cannot exchange or provision", async () => {
 await check("C03 eight concurrent callbacks issue exactly one session", async () => {
   const f = await fixture();
   const results = await Promise.all(Array.from({ length: 8 }, () => f.invoke()));
-  assert.equal(results.filter((r) => r.headers.get("location") === origin + "/azure").length, 1);
+  assert.equal(results.filter((r) => r.headers.getSetCookie().length === 2).length, 1);
   assert.equal(f.events.filter((x) => x === "exchange").length, 1);
   assert.equal(f.events.filter((x) => x === "session").length, 1);
 });

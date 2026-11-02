@@ -36,6 +36,9 @@ CREATE TABLE public.scan_job_outbox (
 );
 CREATE INDEX scan_job_claim_idx ON public.scan_job_outbox (state, created_at, scan_id)
   WHERE attempt_count < 8;
+-- Keep terminal recovery bounded even with a large backlog of expired leases.
+CREATE INDEX scan_job_exhausted_idx ON public.scan_job_outbox (leased_until, scan_id)
+  WHERE state = 'leased' AND attempt_count = 8;
 ALTER TABLE public.scan_job_outbox ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.scan_job_outbox FROM PUBLIC, cbc_app, cbc_worker;
 -- Zero RLS policies; only the narrowly granted SECURITY DEFINER functions
@@ -94,7 +97,7 @@ BEGIN
      WHERE j.state = 'leased' AND j.attempt_count = 8
        AND j.leased_until <= pg_catalog.clock_timestamp()
        AND s.status = 'pending'
-     ORDER BY j.updated_at, j.scan_id
+     ORDER BY j.leased_until, j.scan_id
      FOR UPDATE OF j SKIP LOCKED
      LIMIT 10
   ), failed_scans AS (

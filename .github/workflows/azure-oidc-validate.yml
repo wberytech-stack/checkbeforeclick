@@ -76,6 +76,9 @@ jobs:
       - name: Azure-only web routing fail-closed regression tests
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-azure-web-routing.ts
 
+      - name: Offline Azure-only web IaC security and cost guards
+        run: node scripts/azure-auth/test-azure-web-iac.mjs
+
       - name: Build standalone Azure web image without Supabase build arguments
         run: docker build --file Dockerfile.azure-web --tag cbc-azure-web:ci .
       - name: Real-container Azure-only HTTP smoke without legacy credentials

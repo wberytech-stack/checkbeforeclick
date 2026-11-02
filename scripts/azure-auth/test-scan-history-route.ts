@@ -1,7 +1,7 @@
 /** Offline recent-history API tenant-isolation tests. No real database or network. */
 import { strict as assert } from "node:assert";
 import { AZURE_SESSION_COOKIE_NAME, createUnpersistedAzureSessionToken } from "../../src/security/azureSession.ts";
-import { runAzureScanHistoryRoute } from "../../src/server/data/azureScanHistoryRoute.ts";
+import { runAzureScanHistoryRoute, parseAzureHistoryRow } from "../../src/server/data/azureScanHistoryRoute.ts";
 import type { CommittedSessionQuery } from "../../src/server/auth/postgresAuthSessionStore.ts";
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -76,6 +76,11 @@ async function status(f: ReturnType<typeof fixture>, code: number) {
   assert.equal(response.headers.get("set-cookie"), null);
   return response;
 }
+await check("H00 direct history row parser accepts PostgreSQL Date", async () => {
+  const parsed = parseAzureHistoryRow(row);
+  assert.equal(parsed.id, SCAN);
+  assert.equal(parsed.created_at, "2026-11-02T00:00:00.000Z");
+});
 await check("H01 authenticated tenant history commits before response", async () => {
   const f = fixture(); const r = await status(f, 200);
   assert.deepEqual(f.events, ["BEGIN", "session", "context", "history", "COMMIT"]);

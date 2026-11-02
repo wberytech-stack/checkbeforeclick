@@ -9,6 +9,7 @@ export type AzureWebDecision = "allow" | "redirect" | "deny";
 
 export function isAzureWebPath(pathname: string): boolean {
   if (pathname === "/azure" || pathname === "/azure/" ||
+      pathname === "/azure/welcome" ||
       pathname === "/auth/azure/start" ||
       pathname === "/auth/azure/logout" ||
       pathname === "/auth/callback" ||

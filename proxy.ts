@@ -86,7 +86,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Gate 006B: api/healthz is excluded so container health probes never touch Supabase auth.
-    "/((?!_next/static|_next/image|favicon.ico|api/healthz$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|webmanifest)$).*)",
+    // Exclude only framework assets and liveness. Extension-based exclusions would
+    // let a legacy dynamic API route ending in .json/.js bypass Azure-only denial.
+    "/((?!_next/static|_next/image|favicon.ico|api/healthz$).*)",
   ],
 }

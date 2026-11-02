@@ -12,7 +12,7 @@ import {
 } from "../auth/azureTenantSession";
 
 const MAX_ROWS = 50;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HEADERS = {
   "cache-control": "private, no-store, max-age=0",
   "vary": "Cookie",

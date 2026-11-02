@@ -56,7 +56,7 @@ export function createManagedIdentityTokenProvider(deps: {
   if (!clientId || !/^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(clientId)) {
     throw new EntraTokenError("AZURE_CLIENT_ID must identify a user-assigned managed identity")
   }
-  if (/[\\x00-\\x1f\\x7f]/.test(header) || header.length > 2048) {
+  if (/[\x00-\x1f\x7f]/.test(header) || header.length > 2048) {
     throw new EntraTokenError("IDENTITY_HEADER is invalid")
   }
 

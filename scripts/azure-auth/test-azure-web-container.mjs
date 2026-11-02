@@ -53,8 +53,15 @@ try {
 
   const root = await request(base, "/");
   check(root.status === 307, "root must redirect to Azure UI");
-  check(new URL(root.headers.get("location"), base).pathname === "/azure",
+  check(new URL(root.headers.get("location"), base).pathname === "/azure/welcome",
     "root must not redirect to a legacy login or dashboard");
+
+  const welcome = await request(base, "/azure/welcome");
+  check(welcome.status === 200, "Azure welcome landing page must render without Supabase");
+  const landing = await welcome.text();
+  check(landing.includes("Know the risk.") && landing.includes("Before the click."), "landing headline must be present");
+  check(landing.includes("Open Security Center") && landing.includes("/auth/azure/start"), "landing must link to live scan and Entra sign-in flows");
+  check(landing.includes("not proof that a link is safe"), "landing must not promise safety");
 
   const ui = await request(base, "/azure");
   check(ui.status === 200, "Azure scan UI must render without Supabase");

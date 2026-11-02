@@ -52,6 +52,12 @@ resource webIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-3
   name: webIdentityName
 }
 
+// Grant access to this secret only, not every secret in the vault.
+resource providerSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: webRiskSecretName
+}
+
 // Worker identity must be distinct from the web identity. The runtime also
 // compares both client IDs and refuses to run if they match.
 resource workerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (enableJob) {
@@ -74,8 +80,8 @@ resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if
 }
 
 resource workerVaultRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableJob) {
-  name: guid(vault.id, workerIdentity!.id, roleKeyVaultSecretsUser)
-  scope: vault
+  name: guid(providerSecret.id, workerIdentity!.id, roleKeyVaultSecretsUser)
+  scope: providerSecret
   properties: {
     principalId: workerIdentity!.properties.principalId
     principalType: 'ServicePrincipal'

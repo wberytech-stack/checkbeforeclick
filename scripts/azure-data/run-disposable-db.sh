@@ -87,4 +87,4 @@ node scripts/azure-data/validate-worker-completion-db.mjs
 # Cross-branch product contract: authenticated scan -> durable outbox ->
 # lease-bound worker completion -> RLS-filtered evidence -> browser UI parser.
 # Uses only the same disposable loopback PostgreSQL cluster.
-node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-first-scan-db.mjs
+node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-first-scan-db.mjs

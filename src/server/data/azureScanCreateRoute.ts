@@ -9,13 +9,13 @@ import {
   type AzureTenantSessionDependencies,
 } from "../auth/azureTenantSession";
 import { parseAzureRuntimeConfig, type AzureRuntimeEnvironment } from "../auth/azureRuntimeConfig";
+import { canonicalPublicUrl } from "../workers/azureUrlProcessor";
 
 export type AzureScanCreateDependencies = AzureTenantSessionDependencies & {
   env: AzureRuntimeEnvironment;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const TYPES = new Set(["url", "domain", "email", "header", "signature", "batch"]);
 const MAX_BODY_BYTES = 12000;
 const HEADERS = {
   "cache-control": "private, no-store, max-age=0",
@@ -49,10 +49,14 @@ function parseInput(text: string): { inputType: string; rawInput: string } | nul
     const values = new Map([[firstKey, firstValue], [secondKey, secondValue]]);
     const inputType = values.get("input_type");
     const rawInput = values.get("raw_input");
-    if (typeof inputType !== "string" || !TYPES.has(inputType) ||
-        typeof rawInput !== "string" || rawInput.trim().length === 0 ||
-        rawInput.length > 10000 || rawInput.includes("\0")) return null;
-    return { inputType, rawInput };
+    if (inputType !== "url" || typeof rawInput !== "string") return null;
+    // The Azure worker currently supports public URL reputation only. Reject
+    // unsupported/private targets BEFORE creating a durable outbox job.
+    // Share the exact canonicalization policy with the worker so that
+    // accepted scans cannot later fail solely due to URL eligibility.
+    const canonical = canonicalPublicUrl(rawInput);
+    if (canonical === null) return null;
+    return { inputType, rawInput: canonical };
   } catch { return null; }
 }
 

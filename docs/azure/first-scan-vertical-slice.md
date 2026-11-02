@@ -21,19 +21,50 @@ ID browser routes and Azure PostgreSQL scan APIs from this draft PR.
    **not** a safety clearance. Logout uses a same-origin POST to revoke the
    session; GET logout is forbidden.
 
-## Critical integration dependency
+## Verified disposable HTTP-to-worker-to-UI integration
 
-This branch contains scan-create and scan-read APIs, **not** the complete
-job processing pipeline. Before claiming an end-to-end scan is functional,
-integrate and regression-test the durable outbox, lease-bound completion and
-Azure worker from draft PR #58. PR #58 and #59 both touch the PostgreSQL
-transport and schema, so review conflicts instead of blindly overlaying files.
+The draft branch now includes the Azure PostgreSQL migrations 005–009, the
+real scan-create/read HTTP handlers, a durable PostgreSQL outbox, a
+lease-bound worker, and the browser result parser. The
+`scripts/azure-data/validate-first-scan-db.mjs` test uses **real HTTP Request
+and Response objects** against those handlers, a real committed PostgreSQL
+session, and a disposable PostgreSQL 16 database. It runs the actual
+provider-neutral worker with a deterministic fake reputation provider,
+then reads the persisted evidence through the authenticated HTTP handler.
 
-The application must run the required fresh PostgreSQL migrations in order
-using separately approved migration credentials. The web role must not own
-tables, bypass RLS or write terminal scan results. The worker role must not
-read browser sessions or mutate scan/evidence rows outside the lease-bound
-completion function.
+On 2026-11-02, **18/18 integration assertions passed** in
+[data-plane-validate CI #41423480660](https://github.com/wberytech-stack/checkbeforeclick/actions/runs/41423480660).
+The checks cover both `unknown` and `dangerous` verdicts, tenant A/B read
+denial, durable outbox completion, no duplicate provider invocation,
+provider-outage fail-closed behavior, and revoked session denial.
+The tests make **no live Entra, Azure, Supabase or paid provider calls**.
+
+This establishes the application code's disposable-database contract,
+**not** a live Azure deployment, real Entra sign-in, external provider
+integration, or browser-driven production journey. It does not establish
+that the Container Apps Job scheduler or managed-identity database roles
+have been provisioned or configured.
+
+## Remaining Azure integration
+
+- Review and reconcile PR #58/#59 overlap before merging; do not blindly
+  overlay their schema and PostgreSQL transport files.
+- Initialize a **fresh** Azure PostgreSQL application database using
+  reviewed migrations 001–009 and separately approved credentials; never
+  use the owner/admin role for the web or worker.
+- Configure separate non-BYPASSRLS `cbc_app` and `cbc_worker` identities,
+  verified TLS, Entra External ID application registration, trusted issuer,
+  and protected secrets under founder-approved deployment procedures.
+- Configure and test a scheduled Azure Container Apps Job for the durable
+  PostgreSQL outbox. A Google Web Risk key is optional but paid provider
+  calls require explicit approval; an absent provider must never imply
+  a safe verdict.
+- Verify the live browser sign-in, scan, evidence, logout, retries, resource
+  usage and rollback before switching production traffic.
+
+The web role must not own tables, bypass RLS or write terminal scan results.
+The worker role must not read browser sessions or mutate scan/evidence rows
+outside the lease-bound completion function.
 
 ## Acceptance checks (require an approved disposable Azure environment)
 

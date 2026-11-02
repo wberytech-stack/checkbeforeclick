@@ -61,12 +61,16 @@ The Azure-only runtime image is built from `Dockerfile.azure-web` and exposes
 node scripts/azure-auth/test-azure-web-iac.mjs
 ```
 
-The pull-request workflow runs this check and builds/tests the actual Azure
-web image. The IaC check guards the opt-in gate, scoped secret permissions,
-image digest, restricted database identity, absent legacy credentials,
-readiness probes and bounded replicas. It does **not** compile Bicep or
-establish real Azure permissions; a human must validate `az bicep build`,
-`az bicep lint` and `az deployment group what-if` before any apply.
+The pull-request workflow runs this source-level check and builds/tests the
+actual Azure web image. A separate `compiled-iac` job also runs `az bicep
+build` and `az bicep lint` on both Azure-only templates, then checks the
+compiled ARM JSON for default-off provisioning, conditional resources,
+secret-scoped RBAC, digest-pinned images, restricted database roles and
+bounded runtime settings. Its validator has positive and negative fixtures.
+The runner may download the free Bicep compiler from GitHub; it does not
+log into Azure or make ARM deployment calls. Compilation does **not** prove
+live permissions or deployability: an authorized operator must still review
+`az deployment group what-if`, identity bindings and costs before any apply.
 
 ## Cutover and rollback
 

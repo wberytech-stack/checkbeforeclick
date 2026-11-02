@@ -30,9 +30,8 @@ export async function redeemAzureCallback(input: {
     ...callback,
     operations: {
       consumeState: consumeLoginState,
-      exchangeCode: (args) => transport.exchangeCode({
-        ...args, clientAssertion: input.clientAssertionFactory?.(),
-      }),
+      exchangeCode: (args) => transport.exchangeCode(input.clientAssertionFactory
+        ? { ...args, clientAssertion: input.clientAssertionFactory() } : args),
       jwks: (forceRefresh) => transport.jwks(forceRefresh),
       verifyIdToken,
     },

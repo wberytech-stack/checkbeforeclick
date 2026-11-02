@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": ".",
+    "outDir": ".azure-worker-dist",
+    "noEmit": false,
+    "incremental": false,
+    "allowJs": false,
+    "isolatedModules": false,
+    "plugins": [],
+    "types": ["node"]
+  },
+  "include": ["scripts/azure-data/azure-url-worker-main.ts"],
+  "exclude": ["node_modules"]
+}

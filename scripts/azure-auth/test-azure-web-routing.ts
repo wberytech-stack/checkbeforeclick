@@ -11,7 +11,7 @@ function check(name: string, path: string, expected: "allow" | "redirect" | "den
 check("root goes to Azure UI", "/", "redirect");
 for (const path of [
   "/azure", "/azure/", "/auth/azure/start", "/auth/azure/logout",
-  "/auth/callback", "/api/azure/scans", `/api/azure/scans/${ID}`, "/api/healthz",
+  "/auth/callback", "/api/azure/scans", "/api/azure/history", `/api/azure/scans/${ID}`, "/api/healthz",
 ]) check("Azure route is reachable without legacy middleware", path, "allow");
 for (const path of [
   "/login", "/register", "/dashboard", "/scan", "/history",

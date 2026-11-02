@@ -20,7 +20,7 @@ const env = {
   CBC_AZURE_OIDC_STATE_ACTIVE_KID: "k1",
   CBC_AZURE_OIDC_STATE_KEYS: "k1:" + Buffer.alloc(32, 7).toString("base64url"),
 };
-const payload = JSON.stringify({ input_type: "url", raw_input: "https://example.test/" });
+const payload = JSON.stringify({ input_type: "url", raw_input: "https://example.org/" });
 const session = { o_user_id: USER, o_organization_id: ORG, o_role: "owner" };
 
 type Options = {
@@ -103,15 +103,15 @@ await check("C01 committed tenant-scoped scan creation returns only id and pendi
   assert.deepEqual(f.events, ["BEGIN", "session", "context", "create", "COMMIT"]);
   assert.deepEqual(f.calls[0].values, [digest]);
   assert.deepEqual(f.calls[1].values, [USER, ORG]);
-  assert.deepEqual(f.calls[2].values, ["url", "https://example.test/"]);
+  assert.deepEqual(f.calls[2].values, ["url", "https://example.org/"]);
   assert.equal(f.calls[2].sql, "SELECT public.app_create_scan($1::text, $2::text) AS id");
   assert.ok(!JSON.stringify(f.calls).includes(token));
 });
 await check("C02 browser-supplied tenant and role cannot select a tenant", async () => {
-  const f = fixture({ url: ORIGIN + "/api/azure/scans", body: JSON.stringify({ input_type: "url", raw_input: FOREIGN }) });
+  const f = fixture({ url: ORIGIN + "/api/azure/scans", body: JSON.stringify({ input_type: "url", raw_input: "https://example.org/?tenant=" + FOREIGN }) });
   await status(f, 201);
   assert.deepEqual(f.calls[1].values, [USER, ORG]);
-  assert.deepEqual(f.calls[2].values, ["url", FOREIGN]);
+  assert.deepEqual(f.calls[2].values, ["url", "https://example.org/?tenant=" + FOREIGN]);
 });
 await check("C03 missing cookie denies before SQL", async () => {
   const f = fixture({ cookie: "" }); await status(f, 401); assert.deepEqual(f.events, []);
@@ -145,8 +145,8 @@ await check("C10 nested JSON and non-string values rejected", async () => {
   }
 });
 await check("C11 order-independent valid JSON with whitespace accepted", async () => {
-  const f = fixture({ body: ' { "raw_input" : "https://example.test/a", "input_type" : "url" } ' });
-  await status(f, 201); assert.deepEqual(f.calls[2].values, ["url", "https://example.test/a"]);
+  const f = fixture({ body: ' { "raw_input" : "https://example.org/a", "input_type" : "url" } ' });
+  await status(f, 201); assert.deepEqual(f.calls[2].values, ["url", "https://example.org/a"]);
 });
 await check("C12 invalid scan types, blank and NUL rejected", async () => {
   for (const [input_type, raw_input] of [["pdf", "x"], ["url", "  "], ["url", "a\0b"]]) {
@@ -214,16 +214,46 @@ await check("C27 malformed, ambiguous or uppercase DB scan IDs fail closed", asy
   }
 });
 await check("C28 hostile raw input is bound data, not SQL", async () => {
-  const attack = "https://evil.test/?q='; DROP TABLE scans;--";
+  const attack = "https://example.org/?q='; DROP TABLE scans;--";
   const f = fixture({ body: JSON.stringify({ input_type: "url", raw_input: attack }) });
   const r = await status(f, 201);
   assert.deepEqual(f.calls[2].values, ["url", attack]);
   assert.ok(!(await r.text()).includes(attack));
 });
-await check("C29 all six schema-approved scan types accepted", async () => {
-  for (const input_type of ["url", "domain", "email", "header", "signature", "batch"]) {
-    const f = fixture({ body: JSON.stringify({ input_type, raw_input: "valid" }) });
-    await status(f, 201); assert.equal(f.calls[2].values[0], input_type);
+await check("C29 unsupported input types cannot create unprocessable outbox jobs", async () => {
+  for (const input_type of ["domain", "email", "header", "signature", "batch"]) {
+    const f = fixture({ body: JSON.stringify({ input_type, raw_input: "https://example.org/" }) });
+    await status(f, 400); assert.deepEqual(f.events, []);
+  }
+});
+await check("C30 private, metadata, reserved and IP targets rejected before database access", async () => {
+  for (const raw_input of ["http://localhost/", "http://127.0.0.1/", "http://169.254.169.254/",
+    "http://0x7f000001/", "http://10.0.0.1/", "http://[::1]/",
+    "https://metadata.internal/", "https://foo.local/", "https://foo.test/",
+    "https://example.com:8080/", "https://user:password@example.org/",
+    "https://example.org/\\n", "https://example.org/\\\\@localhost/"]) {
+    const f = fixture({ body: JSON.stringify({ input_type: "url", raw_input }) });
+    await status(f, 400); assert.deepEqual(f.events, []);
+  }
+});
+await check("C31 canonical URL stored without fragment and with normalized host", async () => {
+  const f = fixture({ body: JSON.stringify({
+    input_type: "url", raw_input: "https://Example.ORG/path?q=1#private-fragment",
+  }) });
+  await status(f, 201);
+  assert.deepEqual(f.calls[2].values, ["url", "https://example.org/path?q=1"]);
+});
+await check("C32 oversized URL is rejected before creating a job", async () => {
+  const f = fixture({ body: JSON.stringify({
+    input_type: "url", raw_input: "https://example.org/" + "a".repeat(2048),
+  }) });
+  await status(f, 400); assert.deepEqual(f.events, []);
+});
+await check("C33 valid public HTTP and HTTPS URLs create pending scans", async () => {
+  for (const raw_input of ["http://example.org/a", "https://example.org/?q=1"]) {
+    const f = fixture({ body: JSON.stringify({ input_type: "url", raw_input }) });
+    await status(f, 201);
+    assert.equal(f.calls[2].values[1], raw_input);
   }
 });
 console.log("\n=== Azure scan creation: " + passed + " passed, " + failed + " failed ===");

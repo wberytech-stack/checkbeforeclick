@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gate 008A - disposable PostgreSQL 16 validation of migrations 001-007 and the Azure data-plane code.
+# Gate 008A - disposable PostgreSQL 16 validation of migrations 001-008 and the Azure data-plane code.
 #
 # Creates a throwaway cluster in a temporary directory, listening ONLY on 127.0.0.1 (no Unix socket outside
 # the temp directory), with random one-time passwords. Applies the migrations as the cluster owner, creates
@@ -24,7 +24,7 @@ chmod 700 "$WORK"
 cleanup() {
   as_pg "$PG_BIN/pg_ctl" -D "$WORK/data" -m immediate stop >/dev/null 2>&1 || true
   rm -rf "$WORK"
-  unset CBC_DATABASE_URL CBC_DATABASE_SSL CBC_TEST_OWNER_URL CBC_TEST_ISSUER PGPASSWORD
+  unset CBC_DATABASE_URL CBC_DATABASE_SSL CBC_TEST_OWNER_URL CBC_TEST_WORKER_URL CBC_TEST_ISSUER PGPASSWORD
 }
 trap cleanup EXIT
 
@@ -33,6 +33,7 @@ if [ "$(id -u)" = 0 ]; then chown "$OS_USER" "$WORK"; fi
 
 OWNER_PW="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 APP_PW="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+WORKER_PW="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 printf '%s\n' "$OWNER_PW" > "$WORK/pw"; chmod 600 "$WORK/pw"
 if [ "$(id -u)" = 0 ]; then chown "$OS_USER" "$WORK/pw"; fi
 
@@ -47,8 +48,10 @@ PSQL=(psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -U cbc_owner)
 # Runtime role BEFORE 002, so 002's conditional grants apply (as on a real server).
 "${PSQL[@]}" -d cbc_test -c "CREATE ROLE cbc_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '$APP_PW'" \
   -c "REVOKE ALL ON DATABASE cbc_test FROM PUBLIC" -c "GRANT CONNECT ON DATABASE cbc_test TO cbc_app" \
-  -c "REVOKE CREATE ON SCHEMA public FROM PUBLIC"
-for m in "$ROOT"/infra/db/migrations/00[1-7]_*.sql; do
+  -c "REVOKE CREATE ON SCHEMA public FROM PUBLIC" \
+  -c "CREATE ROLE cbc_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD '$WORKER_PW'" \
+  -c "GRANT CONNECT ON DATABASE cbc_test TO cbc_worker"
+for m in "$ROOT"/infra/db/migrations/00[1-8]_*.sql; do
   echo "apply $(basename "$m")"
   PGOPTIONS="-c client_min_messages=warning" "${PSQL[@]}" -d cbc_test -f "$m"
 done
@@ -57,6 +60,7 @@ done
 export CBC_DATABASE_URL="postgres://cbc_app:$APP_PW@127.0.0.1:$PORT/cbc_test"
 export CBC_DATABASE_SSL=false
 export CBC_TEST_OWNER_URL="postgres://cbc_owner:$OWNER_PW@127.0.0.1:$PORT/cbc_test"
+export CBC_TEST_WORKER_URL="postgres://cbc_worker:$WORKER_PW@127.0.0.1:$PORT/cbc_test"
 export CBC_TEST_ISSUER="$ISSUER"
 unset PGPASSWORD
 cd "$ROOT"
@@ -67,3 +71,6 @@ node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON s
 
 # Session security: durable identity binding, expiry, revocation, and atomic rotation.
 node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-auth-sessions-db.ts
+
+# Worker-only transactional outbox, concurrent claims and lease replay protection.
+node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-scan-outbox-db.ts

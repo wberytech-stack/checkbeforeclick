@@ -29,3 +29,47 @@ The pull-request workflow uses a freshly initialized loopback PostgreSQL 16 clus
 ## Next coding action
 
 Implement a provider-neutral Azure worker adapter that claims bounded batches and invokes the lease-bound completion function, with offline tests for duplicate delivery, timeouts, sanitized logging and safe failure/retry behavior.
+
+## Provider-neutral worker core (draft)
+
+`src/server/workers/azureScanWorker.ts` provides `runAzureScanWorkerBatch`, a pure
+adapter for an Azure Functions timer or Container Apps job entrypoint. It accepts
+an injected, **worker-role-only** PostgreSQL query executor and an injected
+provider processor; it neither connects to Azure nor starts a job. The caller
+must use a separate managed identity restricted to `cbc_worker`, with verified
+PostgreSQL TLS and statement/connection timeouts. Never reuse the web role,
+schema owner, or web pool.
+
+Each invocation claims 1–10 leases using parameterized
+`app_claim_scan_jobs`, validates canonical IDs and lease expiry, then
+processes jobs sequentially under an abort signal and bounded deadline. The
+provider receives only scan ID, input type, raw input and abort signal: **never
+the lease token or database tenant context**. The adapter persists terminal
+results only through `app_complete_scan_job` and treats an exact boolean
+`false` as a lost/replayed lease, never as success. Claim/completion errors
+are sanitized; optional telemetry receives only fixed event names, not
+credentials, scan inputs, tokens or evidence. Malformed claim rows and
+duplicate scan IDs are denied before processing.
+
+**Important limits:** provider timeouts are cooperative. A processor MUST
+honor `AbortSignal`, enforce its own egress allowlist and DNS/IP rebinding
+protections, avoid SSRF and injection, and use bounded provider HTTP
+timeouts. The adapter's timeout stops awaiting a provider; it cannot forcibly
+cancel an external paid API request. Lease expiry means **at-least-once**
+execution: duplicate provider calls are possible after a crash, timeout or
+network failure even though database completion is one-shot. Use provider
+idempotency keys (based on a stable scan ID) wherever supported; do not claim
+exactly-once billing. Run with `batchSize: 1` initially so later jobs do not
+lose their leases while an earlier job runs. Jobs exhausted after eight claims
+require operator review; do not automatically delete or replay them.
+
+Offline validation: `node --experimental-strip-types
+scripts/azure-data/test-azure-scan-worker.ts`. This tests fake database and
+provider behavior only, not Azure identity, actual HTTP providers, PostgreSQL
+integration or a deployed timer. No infrastructure, secrets, persistent
+database, deployment or workflow dispatch was changed by this code.
+
+**Next coding action:** add a dedicated Azure worker runtime entrypoint with
+verified-TLS managed-identity `cbc_worker` pool, a safe provider adapter and
+Azure Functions/Container Apps job IaC; keep provisioning and deployment
+behind founder approval.

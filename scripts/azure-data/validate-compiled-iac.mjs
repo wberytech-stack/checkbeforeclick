@@ -39,11 +39,14 @@ function validate(template, kind) {
   assert.ok(template && typeof template === 'object', 'Expected compiled ARM JSON object');
   assert.ok(typeof template.$schema === 'string' && template.$schema.includes('deploymentTemplate'), 'Not an ARM deployment template');
   const resources = resourceList(template);
-  assert.equal(resources.length, 4, 'Expected one app/job, one identity and two scoped grants');
+  assert.equal(resources.length, kind === 'web' ? 6 : 4,
+    'Expected one app/job, one identity and the required scoped grants');
   const identity = 'Microsoft.ManagedIdentity/userAssignedIdentities';
   const grant = 'Microsoft.Authorization/roleAssignments';
   const app = kind === 'web' ? 'Microsoft.App/containerApps' : 'Microsoft.App/jobs';
-  requireExactTypes(resources, [identity, grant, grant, app]);
+  requireExactTypes(resources, kind === 'web'
+    ? [identity, grant, grant, grant, grant, app]
+    : [identity, grant, grant, app]);
   const gate = kind === 'web' ? 'deployWeb' : 'deployWorker';
   paramDefault(template, gate, false);
   if (kind === 'web') paramDefault(template, 'minReplicas', 0);
@@ -61,7 +64,8 @@ function validate(template, kind) {
   const grants = resources.filter((r) => r.type === grant);
   assert.ok(grants.every((r) => typeof r.scope === 'string'), 'Role assignments must have explicit scopes');
   assert.ok(grants.some((r) => /registries/i.test(r.scope)), 'Missing registry-scoped ACR grant');
-  assert.ok(grants.some((r) => /vaults\/secrets|secrets\//i.test(r.scope)), 'Missing secret-scoped Key Vault grant');
+  assert.ok(grants.filter((r) => /vaults\/secrets|secrets\//i.test(r.scope)).length >= (kind === 'web' ? 3 : 1),
+    'Missing secret-scoped Key Vault grants');
   assert.ok(grants.every((r) => !/vaults\/(?!secrets)/i.test(r.scope) || /secrets/i.test(r.scope)), 'Vault-wide access is forbidden');
   const runtime = resources.find((r) => r.type === app);
   assert.ok(runtime, 'Missing runtime');
@@ -98,21 +102,24 @@ if (process.argv[2] === '--self-test') {
       { type: 'Microsoft.ManagedIdentity/userAssignedIdentities', condition: "[parameters('deployWeb')]" },
       grant("[resourceId('Microsoft.ContainerRegistry/registries','registry') ]"),
       grant("[resourceId('Microsoft.KeyVault/vaults/secrets','vault','secret') ]"),
+      grant("[resourceId('Microsoft.KeyVault/vaults/secrets','vault','client-key') ]"),
+      grant("[resourceId('Microsoft.KeyVault/vaults/secrets','vault','client-cert') ]"),
       { type: 'Microsoft.App/containerApps', condition: "[parameters('deployWeb')]", properties: {
         configuration: { ingress: { external: true, allowInsecure: false } },
         template: { scale: { maxReplicas: 1 }, containers: [{ image: 'repo@sha256:abc', env: [{ name: 'CBC_DATABASE_AUTH', value: 'entra' }] }] },
       } },
     ],
   };
-  assert.equal(validate(base, 'web'), 4);
+  assert.equal(validate(base, 'web'), 6);
   const mutate = (fn) => { const copy = structuredClone(base); fn(copy); assert.throws(() => validate(copy, 'web')); };
   mutate((t) => { t.parameters.deployWeb.defaultValue = true; });
   mutate((t) => { delete t.resources[0].condition; });
   mutate((t) => { t.resources[2].scope = "[resourceId('Microsoft.KeyVault/vaults','vault')]"; });
-  mutate((t) => { t.resources[3].properties.configuration.ingress.allowInsecure = true; });
-  mutate((t) => { t.resources[3].properties.template.containers[0].image = 'repo:latest'; });
-  mutate((t) => { t.resources[3].properties.template.containers[0].env.push({ name: 'SUPABASE_SERVICE_ROLE_KEY' }); });
+  mutate((t) => { t.resources[5].properties.configuration.ingress.allowInsecure = true; });
+  mutate((t) => { t.resources[5].properties.template.containers[0].image = 'repo:latest'; });
+  mutate((t) => { t.resources[5].properties.template.containers[0].env.push({ name: 'SUPABASE_SERVICE_ROLE_KEY' }); });
   const worker = structuredClone(base);
+  worker.resources.splice(3, 2); // Worker has only its own provider secret, not web client credentials.
   worker.parameters = { deployWorker: { defaultValue: false }, allowPaidProvider: { defaultValue: false } };
   worker.variables = { enableJob: "[and(parameters('deployWorker'), parameters('allowPaidProvider'))]" };
   for (const resource of worker.resources) resource.condition = "[variables('enableJob')]";
@@ -134,5 +141,5 @@ if (process.argv[2] === '--self-test') {
   const worker = JSON.parse(readFileSync(process.argv[3], 'utf8'));
   validate(web, 'web');
   validate(worker, 'worker');
-  console.log('Compiled Azure web and worker ARM contracts passed (8 guarded resources, no Azure calls)');
+  console.log('Compiled Azure web and worker ARM contracts passed (10 guarded resources, no Azure calls)');
 }

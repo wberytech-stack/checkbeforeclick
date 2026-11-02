@@ -412,7 +412,7 @@ export default function AzureScanPage() {
                 </div>}
               {history?.has_more && <p className="border-t border-slate-200 px-5 py-3 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">Showing the latest 50 scans. Older scans are not included in this view.</p>}
             </section>
-            <p className="mt-6 text-xs text-slate-500 dark:text-slate-400">This overview reflects the current investigation only. Organization-wide history and aggregate metrics are not yet connected.</p>
+            <p className="mt-6 text-xs text-slate-500 dark:text-slate-400">Current investigation metrics describe only the selected scan. Recent history and its counts cover at most 50 URL scans, not your entire organization history.</p>
           </main>
         </div>
       </div>

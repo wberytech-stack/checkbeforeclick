@@ -44,6 +44,9 @@ jobs:
       - name: Gate 008A provider-neutral Azure scan worker (offline)
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-data/test-azure-scan-worker.ts
 
+      - name: Gate 008A isolated Azure worker runtime (offline)
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-data/test-azure-worker-runtime.ts
+
       - name: Gate 008A migrations 001-005 and data plane (disposable loopback PostgreSQL 16)
         env:
           PG_BIN: /usr/lib/postgresql/16/bin

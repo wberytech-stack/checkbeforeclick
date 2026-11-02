@@ -41,6 +41,9 @@ jobs:
       - name: Build standalone Azure Container Apps Job entrypoint (offline)
         run: ./node_modules/.bin/tsc -p tsconfig.azure-worker.json
 
+      - name: Clean-start Azure runtime role preflight regressions (offline)
+        run: node scripts/azure-data/test-azure-runtime-preflight.mjs
+
       - name: Gate 008A db config, tokens, transactions (offline)
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/test-db-config.ts
 

@@ -123,7 +123,7 @@ async function tokenTests() {
     ["T15 endpoint with query injection", { ...env, IDENTITY_ENDPOINT: env.IDENTITY_ENDPOINT + "?principal_id=other" }],
     ["T16 endpoint with fragment", { ...env, IDENTITY_ENDPOINT: env.IDENTITY_ENDPOINT + "#secret" }],
     ["T17 endpoint with credentials", { ...env, IDENTITY_ENDPOINT: "http://user:password@localhost:42356/msi/token" }],
-    ["T18 identity header with newline", { ...env, IDENTITY_HEADER: "header\\r\\nInjected: value" }],
+    ["T18 identity header with newline", { ...env, IDENTITY_HEADER: "header\r\nInjected: value" }],
   ] as const) {
     const before = reqs.length;
     let threw = false;

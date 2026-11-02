@@ -30,6 +30,11 @@ await check("R02 positive match returns known category", async () => {
     new Response('{"threat":{"threatTypes":["MALWARE"]}}', { status: 200 }) });
   assert.deepEqual(await lookup("https://example.org/", signal), { threatTypes: ["MALWARE"] });
 });
+await check("R02b empty threat object is no match, never safe", async () => {
+  const lookup = createWebRiskLookup({ apiKey: KEY, fetchImpl: async () =>
+    new Response('{"threat":{}}', { status: 200 }) });
+  assert.deepEqual(await lookup("https://example.org/", signal), { threatTypes: [] });
+});
 await check("R03 redirect, provider errors and malformed JSON fail closed", async () => {
   for (const response of [new Response("", { status: 302 }),
     new Response("secret provider failure", { status: 403 }),
@@ -67,4 +72,4 @@ await check("R07 provider exception sanitized", async () => {
     e => e instanceof Error && e.message === "Reputation provider unavailable");
 });
 console.log("\n=== Azure Web Risk lookup offline: " + passed + " passed ===");
-if (passed !== 7) process.exitCode = 1;
+if (passed !== 8) process.exitCode = 1;

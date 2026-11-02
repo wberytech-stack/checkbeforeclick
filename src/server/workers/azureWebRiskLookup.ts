@@ -55,7 +55,9 @@ export function createWebRiskLookup(options: {
         return { threatTypes: [] };
       }
       if (!data.threat || typeof data.threat !== "object" || Array.isArray(data.threat)) throw new Error(ERROR);
-      const threatTypes = (data.threat as Record<string, unknown>).threatTypes;
+      const threat = data.threat as Record<string, unknown>;
+      if (Object.keys(threat).length === 0) return { threatTypes: [] };
+      const threatTypes = threat.threatTypes;
       if (!Array.isArray(threatTypes) || threatTypes.length === 0 || threatTypes.length > 4 ||
           !threatTypes.every(t => typeof t === "string" && KNOWN.has(t))) throw new Error(ERROR);
       return { threatTypes };

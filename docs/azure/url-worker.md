@@ -18,6 +18,12 @@ Container Apps Job. It imports no Supabase, Inngest or Next.js runtime code.
 6. Migration 009 atomically saves evidence and terminal status only if
    the lease token is still valid. Timeouts and provider errors are
    **not acknowledged** and can be retried, up to the database attempt cap.
+7. On the next scheduled claim after the **eighth lease expires**, the
+   restricted database function reconciles up to ten exhausted jobs per
+   invocation: it atomically marks the scan **failed / unknown** and closes
+   the outbox row. An active eighth lease is never preempted. This prevents
+   indefinitely pending customer scans after a provider outage or worker crash,
+   without inventing a safe verdict or leaking provider details.
 
 ## Product semantics
 
@@ -54,3 +60,19 @@ No Azure account or provider calls are needed for these tests. A production
 release additionally requires approved resource provisioning, actual managed
 identity/database grants, a scheduled job, a provider key, monitored job
 failure/retry behavior, and an authenticated end-to-end scan smoke test.
+
+## Exhaustion recovery and observability
+
+The worker processes at most one provider request per scheduled execution;
+failed attempts remain lease-bound and can be retried. The database caps each
+scan at eight claims. The next worker claim call also reconciles up to ten
+expired exhausted leases, even when there are no fresh jobs. The partial index
+on exhausted leases avoids a full scan of a large outbox. If the scheduler
+stops running, this reconciliation cannot happen: monitor failed and overdue
+scans, job execution failures, and backlog age, and alert on prolonged silence.
+A failed/unknown result is an operational failure, **not** evidence that a
+submitted URL is harmless. Users may submit a fresh scan after recovery.
+
+The disposable PostgreSQL outbox suite verifies last-attempt expiry, no early
+termination of a live lease, concurrency-safe reconciliation and the terminal
+failure fields. These tests do not prove production scheduling or monitoring.

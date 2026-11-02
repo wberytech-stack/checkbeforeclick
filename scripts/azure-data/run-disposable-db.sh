@@ -83,3 +83,8 @@ node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON s
 echo "apply 009_worker_scan_completion.sql"
 PGPASSWORD="$OWNER_PW" PGOPTIONS="-c client_min_messages=warning" "${PSQL[@]}" -d cbc_test -f "$ROOT/infra/db/migrations/009_worker_scan_completion.sql"
 node scripts/azure-data/validate-worker-completion-db.mjs
+
+# Cross-branch product contract: authenticated scan -> durable outbox ->
+# lease-bound worker completion -> RLS-filtered evidence -> browser UI parser.
+# Uses only the same disposable loopback PostgreSQL cluster.
+node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-first-scan-db.mjs

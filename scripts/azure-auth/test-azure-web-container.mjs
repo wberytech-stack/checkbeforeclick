@@ -63,6 +63,7 @@ try {
   check(html.includes("/auth/azure/start"), "Entra login entrypoint must be visible");
   check(html.includes("Analyze URL"), "scan submission control must be visible");
   check(html.includes("Investigation"), "investigation panel must be visible");
+  check(html.includes("Recent scan history"), "real history panel must be visible");
   check(html.includes("Light") && html.includes("Dark") && html.includes("System"),
     "all three theme choices must be visible");
 

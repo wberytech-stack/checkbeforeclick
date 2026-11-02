@@ -99,6 +99,8 @@ jobs:
           node-version: "24.14.0"
       - name: ARM safety-validator regression tests (no network)
         run: node scripts/azure-data/validate-compiled-iac.mjs --self-test
+      - name: Cross-component clean-start web worker and DB deployment contracts (offline)
+        run: node scripts/azure-data/test-cleanstart-deployment-contract.mjs
       - name: Compile and lint Azure-only web and worker Bicep (no Azure login)
         shell: bash
         run: |

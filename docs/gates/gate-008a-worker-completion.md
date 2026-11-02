@@ -73,3 +73,39 @@ database, deployment or workflow dispatch was changed by this code.
 verified-TLS managed-identity `cbc_worker` pool, a safe provider adapter and
 Azure Functions/Container Apps job IaC; keep provisioning and deployment
 behind founder approval.
+
+## Dedicated worker PostgreSQL runtime (draft, not deployed)
+
+`src/server/workers/azureWorkerPg.ts` exports `runAzureWorkerJob(processScan, onEvent?)`.
+It deliberately has **no startup side effect**. An approved Azure Container Apps Job
+or Functions scheduler must supply a safe, bounded provider processor and invoke
+it explicitly; neither a timer trigger nor provider egress is implemented here.
+
+The worker requires `CBC_WORKER_DATABASE_URL` (passwordless PostgreSQL URL
+with user `cbc_worker`), `CBC_WORKER_AZURE_CLIENT_ID` (a dedicated user-assigned
+managed identity), and the Azure platform's loopback `IDENTITY_ENDPOINT` and
+`IDENTITY_HEADER`. It does not fall back to the web app's
+`CBC_DATABASE_URL` or `AZURE_CLIENT_ID`; when the latter is set, using
+the same identity is rejected. Cloud connections require Entra tokens and
+hostname-verified TLS. The worker pool has one connection, five-second connect
+timeout and fifteen-second SQL statement timeout.
+
+Before claiming any job, a read-only role attestation requires `current_user =
+cbc_worker`, no administrative/bypass/inheritance privileges, no membership
+in `cbc_app`, and no direct scan, evidence, vendor-result or outbox DML
+privileges. A missing table, changed grant, malformed attestation, token
+failure or SQL error fails closed. Error messages are fixed and sanitized.
+No lease, input, evidence or provider exception is logged by this boundary.
+The pool closes after the bounded batch. This runtime does **not** prove
+production network isolation or managed-identity provisioning; those remain
+founder-approved infrastructure tasks.
+
+Offline regression command:
+`node --experimental-strip-types scripts/azure-data/test-azure-worker-runtime.ts`.
+It uses only fake connections and providers. The PR CI workflow runs it without
+Azure credentials or database access.
+
+**Next coding action:** Implement a safe provider processor and Azure Container
+Apps Job Bicep with a dedicated worker identity, no public ingress and
+bounded scheduled execution; keep actual provisioning and deployment subject
+to explicit founder approval.

@@ -173,7 +173,7 @@ try {
     assert.equal(await errorCode(() => worker.query("UPDATE public.scans SET status='complete' WHERE id=$1", [third])), "42501");
     assert.equal(await errorCode(() => worker.query("INSERT INTO public.evidence_items (scan_id,organization_id,signal_type,severity,title) VALUES ($1,$2,'x','good','forged')", [third,a.org])), "42501");
   });
-  await check("W23 exhaustion stops redelivery after eight attempts", async () => {
+  await check("W23 exhausted lease becomes a truthful terminal failure", async () => {
     for (let i = 1; i < 8; i++) {
       await expire(third);
       const jobs = await claim(); assert.equal(jobs.length, 1);
@@ -182,6 +182,47 @@ try {
     }
     await expire(third);
     assert.equal((await claim()).length, 0);
+    const r = await owner.query(
+      "SELECT s.status,s.verdict,s.risk_score,s.confidence_score,s.ai_explanation," +
+      "s.recommended_action,s.completed_at AS scan_completed,j.state,j.lease_token," +
+      "j.completed_at AS job_completed FROM public.scans s " +
+      "JOIN public.scan_job_outbox j ON j.scan_id=s.id WHERE s.id=$1", [third]);
+    assert.equal(r.rows.length, 1);
+    const row = r.rows[0];
+    assert.deepEqual([row.status,row.verdict,row.risk_score,row.confidence_score,row.state,row.lease_token],
+      ["failed","unknown",null,null,"done",null]);
+    assert.match(row.ai_explanation, /could not finish/);
+    assert.match(row.recommended_action, /Do not assume/);
+    assert.ok(row.scan_completed && row.job_completed);
+    assert.equal((await claim()).length, 0);
+  });
+  await check("W24 active final-attempt lease is not prematurely failed", async () => {
+    const id = await create(a.user, a.org, "https://final-attempt.example");
+    await owner.query(
+      "UPDATE public.scan_job_outbox SET state='leased',attempt_count=8," +
+      "lease_token=gen_random_uuid(),leased_until=clock_timestamp()+interval '120 seconds' " +
+      "WHERE scan_id=$1", [id]);
+    assert.equal((await claim()).length, 0);
+    const before = await owner.query("SELECT status FROM public.scans WHERE id=$1", [id]);
+    assert.equal(before.rows[0].status, "pending");
+    await expire(id);
+    assert.equal((await claim()).length, 0);
+    const after = await owner.query(
+      "SELECT s.status,j.state FROM public.scans s JOIN public.scan_job_outbox j ON j.scan_id=s.id WHERE s.id=$1", [id]);
+    assert.deepEqual(after.rows[0], { status: "failed", state: "done" });
+  });
+  await check("W25 concurrent worker reconciliation is idempotent", async () => {
+    const id = await create(b.user, b.org, "https://concurrent-exhaustion.example");
+    await owner.query(
+      "UPDATE public.scan_job_outbox SET state='leased',attempt_count=8," +
+      "lease_token=gen_random_uuid(),leased_until=clock_timestamp()-interval '1 second' " +
+      "WHERE scan_id=$1", [id]);
+    const claims = await Promise.all(Array.from({ length: 8 }, () => claim()));
+    assert.equal(claims.flat().length, 0);
+    const result = await owner.query(
+      "SELECT s.status,j.state,j.attempt_count FROM public.scans s " +
+      "JOIN public.scan_job_outbox j ON j.scan_id=s.id WHERE s.id=$1", [id]);
+    assert.deepEqual(result.rows[0], { status: "failed", state: "done", attempt_count: 8 });
   });
 } catch (e) {
   failed++; console.error("FAIL outbox setup: " + String(e));

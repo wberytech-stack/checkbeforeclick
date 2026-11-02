@@ -214,7 +214,7 @@ await check("C27 malformed, ambiguous or uppercase DB scan IDs fail closed", asy
   }
 });
 await check("C28 hostile raw input is bound data, not SQL", async () => {
-  const attack = "https://example.org/?q='; DROP TABLE scans;--";
+  const attack = "https://example.org/?q=%27%3B%20DROP%20TABLE%20scans%3B--";
   const f = fixture({ body: JSON.stringify({ input_type: "url", raw_input: attack }) });
   const r = await status(f, 201);
   assert.deepEqual(f.calls[2].values, ["url", attack]);

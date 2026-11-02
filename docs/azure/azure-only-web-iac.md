@@ -15,7 +15,9 @@ The Azure-only runtime image is built from `Dockerfile.azure-web` and exposes
 - Use a **new dedicated web identity**, different from the legacy web
   identity and from the worker identity. The legacy hosting template grants
   vault-wide Key Vault Secrets User access; this template instead grants
-  the new identity access **only to the named OIDC state secret**.
+  the new identity access **only to three named secrets**: the OIDC
+  state keys, the confidential-client RSA private key, and the matching
+  public X.509 certificate. All three grants are scoped to individual secrets.
 - The web image must be pinned to an immutable `sha256` digest from an
   approved build of `Dockerfile.azure-web`. It cannot receive a
   Supabase service-role key, Inngest key, or paid Web Risk provider key.
@@ -23,8 +25,10 @@ The Azure-only runtime image is built from `Dockerfile.azure-web` and exposes
   `CBC_DATABASE_AUTH=entra` and `AZURE_CLIENT_ID` select short-lived
   managed-identity tokens. TLS chain and hostname verification are enforced
   in `src/server/db/config.ts`.
-- `CBC_AZURE_OIDC_STATE_KEYS` is a **Key Vault reference**, not a
-  plaintext parameter. Other OIDC fields are non-secret, explicit values.
+- `CBC_AZURE_OIDC_STATE_KEYS`,
+  `CBC_AZURE_OIDC_CLIENT_PRIVATE_KEY_PEM_B64`, and
+  `CBC_AZURE_OIDC_CLIENT_CERT_PEM_B64` are **Key Vault references**, not
+  plaintext parameters. Other OIDC fields are non-secret, explicit values.
 - The web app has no Web Risk key. Reputation lookups belong only in the
   separately authorized worker. The web container's liveness/readiness
   endpoint is intentionally independent of external services.
@@ -32,15 +36,16 @@ The Azure-only runtime image is built from `Dockerfile.azure-web` and exposes
 ## Before a founder-approved Azure what-if
 
 1. Verify that the existing Container Apps environment, registry and Key
-   Vault are the intended resources, and that the named OIDC state secret
-   exists. **Never paste secret values into commands, PRs or logs.**
+   Vault are the intended resources, and that the named OIDC state, client
+   private-key, and client-certificate secrets exist. **Never paste secret values into commands, PRs or logs.**
 2. Verify the selected `webIdentityName` is **not** the old broad-vault
    identity or the worker identity. Review existing role assignments before
    approving changes. An IaC template cannot revoke legacy grants by itself.
 3. Verify the Entra External ID application is configured for the exact
    `publicOrigin` and callback `<publicOrigin>/auth/callback`; validate
-   whether its token endpoint accepts the currently implemented PKCE public
-   client exchange. A confidential-client assertion is not implemented.
+   that its registered X.509 public certificate matches the separately stored
+   RSA private key. The callback now signs a short-lived PS256 confidential-client
+   assertion, but no live token exchange has been verified.
 4. Verify the restricted `cbc_app` PostgreSQL principal is correctly mapped
    to the dedicated web managed identity, and that migrations 001–009 and
    tenant-isolation tests have been independently reviewed. **Do not apply

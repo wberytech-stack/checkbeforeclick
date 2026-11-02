@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { validateSubmittedUrl, parseScanCreated, parseScanRead, scanPresentation } from "../../src/client/azureScanUi.ts";
 
+import { parseAzureThemePreference, resolveAzureDarkTheme } from "../../src/client/azureTheme.ts";
+
 const ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 let count = 0;
 function check(name: string, fn: () => void) { fn(); count++; console.log("PASS", name); }
@@ -21,4 +23,14 @@ check("reject malformed evidence", () => assert.throws(() => parseScanRead({ ...
 check("unknown verdict never says safe", () => assert.match(scanPresentation(payload.scan as ReturnType<typeof parseScanRead>["scan"]).label, /not confirmed/i));
 check("failed scan never says safe", () => assert.match(scanPresentation({ ...payload.scan, status: "failed" } as ReturnType<typeof parseScanRead>["scan"]).description, /not assume/i));
 check("dangerous result explicitly warns", () => assert.match(scanPresentation({ ...payload.scan, verdict: "dangerous" } as ReturnType<typeof parseScanRead>["scan"]).label, /do not open/i));
+for (const value of ["light", "dark", "system"] as const) {
+  check("accept supported theme preference", () => assert.equal(parseAzureThemePreference(value), value));
+}
+for (const value of [null, "", "DARK", "unknown", "__proto__"]) {
+  check("invalid or absent preference falls back to system", () => assert.equal(parseAzureThemePreference(value), "system"));
+}
+check("dark preference is dark even on a light system", () => assert.equal(resolveAzureDarkTheme("dark", false), true));
+check("light preference stays light on a dark system", () => assert.equal(resolveAzureDarkTheme("light", true), false));
+check("system preference follows dark OS setting", () => assert.equal(resolveAzureDarkTheme("system", true), true));
+check("system preference follows light OS setting", () => assert.equal(resolveAzureDarkTheme("system", false), false));
 console.log(`Azure scan UI: ${count} offline assertions passed`);

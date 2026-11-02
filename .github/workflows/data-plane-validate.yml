@@ -41,7 +41,7 @@ jobs:
       - name: Gate 008A db config, tokens, transactions (offline)
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/test-db-config.ts
 
-      - name: Gate 008A migrations 001-005 and data plane (disposable loopback PostgreSQL 16)
+      - name: Gate 008A provider-neutral Azure scan worker (offline)\n        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-data/test-azure-scan-worker.ts\n\n      - name: Gate 008A migrations 001-005 and data plane (disposable loopback PostgreSQL 16)
         env:
           PG_BIN: /usr/lib/postgresql/16/bin
         run: bash scripts/azure-data/run-disposable-db.sh

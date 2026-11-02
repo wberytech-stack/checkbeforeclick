@@ -43,10 +43,22 @@ export function createManagedIdentityTokenProvider(deps: {
   } catch {
     throw new EntraTokenError("IDENTITY_ENDPOINT is not a valid URL")
   }
-  if (base.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(base.hostname)) {
-    throw new EntraTokenError("IDENTITY_ENDPOINT must be the loopback managed identity endpoint")
+  // The rotating platform header is a credential: never send it to an
+  // endpoint with embedded credentials, pre-existing query parameters or a
+  // fragment. The platform supplies the endpoint, not the application.
+  if (base.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(base.hostname) ||
+      base.username || base.password || base.search || base.hash) {
+    throw new EntraTokenError("IDENTITY_ENDPOINT must be a clean loopback managed identity endpoint")
   }
-  if (clientId !== undefined && !/^[0-9a-fA-F-]{36}$/.test(clientId)) throw new EntraTokenError("AZURE_CLIENT_ID is not a GUID")
+  // CBC always uses a dedicated user-assigned identity. Omitting client_id
+  // would silently select a system-assigned identity, potentially with
+  // different database privileges. Never permit that fallback.
+  if (!clientId || !/^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(clientId)) {
+    throw new EntraTokenError("AZURE_CLIENT_ID must identify a user-assigned managed identity")
+  }
+  if (/[\\x00-\\x1f\\x7f]/.test(header) || header.length > 2048) {
+    throw new EntraTokenError("IDENTITY_HEADER is invalid")
+  }
 
   let cached: { token: string; expiresAt: number } | null = null
   let inflight: Promise<string> | null = null

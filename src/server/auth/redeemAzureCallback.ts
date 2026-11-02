@@ -22,13 +22,17 @@ export async function redeemAzureCallback(input: {
   keys: LoginStateKeys;
   store: LoginStateStore;
   transport: TrustedOidcTransport;
+  /** Signed only after one-time state consumption; never browser supplied. */
+  clientAssertionFactory?: () => string;
 }) {
   const { transport, ...callback } = input;
   return redeemAzureOidcCallback({
     ...callback,
     operations: {
       consumeState: consumeLoginState,
-      exchangeCode: (args) => transport.exchangeCode(args),
+      exchangeCode: (args) => transport.exchangeCode({
+        ...args, clientAssertion: input.clientAssertionFactory?.(),
+      }),
       jwks: (forceRefresh) => transport.jwks(forceRefresh),
       verifyIdToken,
     },

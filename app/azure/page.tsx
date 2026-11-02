@@ -193,6 +193,7 @@ export default function AzureScanPage() {
   const isDark = resolveAzureDarkTheme(theme, systemDark);
   const isDangerous = scan?.scan.verdict === "dangerous" && scan.scan.status === "complete";
   const recentScans = history?.scans ?? [];
+  const selectedHistory = recentScans.find((item) => item.id === scanId);
   const filteredHistory = filterAzureHistory(recentScans, historyQuery, historyFilter)
     .sort((a, b) => historySort === "newest"
       ? b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)
@@ -321,7 +322,7 @@ export default function AzureScanPage() {
                   ) : (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Submitted URL</p>
-                      <p className="mt-1 break-all text-sm font-medium">{scan?.scan.raw_input ?? input}</p>
+                      <p className="mt-1 break-all text-sm font-medium">{scan?.scan.raw_input ?? selectedHistory?.raw_input ?? input}</p>
                       {presentation ? (
                         <div className={`mt-4 rounded-lg border p-4 ${isDangerous ? "border-rose-300 bg-rose-50 dark:border-rose-700 dark:bg-[#3d202c]" : "border-blue-200 bg-blue-50 dark:border-[#35587c] dark:bg-[#152c45]"}`}>
                           <p className={`text-lg font-bold ${isDangerous ? "text-rose-800 dark:text-rose-200" : "text-slate-900 dark:text-white"}`}>{presentation.label}</p>

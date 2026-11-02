@@ -73,6 +73,11 @@ jobs:
       - name: Offline Azure scan UI validation and fail-safe verdict tests
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-ui.ts
 
+      - name: Offline Azure history tenant isolation and bounded result tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-history-route.ts
+      - name: Offline Azure history UI parser and filter tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-history-ui.ts
+
       - name: Azure-only web routing fail-closed regression tests
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-azure-web-routing.ts
 

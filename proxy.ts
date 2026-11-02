@@ -22,7 +22,7 @@ export async function proxy(request: NextRequest) {
   if (process.env.CBC_AZURE_ONLY_MODE === "1") {
     const decision = classifyAzureWebPath(pathname);
     if (decision === "redirect") {
-      return NextResponse.redirect(new URL("/azure", request.url), 307);
+      return NextResponse.redirect(new URL("/azure/welcome", request.url), 307);
     }
     if (decision === "deny") {
       return new NextResponse("Not Found", {

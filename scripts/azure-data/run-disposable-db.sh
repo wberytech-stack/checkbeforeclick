@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gate 008A - disposable PostgreSQL 16 validation of migrations 001-008 and the Azure data-plane code.
+# Gate 008A - disposable PostgreSQL 16 validation of migrations 001-009 and the Azure data-plane code.
 #
 # Creates a throwaway cluster in a temporary directory, listening ONLY on 127.0.0.1 (no Unix socket outside
 # the temp directory), with random one-time passwords. Applies the migrations as the cluster owner, creates
@@ -72,5 +72,14 @@ node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON s
 # Session security: durable identity binding, expiry, revocation, and atomic rotation.
 node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-auth-sessions-db.ts
 
+# Baseline suites validate the historical data-plane contract through 008.
+# Migration 009 intentionally REVOKES legacy browser result writers and the
+# separate worker acknowledgment, so validate those baseline contracts first.
 # Worker-only transactional outbox, concurrent claims and lease replay protection.
 node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-data/validate-scan-outbox-db.ts
+
+# Apply 009 only to this disposable cluster; validate FINAL hardened grants,
+# lease-bound atomic scan/evidence completion, replay, tenant isolation and rollback.
+echo "apply 009_worker_scan_completion.sql"
+PGPASSWORD="$OWNER_PW" PGOPTIONS="-c client_min_messages=warning" "${PSQL[@]}" -d cbc_test -f "$ROOT/infra/db/migrations/009_worker_scan_completion.sql"
+node scripts/azure-data/validate-worker-completion-db.mjs

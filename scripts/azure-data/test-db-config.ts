@@ -118,6 +118,12 @@ async function tokenTests() {
     ["T10 https remote endpoint", { ...env, IDENTITY_ENDPOINT: "https://evil.example/token" }],
     ["T11 missing identity header", { ...env, IDENTITY_HEADER: undefined }],
     ["T12 client id not a GUID", { ...env, AZURE_CLIENT_ID: "x&resource=other" }],
+    ["T13 absent user-assigned client ID", { ...env, AZURE_CLIENT_ID: undefined }],
+    ["T14 malformed GUID with 36 characters", { ...env, AZURE_CLIENT_ID: "------------------------------------" }],
+    ["T15 endpoint with query injection", { ...env, IDENTITY_ENDPOINT: env.IDENTITY_ENDPOINT + "?principal_id=other" }],
+    ["T16 endpoint with fragment", { ...env, IDENTITY_ENDPOINT: env.IDENTITY_ENDPOINT + "#secret" }],
+    ["T17 endpoint with credentials", { ...env, IDENTITY_ENDPOINT: "http://user:password@localhost:42356/msi/token" }],
+    ["T18 identity header with newline", { ...env, IDENTITY_HEADER: "header\\r\\nInjected: value" }],
   ] as const) {
     const before = reqs.length;
     let threw = false;

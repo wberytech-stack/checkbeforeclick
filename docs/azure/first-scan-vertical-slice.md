@@ -45,6 +45,32 @@ integration, or browser-driven production journey. It does not establish
 that the Container Apps Job scheduler or managed-identity database roles
 have been provisioned or configured.
 
+## Confidential Entra web client credential (draft, offline only)
+
+The callback now requires a **certificate-backed confidential-client assertion**
+rather than attempting an unauthenticated/public-client token exchange. A fresh,
+short-lived **PS256** JWT is signed only after the one-time login state commits.
+Its audience is the issuer-pinned tenant token endpoint; the header contains the
+SHA-256 X.509 certificate thumbprint. The signer rejects mismatched, expired,
+not-yet-valid, weak/non-RSA, malformed or missing credentials. Signing failure
+does not exchange the authorization code or create a browser session.
+
+The separately approved Azure operator must register the corresponding **public
+certificate** as an application credential and supply the following **protected
+server-only** settings to the web container (never in GitHub, browser bundles,
+logs, build arguments or PR comments):
+
+- `CBC_AZURE_OIDC_CLIENT_PRIVATE_KEY_PEM_B64`: base64 of the PEM-encoded RSA
+  private key (2048 bits minimum).
+- `CBC_AZURE_OIDC_CLIENT_CERT_PEM_B64`: base64 of the matching PEM X.509
+  certificate, valid for at least five more minutes.
+
+The private key and certificate are **not** generated or registered by this
+draft. Credential rotation, secret storage, application registration and the
+live Entra External ID authorization-code exchange still require an approved
+deployment plan and real integration validation. The offline tests create an
+ephemeral test-only certificate; they do not contact Microsoft or Azure.
+
 ## Remaining Azure integration
 
 - Review and reconcile PR #58/#59 overlap before merging; do not blindly

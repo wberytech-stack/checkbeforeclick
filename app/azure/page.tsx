@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Activity, FileSearch, History, LayoutDashboard, LogIn, LogOut, Monitor, Moon, RefreshCw, ScanSearch, ShieldCheck, Sun } from "lucide-react";
+import { Activity, FileSearch, History, LayoutDashboard, LogIn, LogOut, Monitor, Moon, RefreshCw, ScanSearch, Search, ShieldCheck, Sun } from "lucide-react";
 import { AZURE_THEME_STORAGE_KEY, parseAzureThemePreference, resolveAzureDarkTheme, type AzureThemePreference } from "../../src/client/azureTheme";
 import {
   type AzureScanView,
@@ -10,6 +10,14 @@ import {
   scanPresentation,
   validateSubmittedUrl,
 } from "../../src/client/azureScanUi";
+
+import {
+  type AzureHistoryFilter,
+  type AzureHistoryView,
+  filterAzureHistory,
+  historyRiskLabel,
+  parseAzureScanHistory,
+} from "../../src/client/azureHistoryUi";
 
 const POLL_INTERVAL_MS = 2500;
 const MAX_POLLS = 72;
@@ -25,6 +33,13 @@ export default function AzureScanPage() {
   const [theme, setTheme] = useState<AzureThemePreference>("system");
   const [systemDark, setSystemDark] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [history, setHistory] = useState<AzureHistoryView | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(true);
+  const [historyKey, setHistoryKey] = useState(0);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyFilter, setHistoryFilter] = useState<AzureHistoryFilter>("all");
+  const [historySort, setHistorySort] = useState<"newest" | "oldest">("newest");
 
   useEffect(() => {
     try {
@@ -74,6 +89,9 @@ export default function AzureScanPage() {
         if (controller.signal.aborted || current !== generation.current) return;
         setScan(result);
         setError(null);
+        if (result.scan.status === "complete" || result.scan.status === "failed") {
+          setHistoryKey((value) => value + 1);
+        }
         if (result.scan.status === "pending" || result.scan.status === "processing") {
           if (++polls >= MAX_POLLS) {
             setError("Still processing. Refresh this page later to check the result.");
@@ -94,6 +112,40 @@ export default function AzureScanPage() {
       if (timer) clearTimeout(timer);
     };
   }, [scanId, refreshKey]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadHistory() {
+      setHistoryBusy(true);
+      try {
+        const response = await fetch("/api/azure/history", {
+          credentials: "same-origin",
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) {
+          if (response.status === 401) throw new Error("Sign in to see your recent scans.");
+          throw new Error("Recent scans are temporarily unavailable.");
+        }
+        const parsed = parseAzureScanHistory(await response.json());
+        if (!controller.signal.aborted) {
+          setHistory(parsed);
+          setHistoryError(null);
+        }
+      } catch (cause) {
+        if (!controller.signal.aborted) {
+          setHistory(null);
+          setHistoryError(cause instanceof Error && cause.message === "Sign in to see your recent scans."
+            ? cause.message : "Recent scans are temporarily unavailable.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setHistoryBusy(false);
+      }
+    }
+    void loadHistory();
+    return () => controller.abort();
+  }, [historyKey]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -128,6 +180,7 @@ export default function AzureScanPage() {
       if (!response.ok) throw new Error("Scan submission failed.");
       const id = parseScanCreated(await response.json());
       setScanId(id);
+      setHistoryKey((value) => value + 1);
       setLoginRequired(false);
     } catch {
       setError("Scan submission is temporarily unavailable. Try again.");
@@ -139,6 +192,15 @@ export default function AzureScanPage() {
   const presentation = scan ? scanPresentation(scan.scan) : null;
   const isDark = resolveAzureDarkTheme(theme, systemDark);
   const isDangerous = scan?.scan.verdict === "dangerous" && scan.scan.status === "complete";
+  const recentScans = history?.scans ?? [];
+  const filteredHistory = filterAzureHistory(recentScans, historyQuery, historyFilter)
+    .sort((a, b) => historySort === "newest"
+      ? b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)
+      : a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  const attentionCount = recentScans.filter((item) => item.status === "complete" &&
+    (item.verdict === "dangerous" || item.verdict === "suspicious")).length;
+  const activeCount = recentScans.filter((item) =>
+    item.status === "pending" || item.status === "processing").length;
 
   return (
     <div className={isDark ? "dark" : ""}>
@@ -186,7 +248,7 @@ export default function AzureScanPage() {
               <a href="#overview" aria-current="page" className="flex items-center gap-3 rounded-lg bg-blue-50 px-3 py-2.5 font-semibold text-blue-700 focus-visible:outline-2 focus-visible:outline-blue-500 dark:bg-[#183d65] dark:text-blue-200"><LayoutDashboard size={18} aria-hidden="true" /> Overview</a>
               <a href="#analyze" className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-slate-200 dark:hover:bg-[#233650]"><ScanSearch size={18} aria-hidden="true" /> Analyze URL</a>
               <a href="#investigation" className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-slate-200 dark:hover:bg-[#233650]"><FileSearch size={18} aria-hidden="true" /> Investigation</a>
-              <div className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-slate-400 dark:text-slate-500" aria-label="Scan history, coming later"><History size={18} aria-hidden="true" /> Scan history <span className="ml-auto text-[10px]">Soon</span></div>
+              <a href="#history" className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-slate-200 dark:hover:bg-[#233650]"><History size={18} aria-hidden="true" /> Scan history</a>
             </nav>
             <div className="mt-10 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs leading-relaxed text-slate-700 dark:border-[#274668] dark:bg-[#152c45] dark:text-slate-300">
               <ShieldCheck size={18} className="mb-2 text-blue-600 dark:text-blue-300" aria-hidden="true" />
@@ -199,6 +261,7 @@ export default function AzureScanPage() {
               <a href="#overview" className="rounded-md bg-blue-100 px-3 py-2 font-semibold text-blue-800 dark:bg-[#183d65] dark:text-blue-100">Overview</a>
               <a href="#analyze" className="rounded-md border border-slate-300 px-3 py-2 dark:border-slate-600">Analyze</a>
               <a href="#investigation" className="rounded-md border border-slate-300 px-3 py-2 dark:border-slate-600">Investigation</a>
+              <a href="#history" className="rounded-md border border-slate-300 px-3 py-2 dark:border-slate-600">History</a>
             </nav>
             <div id="overview" className="mb-6">
               <p className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-blue-700 dark:text-blue-300">Security overview</p>
@@ -282,6 +345,73 @@ export default function AzureScanPage() {
                 </div>
               </section>
             </div>
+
+            <section id="history" aria-labelledby="history-heading" className="mt-6 rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-[#142238]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+                <div>
+                  <h2 id="history-heading" className="flex items-center gap-2 text-base font-bold"><History size={19} className="text-blue-600 dark:text-blue-300" aria-hidden="true" /> Recent scan history</h2>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Most recent 50 URL scans in your workspace. Counts are not all-time totals.</p>
+                </div>
+                <button type="button" onClick={() => setHistoryKey((value) => value + 1)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-slate-600 dark:hover:bg-slate-700">
+                  <RefreshCw size={14} aria-hidden="true" /> Refresh
+                </button>
+              </div>
+              <div className="grid gap-3 px-5 py-4 sm:grid-cols-3" aria-label="Recent history summary">
+                <div className="rounded-lg bg-slate-50 p-3 dark:bg-[#0d192b]"><p className="text-xs text-slate-500 dark:text-slate-400">Recent scans</p><p className="mt-1 text-xl font-bold">{history ? recentScans.length : "—"}</p></div>
+                <div className="rounded-lg bg-slate-50 p-3 dark:bg-[#0d192b]"><p className="text-xs text-slate-500 dark:text-slate-400">Needs attention</p><p className="mt-1 text-xl font-bold">{history ? attentionCount : "—"}</p></div>
+                <div className="rounded-lg bg-slate-50 p-3 dark:bg-[#0d192b]"><p className="text-xs text-slate-500 dark:text-slate-400">In progress</p><p className="mt-1 text-xl font-bold">{history ? activeCount : "—"}</p></div>
+              </div>
+              <div className="flex flex-wrap items-end gap-3 px-5 pb-4">
+                <div className="min-w-[180px] flex-1">
+                  <label htmlFor="history-search" className="mb-1 block text-xs font-semibold">Search recent scans</label>
+                  <div className="relative">
+                    <Search size={16} aria-hidden="true" className="pointer-events-none absolute left-3 top-2.5 text-slate-500" />
+                    <input id="history-search" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)}
+                      placeholder="URL or scan ID" className="w-full rounded-md border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-slate-600 dark:bg-[#0d192b]" />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="history-filter" className="mb-1 block text-xs font-semibold">Status / risk</label>
+                  <select id="history-filter" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value as AzureHistoryFilter)}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-slate-600 dark:bg-[#0d192b]">
+                    <option value="all">All recent</option><option value="attention">Needs attention</option>
+                    <option value="active">In progress</option><option value="complete">Completed</option>
+                  </select>
+                </div>
+              </div>
+              {historyError && <p role="alert" className="mx-5 mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-700 dark:bg-[#3d2b18] dark:text-amber-100">{historyError}</p>}
+              {historyBusy ? <p role="status" className="px-5 pb-5 text-sm text-slate-500 dark:text-slate-400">Loading recent scans…</p>
+                : history && recentScans.length === 0 ? <p className="px-5 pb-5 text-sm text-slate-600 dark:text-slate-300">No scans yet. Analyze your first URL above.</p>
+                : history && filteredHistory.length === 0 ? <p className="px-5 pb-5 text-sm text-slate-600 dark:text-slate-300">No recent scans match your filters.</p>
+                : history && <div className="overflow-x-auto">
+                  <table className="w-full min-w-[650px] border-collapse text-left text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-600 dark:bg-[#0d192b] dark:text-slate-300">
+                      <tr><th scope="col" className="px-5 py-3 font-semibold">URL</th><th scope="col" className="px-3 py-3 font-semibold">Status</th>
+                        <th scope="col" className="px-3 py-3 font-semibold">Risk</th>
+                        <th scope="col" className="px-3 py-3 font-semibold">
+                          <button type="button" onClick={() => setHistorySort((value) => value === "newest" ? "oldest" : "newest")}
+                            aria-label={historySort === "newest" ? "Sort oldest first" : "Sort newest first"}
+                            className="rounded underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500">Submitted {historySort === "newest" ? "↓" : "↑"}</button>
+                        </th><th scope="col" className="px-5 py-3 font-semibold">Details</th></tr>
+                    </thead>
+                    <tbody>
+                      {filteredHistory.map((item) => (
+                        <tr key={item.id} className={"border-t border-slate-200 dark:border-slate-700 " + (scanId === item.id ? "bg-blue-50 dark:bg-[#183d65]" : "")}>
+                          <td className="max-w-[350px] truncate px-5 py-3" title={item.raw_input}>{item.raw_input}</td>
+                          <td className="px-3 py-3 capitalize">{item.status}</td>
+                          <td className="px-3 py-3"><span className={item.verdict === "dangerous" && item.status === "complete" ? "font-semibold text-rose-700 dark:text-rose-300" : item.verdict === "suspicious" && item.status === "complete" ? "font-semibold text-amber-700 dark:text-amber-300" : ""}>{historyRiskLabel(item)}</span></td>
+                          <td className="whitespace-nowrap px-3 py-3 text-xs">{new Date(item.created_at).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                          <td className="px-5 py-3"><button type="button" onClick={() => { setScanId(item.id); setScan(null); setError(null); document.getElementById("investigation")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+                            aria-label={"Inspect scan " + item.id}
+                            className="rounded-md px-2 py-1 font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-blue-300 dark:hover:bg-[#203752]">Inspect</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>}
+              {history?.has_more && <p className="border-t border-slate-200 px-5 py-3 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">Showing the latest 50 scans. Older scans are not included in this view.</p>}
+            </section>
             <p className="mt-6 text-xs text-slate-500 dark:text-slate-400">This overview reflects the current investigation only. Organization-wide history and aggregate metrics are not yet connected.</p>
           </main>
         </div>

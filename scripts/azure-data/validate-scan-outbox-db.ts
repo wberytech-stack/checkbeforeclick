@@ -57,6 +57,10 @@ async function expire(id: string) {
 }
 try {
   await owner.connect();
+  // Earlier disposable data-plane suites intentionally leave pending scans.
+  // Isolate this suite's claim ordering; this owner-only cleanup affects ONLY
+  // the ephemeral 127.0.0.1 cluster created by run-disposable-db.sh.
+  await owner.query("DELETE FROM public.scan_job_outbox");
   const a = await signIn("outbox-tenant-a");
   const b = await signIn("outbox-tenant-b");
   await check("W01 worker is separate, non-inheriting and NOBYPASSRLS", async () => {

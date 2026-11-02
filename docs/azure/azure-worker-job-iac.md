@@ -83,8 +83,10 @@ new scan submissions, preserves PostgreSQL outbox/evidence, then reviews
 pending and leased work before any retry. Never delete queued work or
 re-enable the old Inngest path automatically.
 
-Offline checks validate only the authored safety contract, not Bicep
-compilation, Azure deployment, identity permissions, or live provider calls.
-The existing hosting template still contains legacy web secrets; do not use
-it as proof of a clean Azure-only web deployment. The Azure-only web
-deployment IaC remains a separate integration task.
+Pull-request CI now compiles and lints both clean Azure-only Bicep templates
+and validates their compiled ARM JSON, in addition to the source-level guards.
+The compiler may be downloaded from GitHub, but no Azure login, ARM apply or
+provider request is performed. These checks do **not** prove Azure deployment,
+identity permissions, scheduling behavior, costs or live provider calls.
+The legacy hosting template still contains old web secrets and must not be
+used as the clean Azure-only deployment path; use `azure-only-web.bicep`.

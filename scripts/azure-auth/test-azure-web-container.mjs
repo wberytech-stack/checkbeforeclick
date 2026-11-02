@@ -75,6 +75,12 @@ try {
       `Denied path must not be cached: ${path}`);
   }
 
+  const history = await request(base, "/api/azure/history");
+  check(history.status === 401, "history requires an authenticated Azure session");
+  check(history.headers.get("cache-control")?.includes("no-store"),
+    "history authorization responses must not be cached");
+  check(!(await history.text()).includes("SECRET"), "history errors must not leak credentials");
+
   const legacyPost = await request(base, "/api/inngest", { method: "POST" });
   check(legacyPost.status === 404, "legacy Inngest POST must be blocked");
 

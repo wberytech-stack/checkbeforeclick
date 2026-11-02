@@ -8,16 +8,16 @@ function check(name: string, path: string, expected: "allow" | "redirect" | "den
   assert.equal(classifyAzureWebPath(path), expected, name);
   count++;
 }
-check("root goes to Azure UI", "/", "redirect");
+check("root goes to Azure welcome page", "/", "redirect");
 for (const path of [
-  "/azure", "/azure/", "/auth/azure/start", "/auth/azure/logout",
+  "/azure", "/azure/", "/azure/welcome", "/auth/azure/start", "/auth/azure/logout",
   "/auth/callback", "/api/azure/scans", "/api/azure/history", `/api/azure/scans/${ID}`, "/api/healthz",
 ]) check("Azure route is reachable without legacy middleware", path, "allow");
 for (const path of [
   "/login", "/register", "/dashboard", "/scan", "/history",
   "/api/scans", "/api/inngest", "/api/inngest/hook.js", "/api/legacy.svg", "/auth/signout", "/api/azure",
   "/api/azure/scans/bad", `/api/azure/scans/${ID}/evidence`,
-  "/api/azure/scans/", "/azure-old", "/azure/dashboard",
+  "/api/azure/scans/", "/azure-old", "/azure/dashboard", "/azure/welcome/extra",
   "/auth/azure/start/extra", "/auth/callback/extra",
   "/api/healthz/extra", "//azure", "/.well-known/security.txt",
 ]) check("legacy and unknown routes fail closed", path, "deny");

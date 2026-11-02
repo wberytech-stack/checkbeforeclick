@@ -28,7 +28,7 @@ function respond(status: number, body: Record<string, unknown>): Response {
   return Response.json(body, { status, headers: HEADERS });
 }
 
-function historyRow(row: Record<string, unknown>) {
+export function parseAzureHistoryRow(row: Record<string, unknown>) {
   if (typeof row.id !== "string" || !UUID.test(row.id) ||
       typeof row.raw_input !== "string" || row.raw_input.length > 10000 ||
       !["pending", "processing", "complete", "failed"].includes(String(row.status)) ||
@@ -65,7 +65,7 @@ export async function runAzureScanHistoryRoute(
         const rows = (await client.query(HISTORY_SQL, [session.organizationId])).rows;
         if (rows.length > MAX_ROWS + 1) throw new Error("Unbounded history result");
         return {
-          scans: rows.slice(0, MAX_ROWS).map(historyRow),
+          scans: rows.slice(0, MAX_ROWS).map(parseAzureHistoryRow),
           has_more: rows.length > MAX_ROWS,
         };
       },

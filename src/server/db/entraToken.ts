@@ -56,6 +56,8 @@ export function createManagedIdentityTokenProvider(deps: {
   if (!clientId || !/^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(clientId)) {
     throw new EntraTokenError("AZURE_CLIENT_ID must identify a user-assigned managed identity")
   }
+  // Capture the validated ID as a non-optional constant for the async token fetch.
+  const selectedClientId: string = clientId
   if (/[\x00-\x1f\x7f]/.test(header) || header.length > 2048) {
     throw new EntraTokenError("IDENTITY_HEADER is invalid")
   }
@@ -67,7 +69,7 @@ export function createManagedIdentityTokenProvider(deps: {
     const url = new URL(base.href)
     url.searchParams.set("resource", POSTGRES_ENTRA_RESOURCE)
     url.searchParams.set("api-version", "2019-08-01")
-    if (clientId) url.searchParams.set("client_id", clientId)
+    url.searchParams.set("client_id", selectedClientId)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 5000)
     try {
@@ -91,7 +93,7 @@ export function createManagedIdentityTokenProvider(deps: {
       // If present, each MUST agree with the request. Never cache a credential
       // for a different principal or audience, even if the sidecar misbehaves.
       if (body?.client_id !== undefined &&
-          (typeof body.client_id !== "string" || body.client_id.toLowerCase() !== clientId.toLowerCase())) {
+          (typeof body.client_id !== "string" || body.client_id.toLowerCase() !== selectedClientId.toLowerCase())) {
         throw new EntraTokenError("managed identity endpoint returned the wrong client identity")
       }
       if (body?.resource !== undefined && body.resource !== POSTGRES_ENTRA_RESOURCE) {

@@ -83,3 +83,31 @@ jobs:
         run: docker build --file Dockerfile.azure-web --tag cbc-azure-web:ci .
       - name: Real-container Azure-only HTTP smoke without legacy credentials
         run: node scripts/azure-auth/test-azure-web-container.mjs cbc-azure-web:ci
+
+
+  compiled-iac:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.14.0"
+      - name: ARM safety-validator regression tests (no network)
+        run: node scripts/azure-data/validate-compiled-iac.mjs --self-test
+      - name: Compile and lint Azure-only web and worker Bicep (no Azure login)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The runner's Azure CLI may download the free Bicep compiler from GitHub.
+          # This does not authenticate to Azure, call ARM, or deploy any resources.
+          az bicep build --file infra/azure/hosting/azure-only-web.bicep --outfile "$RUNNER_TEMP/cbc-azure-web.arm.json"
+          az bicep build --file infra/azure/hosting/azure-url-worker-job.bicep --outfile "$RUNNER_TEMP/cbc-azure-worker.arm.json"
+          az bicep lint --file infra/azure/hosting/azure-only-web.bicep
+          az bicep lint --file infra/azure/hosting/azure-url-worker-job.bicep
+          az bicep version
+          node scripts/azure-data/validate-compiled-iac.mjs "$RUNNER_TEMP/cbc-azure-web.arm.json" "$RUNNER_TEMP/cbc-azure-worker.arm.json"

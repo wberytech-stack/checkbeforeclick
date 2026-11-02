@@ -77,6 +77,12 @@ async function status(f: ReturnType<typeof fixture>, code: number) {
   return response;
 }
 await check("H00 direct history row parser accepts PostgreSQL Date", async () => {
+  assert.equal(typeof row.id, "string");
+  assert.match(row.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.equal(typeof row.raw_input, "string");
+  assert.equal(row.raw_input.length <= 10000, true);
+  assert.equal(["pending", "processing", "complete", "failed"].includes(row.status), true);
+  assert.equal(typeof row.verdict, "string");
   const parsed = parseAzureHistoryRow(row);
   assert.equal(parsed.id, SCAN);
   assert.equal(parsed.created_at, "2026-11-02T00:00:00.000Z");

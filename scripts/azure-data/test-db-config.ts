@@ -113,6 +113,27 @@ async function tokenTests() {
     try { await fresh(); } catch (e) { msg = (e as Error).message; }
     check(`${label} -> fails closed, error never contains the identity header`, msg !== "" && !msg.includes("hdr-secret-123"), msg);
   }
+  // The platform may include metadata alongside the token. A wrong principal,
+  // audience or token type must never enter the shared connection-pool cache.
+  for (const [label, metadata, accepted] of [
+    ["T19 matching token metadata", { client_id: env.AZURE_CLIENT_ID.toUpperCase(), resource: POSTGRES_ENTRA_RESOURCE, token_type: "Bearer" }, true],
+    ["T20 wrong managed identity", { client_id: "99999999-2222-3333-4444-555555555555" }, false],
+    ["T21 wrong PostgreSQL audience", { resource: "https://management.azure.com/" }, false],
+    ["T22 non-bearer token", { token_type: "Basic" }, false],
+    ["T23 invalid client identity metadata", { client_id: 42 }, false],
+    ["T24 invalid resource metadata", { resource: null }, false],
+  ] as const) {
+    reply = async () => ({ ok: true, status: 200, json: async () => ({
+      access_token: "eyJ0eXAiOiJKV1Qi.fake.token-0003",
+      expires_on: String(clock / 1000 + 3600),
+      ...metadata,
+    }) });
+    const fresh = createManagedIdentityTokenProvider({ env, fetch: fetchFake, now: () => clock });
+    let success = false;
+    let error = "";
+    try { await fresh(); success = true; } catch (e) { error = (e as Error).message; }
+    check(label, success === accepted && (accepted || (error !== "" && !error.includes("hdr-secret-123"))), error);
+  }
   for (const [label, e] of [
     ["T09 non-loopback endpoint", { ...env, IDENTITY_ENDPOINT: "http://169.254.169.254.attacker.example/token" }],
     ["T10 https remote endpoint", { ...env, IDENTITY_ENDPOINT: "https://evil.example/token" }],

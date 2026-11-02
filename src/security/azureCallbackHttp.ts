@@ -80,7 +80,7 @@ function safeResponse(origin: string | null, sessionCookie?: string): Response {
   headers.append("Set-Cookie", loginStateClearCookie());
   if (!origin) return new Response(null, { status: 503, headers });
   // Fixed destinations: callback query, next, Host, and error never affect Location.
-  headers.set("Location", `${origin}${sessionCookie ? "/dashboard" : "/login"}`);
+  headers.set("Location", `${origin}${"/azure"}`);
   if (sessionCookie) headers.append("Set-Cookie", sessionCookie);
   return new Response(null, { status: 303, headers });
 }

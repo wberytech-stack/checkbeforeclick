@@ -69,3 +69,6 @@ jobs:
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-read-route.ts
       - name: Offline Azure scan creation tenant isolation and CSRF tests
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-create-route.ts
+
+      - name: Offline Azure scan UI validation and fail-safe verdict tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-ui.ts

@@ -33,7 +33,7 @@ function response(status: number, origin: string | null, clear: boolean): Respon
     "Vary": "Cookie, Origin",
   });
   if (clear) headers.append("Set-Cookie", azureSessionClearCookie());
-  if (status === 303 && origin) headers.set("Location", `${origin}/login`);
+  if (status === 303 && origin) headers.set("Location", `${origin}/azure`);
   return new Response(null, { status, headers });
 }
 

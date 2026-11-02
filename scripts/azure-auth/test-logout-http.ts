@@ -27,7 +27,7 @@ function expectResponse(res: Response, status: number, cleared: boolean) {
   assert.equal(res.headers.get("referrer-policy"), "no-referrer");
   assert.equal(res.headers.get("vary"), "Cookie, Origin");
   assert.deepEqual(res.headers.getSetCookie(), cleared ? [azureSessionClearCookie()] : []);
-  assert.equal(res.headers.get("location"), status === 303 ? `${origin}/login` : null);
+  assert.equal(res.headers.get("location"), status === 303 ? `${origin}/azure` : null);
 }
 let passed = 0, failed = 0;
 async function check(name: string, fn: () => Promise<void>) {

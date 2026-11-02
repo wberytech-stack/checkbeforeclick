@@ -127,7 +127,7 @@ async function fixture(options: Options = {}) {
 }
 function denied(response: Response, status = 303) {
   assert.equal(response.status, status);
-  assert.equal(response.headers.get("location"), status === 303 ? origin + "/login" : null);
+  assert.equal(response.headers.get("location"), status === 303 ? origin + "/azure" : null);
   assert.deepEqual(response.headers.getSetCookie(), [loginStateClearCookie()]);
   assert.equal(response.headers.get("cache-control"), "private, no-store, max-age=0");
   assert.equal(response.headers.get("referrer-policy"), "no-referrer");
@@ -141,7 +141,7 @@ async function check(name: string, fn: () => Promise<void>) {
 await check("C01 state commit -> exchange -> verify -> provision commit -> session commit -> cookie", async () => {
   const f = await fixture(); const response = await f.invoke();
   assert.equal(response.status, 303);
-  assert.equal(response.headers.get("location"), origin + "/dashboard");
+  assert.equal(response.headers.get("location"), origin + "/azure");
   assert.deepEqual(f.events, ["consume", "commit1", "exchange", "jwks", "provision", "commit2", "session", "commit3"]);
   assert.equal(f.transactions, 3);
   assert.deepEqual(response.headers.getSetCookie()[0], loginStateClearCookie());
@@ -162,7 +162,7 @@ await check("C02 replay cannot exchange or provision", async () => {
 await check("C03 eight concurrent callbacks issue exactly one session", async () => {
   const f = await fixture();
   const results = await Promise.all(Array.from({ length: 8 }, () => f.invoke()));
-  assert.equal(results.filter((r) => r.headers.get("location") === origin + "/dashboard").length, 1);
+  assert.equal(results.filter((r) => r.headers.get("location") === origin + "/azure").length, 1);
   assert.equal(f.events.filter((x) => x === "exchange").length, 1);
   assert.equal(f.events.filter((x) => x === "session").length, 1);
 });

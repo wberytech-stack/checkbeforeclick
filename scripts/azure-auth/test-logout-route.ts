@@ -51,7 +51,7 @@ await check("R01 successful logout commits digest-only SQL before redirect", asy
   assert.equal(calls[0].sql, "SELECT public.app_revoke_auth_session($1) AS ok");
   assert.deepEqual(calls[0].values, [digest]);
   assert.ok(!JSON.stringify(calls).includes(token));
-  assert.equal(response.headers.get("location"), origin + "/login");
+  assert.equal(response.headers.get("location"), origin + "/azure");
   assert.deepEqual(response.headers.getSetCookie(), [azureSessionClearCookie()]);
 });
 await check("R02 already revoked digest remains idempotent", async () => {

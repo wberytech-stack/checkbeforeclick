@@ -26,7 +26,7 @@ async function run(request = make(), overrides: Record<string, unknown> = {}) {
 function cookies(response: Response) { return response.headers.getSetCookie(); }
 function denied(response: Response, status = 303, called = 0) {
   assert.equal(response.status, status);
-  assert.equal(response.headers.get("location"), status === 303 ? origin + "/login" : null);
+  assert.equal(response.headers.get("location"), status === 303 ? origin + "/azure" : null);
   assert.deepEqual(cookies(response), [loginStateClearCookie()]);
   assert.equal(calls, called);
   assert.equal(response.headers.get("cache-control"), "private, no-store, max-age=0");
@@ -40,7 +40,7 @@ async function check(name: string, fn: () => Promise<void>) {
 await check("H01 success redirects to fixed dashboard and sets canonical cookies", async () => {
   const response = await run();
   assert.equal(response.status, 303);
-  assert.equal(response.headers.get("location"), origin + "/dashboard");
+  assert.equal(response.headers.get("location"), origin + "/azure");
   assert.deepEqual(cookies(response), [loginStateClearCookie(), session]);
   assert.equal(response.headers.get("pragma"), "no-cache");
   assert.equal(response.headers.get("vary"), "Cookie");
@@ -72,11 +72,11 @@ for (const [name, url] of malformed) {
 }
 await check("H17 matching issuer response accepted", async () => {
   const response = await run(make(callbackUrl + "&iss=" + encodeURIComponent(issuer)));
-  assert.equal(response.headers.get("location"), origin + "/dashboard"); assert.equal(calls, 1);
+  assert.equal(response.headers.get("location"), origin + "/azure"); assert.equal(calls, 1);
 });
 await check("H18 optional session_state accepted", async () => {
   const response = await run(make(callbackUrl + "&session_state=opaque"));
-  assert.equal(response.headers.get("location"), origin + "/dashboard"); assert.equal(calls, 1);
+  assert.equal(response.headers.get("location"), origin + "/azure"); assert.equal(calls, 1);
 });
 await check("H19 absent login-state cookie denied", async () => denied(await run(make(callbackUrl, "other=abc"))));
 await check("H20 duplicate login-state cookie denied", async () => denied(await run(make(callbackUrl, cookieHeader + "; " + LOGIN_STATE_COOKIE_NAME + "=" + sealed))));

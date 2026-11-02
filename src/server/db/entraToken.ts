@@ -83,7 +83,24 @@ export function createManagedIdentityTokenProvider(deps: {
         throw new EntraTokenError("managed identity endpoint unreachable")
       }
       if (!res.ok) throw new EntraTokenError(`managed identity endpoint returned ${res.status}`)
-      const body = (await res.json().catch(() => null)) as { access_token?: unknown; expires_on?: unknown } | null
+      const body = (await res.json().catch(() => null)) as {
+        access_token?: unknown; expires_on?: unknown
+        client_id?: unknown; resource?: unknown; token_type?: unknown
+      } | null
+      // Azure's endpoint may return identity, audience and token-type metadata.
+      // If present, each MUST agree with the request. Never cache a credential
+      // for a different principal or audience, even if the sidecar misbehaves.
+      if (body?.client_id !== undefined &&
+          (typeof body.client_id !== "string" || body.client_id.toLowerCase() !== clientId.toLowerCase())) {
+        throw new EntraTokenError("managed identity endpoint returned the wrong client identity")
+      }
+      if (body?.resource !== undefined && body.resource !== POSTGRES_ENTRA_RESOURCE) {
+        throw new EntraTokenError("managed identity endpoint returned the wrong resource")
+      }
+      if (body?.token_type !== undefined &&
+          (typeof body.token_type !== "string" || body.token_type.toLowerCase() !== "bearer")) {
+        throw new EntraTokenError("managed identity endpoint returned an invalid token type")
+      }
       const token = body?.access_token
       const expiresOn = Number(body?.expires_on)
       if (typeof token !== "string" || token.length < 20 || token.length > MAX_TOKEN_CHARS || /\s/.test(token)) {

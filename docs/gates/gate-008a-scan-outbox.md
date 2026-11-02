@@ -1,33 +1,65 @@
-# Gate 008A — transactional scan outbox (draft)
+# Gate 008A — transactional scan outbox and exhaustion recovery (draft)
 
-Migration: `infra/db/migrations/008_scan_job_outbox.sql`. This is **code only**. It has not been applied to an Azure, staging, production or shared database.
+Migration: `infra/db/migrations/008_scan_job_outbox.sql`, followed by
+`009_worker_scan_completion.sql`. These are **draft code**, not proof that
+Azure PostgreSQL has been initialized.
 
 ## Security and transaction contract
 
-- `app_create_scan` inserts a pending scan. An `AFTER INSERT` trigger inserts one outbox row **inside the same transaction**. Failed/rolled-back scan creation leaves neither row. A migration-time backfill captures existing pending scans.
-- The web role `cbc_app` has no direct outbox table access and cannot execute the worker functions. The worker role `cbc_worker` must be a separate `NOINHERIT NOBYPASSRLS` non-owner role, with no inherited membership granted to `cbc_app`. Neither role gets direct table DML.
-- Only `cbc_worker` may claim jobs with `app_claim_scan_jobs(limit, lease_seconds)`. Claims are atomic via `FOR UPDATE SKIP LOCKED`, bounded to 10 jobs, 30–600 second leases, and 8 attempts. The function returns the exact input and **database-derived** organization ID to the trusted worker; no user-facing endpoint may expose this payload.
-- Claim is **at least once**, not exactly once. Lease expiration can redeliver a job with a fresh random token. Consumers must not call provider APIs or persist evidence more than once without a lease-aware idempotency contract.
-- `app_ack_scan_job(scan_id, lease_token)` only acknowledges an unexpired, current lease after the scan is terminal. It does not write scan/evidence data. Replay, stale tokens and nonterminal scans return false.
-- No job is dispatched to Azure or Inngest by this migration. Exhausted jobs remain in the table for investigation; do not silently delete them. Worker processing and lease-bound result persistence are **not implemented yet**.
+- `app_create_scan` inserts a tenant-bound pending scan; its `AFTER INSERT`
+  trigger inserts exactly one outbox row in the same transaction. Rollback
+  removes both.
+- `cbc_app` cannot read or mutate the outbox or call worker functions.
+  `cbc_worker` is a separate `NOINHERIT NOBYPASSRLS` non-owner role, with
+  no direct scan, evidence or outbox table writes.
+- Only `cbc_worker` may call `app_claim_scan_jobs(limit, lease_seconds)`.
+  Claims use `FOR UPDATE SKIP LOCKED`, at most 10 jobs, 30–600-second
+  leases, a fresh lease token and a maximum of eight attempts. The worker
+  receives database-derived tenant metadata; browsers never see it.
+- Migration 009 grants only `cbc_worker` the atomic
+  `app_complete_scan_job` function. It checks the live lease and writes
+  terminal scan status, vendor evidence and outbox completion in one
+  transaction. Legacy separate acknowledgment and browser result-writing
+  functions are revoked.
+- Provider execution is **at least once**, not exactly once. A crashed
+  worker can cause a repeated provider lookup; stale completion tokens
+  cannot overwrite a terminal result.
 
-## Disposable validation
+## Exhausted-lease recovery
 
-The existing `data-plane-validate` pull-request workflow runs `scripts/azure-data/run-disposable-db.sh` against a freshly initialized loopback PostgreSQL 16 instance. The runner creates an ephemeral `cbc_worker` and tests SQL role separation, zero outbox RLS policies, denied direct table access, atomic rollback, concurrent claims, stale lease replay, terminal acknowledgment, and eight-attempt exhaustion. The database is stopped and removed after the tests. No cloud access or credentials are needed.
+The eighth attempt is allowed to run until its lease expires. On a subsequent
+worker claim, the restricted database function reconciles up to ten expired
+eight-attempt jobs: it locks the job, marks its still-pending scan
+`failed` with verdict `unknown`, and closes the outbox row atomically.
+It never invents a safe verdict or fabricated threat evidence. A partial
+index on exhausted leases keeps reconciliation bounded as the outbox grows.
 
-## Deployment prerequisites — require founder approval
+This requires the scheduled worker to continue invoking claims. If the
+scheduler stops, recovery stops too; production monitoring must alert on
+missing worker runs, failed scans and aging pending jobs. Exhausted jobs
+remain recorded for investigation and are not deleted.
 
-1. Review migrations 001–008 together and independently validate them against a disposable database. Create a dedicated managed-identity-backed `cbc_worker` PostgreSQL principal with the specified role restrictions, distinct from the web application's `cbc_app` identity. Do not grant the web app worker identity permissions.
-2. Implement and test a lease-bound completion function that atomically writes terminal scan results and evidence **only for the currently leased job**. Restrict direct `app_record_fast_scan_result` / `app_mark_scan_processing` execution to the necessary service boundary. Until that is complete, **do not enable worker polling or deploy this as a functioning queue**.
-3. Deploy a dedicated Azure-native timer-triggered worker with a separate managed identity, bounded concurrency, no public ingress, least-privilege egress to required scan providers, and structured logs that omit raw inputs and credentials. Validate idempotency, timeouts, dead-letter alerting and crash recovery before cutover.
-4. Only after approval, apply the reviewed migration using the schema-owner identity in a controlled transaction. Never run the migration as `cbc_app` or `cbc_worker`. Validate grants, RLS, triggers and worker-only claims before directing production scan traffic to the new path.
+## Verification
 
-## Rollback and recovery
+The read-only `data-plane-validate` PR workflow applies migrations
+001–009 to a disposable loopback PostgreSQL 16 cluster, tests web/worker
+role isolation, transactional enqueue/claim/completion, stale and replayed
+leases, tenant-bound evidence, exhaustion, no premature expiry and
+concurrent idempotent reconciliation. It does not access Azure or a paid
+provider. A green run is evidence for that test environment only.
 
-- **Before cutover:** disable worker polling; the migration is additive, and the legacy job path remains untouched. No Azure resource changes are needed to roll back a draft code change.
-- **After cutover (requires explicit approval):** stop new scan submissions and worker polling first, preserve the outbox and scan/evidence records, and reconcile any `leased` or `ready` rows with scan terminal states. Do not drop the outbox table or trigger while pending work exists. Restore the previous routing only after a reviewed reconciliation plan; do not automatically replay external provider calls.
-- A PostgreSQL schema rollback or data deletion is **not authorized** by this draft. Use a reviewed, backed-up, operator-run recovery procedure.
+## Live deployment controls
 
-## Next code milestone
+The founder authorized the Azure hosting, Entra External ID and clean-start
+PostgreSQL work on 2026-11-02, subject to verified target inventory, costs,
+least-privilege identity mapping, TLS, Key Vault access, deployment review,
+rollback planning and actual end-to-end tests. This code change does not
+provision anything by itself. Do not use the web database role for worker
+calls, deploy mutable image tags, or enable a billable reputation provider
+without reviewing its configuration and spending.
 
-Implement the **lease-token-validated, atomic scan/evidence completion function** and its disposable-PostgreSQL regression tests, then connect an Azure-native worker adapter. The existing `cbc_app` grants for older scan-processing functions remain a cutover hardening task; they must be removed before a worker can safely execute provider results.
+Before cutover, validate the exact deployed PostgreSQL grants and RLS
+catalog with both managed identities; test real customer login, URL
+submission, scheduled claim, result/evidence retrieval, session revocation
+and outage recovery. Keep Supabase and Inngest untouched until a separate
+post-launch decision.

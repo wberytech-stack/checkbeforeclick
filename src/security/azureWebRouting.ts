@@ -13,6 +13,7 @@ export function isAzureWebPath(pathname: string): boolean {
       pathname === "/auth/azure/logout" ||
       pathname === "/auth/callback" ||
       pathname === "/api/azure/scans" ||
+      pathname === "/api/azure/history" ||
       pathname === "/api/healthz") return true;
   const prefix = "/api/azure/scans/";
   return pathname.startsWith(prefix) && SCAN_ID.test(pathname.slice(prefix.length));

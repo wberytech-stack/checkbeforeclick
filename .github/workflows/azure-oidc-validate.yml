@@ -78,3 +78,5 @@ jobs:
 
       - name: Build standalone Azure web image without Supabase build arguments
         run: docker build --file Dockerfile.azure-web --tag cbc-azure-web:ci .
+      - name: Real-container Azure-only HTTP smoke without legacy credentials
+        run: node scripts/azure-auth/test-azure-web-container.mjs cbc-azure-web:ci

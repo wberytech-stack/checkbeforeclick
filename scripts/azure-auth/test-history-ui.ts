@@ -14,7 +14,7 @@ for (const bad of [null, {}, { scans: [], has_more: "false" }, { scans: Array(51
 }
 for (const bad of [
   { ...row, id: ID.toUpperCase() }, { ...row, raw_input: 1 }, { ...row, status: "unknown" },
-  { ...row, verdict: 1 }, { ...row, created_at: "not-a-date" }, { ...row, created_at: "2026-11-02" },
+  { ...row, verdict: 1 }, { ...row, verdict: "x".repeat(65) }, { ...row, created_at: "not-a-date" }, { ...row, created_at: "2026-11-02" },
   { ...row, created_at: "2026-02-31T00:00:00.000Z" },
 ]) {
   check("reject malformed history row", () => assert.throws(() => parseAzureScanHistory({ scans: [bad], has_more: false })));

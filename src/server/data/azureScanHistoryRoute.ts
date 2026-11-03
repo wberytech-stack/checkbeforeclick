@@ -31,7 +31,7 @@ function respond(status: number, body: Record<string, unknown>): Response {
 export function parseAzureHistoryRow(row: Record<string, unknown>) {
   if (typeof row.id !== "string" || !UUID.test(row.id) ||
       typeof row.raw_input !== "string" || row.raw_input.length > 10000 ||
-      !["pending", "processing", "complete", "failed"].includes(String(row.status)) ||
+      (typeof row.status !== "string" || !["pending", "processing", "complete", "failed"].includes(row.status)) ||
       !(row.verdict === null || (typeof row.verdict === "string" && row.verdict.length <= 64))) {
     throw new Error("Invalid history record");
   }

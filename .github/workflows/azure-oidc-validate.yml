@@ -79,6 +79,8 @@ jobs:
         run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-history-route.ts
       - name: Offline Azure history UI parser and filter tests
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-history-ui.ts
+      - name: Offline Azure Light Dark and System appearance preference tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-theme.ts
 
       - name: Azure-only web routing fail-closed regression tests
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-azure-web-routing.ts

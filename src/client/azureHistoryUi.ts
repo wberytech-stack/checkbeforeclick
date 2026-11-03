@@ -24,7 +24,7 @@ export function parseAzureScanHistory(value: unknown): AzureHistoryView {
     const row = entry as Record<string, unknown>;
     if (typeof row.id !== "string" || !UUID.test(row.id) || seen.has(row.id) ||
         typeof row.raw_input !== "string" || row.raw_input.length > 10000 ||
-        !["pending", "processing", "complete", "failed"].includes(String(row.status)) ||
+        (typeof row.status !== "string" || !["pending", "processing", "complete", "failed"].includes(row.status)) ||
         !(row.verdict === null || (typeof row.verdict === "string" && row.verdict.length <= 64)) ||
         typeof row.created_at !== "string" || !UTC_DATE.test(row.created_at) ||
         (!Number.isFinite(Date.parse(row.created_at)) || new Date(row.created_at).toISOString() !== row.created_at)) throw new Error("Invalid history item");

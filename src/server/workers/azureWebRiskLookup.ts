@@ -56,7 +56,9 @@ export function createWebRiskLookup(options: {
       }
       if (!data.threat || typeof data.threat !== "object" || Array.isArray(data.threat)) throw new Error(ERROR);
       const threat = data.threat as Record<string, unknown>;
-      // A present but empty threat object is malformed; only an empty top-level\n      // response is the documented no-match result. Never silently downgrade it.\n      if (Object.keys(threat).length === 0) throw new Error(ERROR);
+      // A present but empty threat object is malformed; only an empty top-level
+      // response is the documented no-match result. Never silently downgrade it.
+      if (Object.keys(threat).length === 0) throw new Error(ERROR);
       const threatTypes = threat.threatTypes;
       if (!Array.isArray(threatTypes) || threatTypes.length === 0 || threatTypes.length > 4 ||
           !threatTypes.every(t => typeof t === "string" && KNOWN.has(t))) throw new Error(ERROR);

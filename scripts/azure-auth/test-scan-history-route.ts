@@ -150,6 +150,18 @@ await check("H13 invalid date fails closed", async () => {
 await check("H14 invalid verdict fails closed", async () => {
   const f = fixture({ rows: [{ ...row, verdict: 1 }] }); await status(f, 503);
 });
+await check("H14a oversized verdict fails closed before browser parsing", async () => {
+  const f = fixture({ rows: [{ ...row, verdict: "x".repeat(65) }] });
+  const r = await status(f, 503);
+  assert.deepEqual(await r.json(), { error: "Scan history temporarily unavailable" });
+  assert.equal(f.events.at(-1), "ROLLBACK");
+});
+await check("H14b maximum-length verdict remains valid", async () => {
+  const f = fixture({ rows: [{ ...row, verdict: "x".repeat(64) }] });
+  const r = await status(f, 200);
+  const body = await r.json();
+  assert.equal(body.scans[0].verdict.length, 64);
+});
 await check("H15 malformed tenant context rolls back", async () => {
   const f = fixture({ contextOrg: OTHER }); await status(f, 503);
   assert.deepEqual(f.events, ["BEGIN", "session", "context", "ROLLBACK"]);

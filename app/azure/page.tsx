@@ -132,6 +132,7 @@ export default function AzureScanPage() {
         });
         if (!response.ok) {
           if (response.status === 401) throw new Error("Sign in to see your recent scans.");
+          if (response.status === 403) throw new Error("Access to recent scans was denied.");
           throw new Error("Recent scans are temporarily unavailable.");
         }
         const parsed = parseAzureScanHistory(await response.json());
@@ -141,11 +142,13 @@ export default function AzureScanPage() {
         }
       } catch (cause) {
         if (!controller.signal.aborted) {
-          // Retain prior results on transient errors, but never display them after a 401.
-          if (cause instanceof Error && cause.message === "Sign in to see your recent scans.") {
-            setHistory(null);
-          }
-          setHistoryError(cause instanceof Error && cause.message === "Sign in to see your recent scans."
+          // Preserve history on transient failures, but clear it if authentication or access is denied.
+          const denied = cause instanceof Error && (
+            cause.message === "Sign in to see your recent scans." ||
+            cause.message === "Access to recent scans was denied."
+          );
+          if (denied) setHistory(null);
+          setHistoryError(denied && cause instanceof Error
             ? cause.message : "Recent scans are temporarily unavailable.");
         }
       } finally {

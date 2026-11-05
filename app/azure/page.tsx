@@ -100,9 +100,15 @@ export default function AzureScanPage() {
           timer = setTimeout(refresh, POLL_INTERVAL_MS);
         }
       } catch {
-        if (!controller.signal.aborted && current === generation.current) {
-          setError("Scan results are temporarily unavailable. Try again.");
+        if (controller.signal.aborted || current !== generation.current) return;
+        // A transient network/parse failure must not strand an in-flight scan.
+        // Keep retries bounded, and preserve the last known result while retrying.
+        if (++polls >= MAX_POLLS) {
+          setError("Scan results are temporarily unavailable. Select Check again to retry.");
+          return;
         }
+        setError("Connection interrupted. Retrying scan results automatically.");
+        timer = setTimeout(refresh, POLL_INTERVAL_MS);
       }
     }
     void refresh();

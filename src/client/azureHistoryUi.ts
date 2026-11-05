@@ -7,7 +7,7 @@ export type AzureHistoryItem = {
   created_at: string;
 };
 export type AzureHistoryView = { scans: AzureHistoryItem[]; has_more: boolean };
-export type AzureHistoryFilter = "all" | "attention" | "active" | "complete";
+export type AzureHistoryFilter = "all" | "attention" | "dangerous" | "suspicious" | "active" | "complete";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const UTC_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -59,6 +59,7 @@ export function filterAzureHistory(
     if (!matches) return false;
     if (filter === "attention") return item.status === "complete" &&
       (item.verdict === "dangerous" || item.verdict === "suspicious");
+    if (filter === "dangerous" || filter === "suspicious") return item.status === "complete" && item.verdict === filter;
     if (filter === "active") return item.status === "pending" || item.status === "processing";
     if (filter === "complete") return item.status === "complete";
     return true;

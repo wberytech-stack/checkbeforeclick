@@ -141,7 +141,10 @@ export default function AzureScanPage() {
         }
       } catch (cause) {
         if (!controller.signal.aborted) {
-          // Preserve the last successful history snapshot during transient refresh failures.
+          // Retain prior results on transient errors, but never display them after a 401.
+          if (cause instanceof Error && cause.message === "Sign in to see your recent scans.") {
+            setHistory(null);
+          }
           setHistoryError(cause instanceof Error && cause.message === "Sign in to see your recent scans."
             ? cause.message : "Recent scans are temporarily unavailable.");
         }

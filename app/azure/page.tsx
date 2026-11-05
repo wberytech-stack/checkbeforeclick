@@ -79,9 +79,13 @@ export default function AzureScanPage() {
           headers: { Accept: "application/json" },
         });
         if (controller.signal.aborted || current !== generation.current) return;
-        if (response.status === 401) {
-          setLoginRequired(true);
-          setError("Sign in to view your scan.");
+        if (response.status === 401 || response.status === 403) {
+          // Clear investigation evidence when authentication or authorization is lost.
+          setScan(null);
+          setLoginRequired(response.status === 401);
+          setError(response.status === 401
+            ? "Sign in to view your scan."
+            : "Access to this scan was denied.");
           return;
         }
         if (!response.ok) throw new Error("Scan results are temporarily unavailable.");

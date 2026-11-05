@@ -31,7 +31,7 @@ export default function AzureWelcomePage() {
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-4 focus:py-3 focus:text-slate-950">
         Skip to main content
       </a>
-      <header className="relative z-10 border-b border-slate-200 bg-white/90 dark:border-slate-200 dark:border-white/10 dark:bg-[#0c1727]/90">
+      <header className="relative z-10 border-b border-slate-200 bg-white/90 dark:border-white/10 dark:bg-[#0c1727]/90">
         <nav aria-label="Main navigation" className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-4 sm:px-8">
           <a href="/azure/welcome" aria-label="CheckBeforeClick home" className="inline-flex items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-400">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/15 text-blue-700 dark:text-sky-300 ring-1 ring-blue-400/30" aria-hidden="true"><ShieldCheck size={23} /></span>
@@ -41,8 +41,8 @@ export default function AzureWelcomePage() {
             </span>
           </a>
           <div className="flex flex-wrap items-center gap-3">
-            <a href="/azure" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-950 dark:text-white focus-visible:outline-2 focus-visible:outline-blue-400">Security Center</a>
-            <a href="/auth/azure/start" className="inline-flex items-center gap-2 rounded-lg border border-sky-400/40 bg-sky-400/10 px-4 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-400/20 focus-visible:outline-2 focus-visible:outline-blue-400">
+            <a href="/azure" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white focus-visible:outline-2 focus-visible:outline-blue-400">Security Center</a>
+            <a href="/auth/azure/start" className="inline-flex items-center gap-2 rounded-lg border border-blue-600/30 bg-blue-600/10 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-600/20 dark:border-sky-400/40 dark:bg-sky-400/10 dark:text-sky-100 dark:hover:bg-sky-400/20 focus-visible:outline-2 focus-visible:outline-blue-400">
               Sign in <ArrowRight size={15} aria-hidden="true" />
             </a>
           </div>
@@ -59,7 +59,7 @@ export default function AzureWelcomePage() {
                 Clarity before action
               </p>
               <h1 className="max-w-3xl text-4xl font-bold leading-[1.12] tracking-tight text-slate-950 dark:text-white sm:text-5xl lg:text-6xl">
-                Know the risk.<br /><span className="bg-gradient-to-r from-sky-300 to-blue-400 bg-clip-text text-transparent">Before the click.</span>
+                Know the risk.<br /><span className="bg-gradient-to-r from-blue-700 to-sky-600 dark:from-sky-300 dark:to-blue-400 bg-clip-text text-transparent">Before the click.</span>
               </h1>
               <p className="mt-7 max-w-xl text-base leading-8 text-slate-600 dark:text-slate-300 sm:text-lg">
                 Suspicious link? Investigate its reputation, review the evidence and make a more informed decision—without opening the destination.

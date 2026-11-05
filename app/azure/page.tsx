@@ -383,6 +383,7 @@ export default function AzureScanPage() {
                   <select id="history-filter" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value as AzureHistoryFilter)}
                     className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-slate-600 dark:bg-[#0d192b]">
                     <option value="all">All recent</option><option value="attention">Needs attention</option>
+                    <option value="dangerous">Dangerous</option><option value="suspicious">Suspicious</option>
                     <option value="active">In progress</option><option value="complete">Completed</option>
                   </select>
                 </div>

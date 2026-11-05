@@ -27,6 +27,16 @@ const rows = parseAzureScanHistory({ scans: [row, { ...row, id: ID2, raw_input: 
 check("filter by URL", () => assert.deepEqual(filterAzureHistory(rows, "EXAMPLE", "all").map(x => x.id), [ID]));
 check("filter by scan ID", () => assert.deepEqual(filterAzureHistory(rows, ID2, "all").map(x => x.id), [ID2]));
 check("filter attention", () => assert.deepEqual(filterAzureHistory(rows, "", "attention").map(x => x.id), [ID]));
+check("filter dangerous excludes pending and suspicious", () => assert.deepEqual(filterAzureHistory([
+  ...rows,
+  { ...rows[0], id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", verdict: "suspicious" },
+  { ...rows[0], id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", status: "pending" },
+], "", "dangerous").map(x => x.id), [ID]));
+check("filter suspicious selects only completed suspicious scans", () => assert.deepEqual(filterAzureHistory([
+  ...rows,
+  { ...rows[0], id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", verdict: "suspicious" },
+  { ...rows[0], id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", status: "processing", verdict: "suspicious" },
+], "", "suspicious").map(x => x.id), ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"]));
 check("filter active", () => assert.deepEqual(filterAzureHistory(rows, "", "active").map(x => x.id), [ID2]));
 check("filter complete", () => assert.deepEqual(filterAzureHistory(rows, "", "complete").map(x => x.id), [ID]));
 console.log(`Azure history UI: ${count} offline assertions passed`);

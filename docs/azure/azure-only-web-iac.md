@@ -6,6 +6,38 @@ or `modules/web-app.bicep`, which still inject Supabase/Inngest credentials.
 The Azure-only runtime image is built from `Dockerfile.azure-web` and exposes
 `/azure`, Entra auth routes and tenant-scoped scan APIs.
 
+## Existing CBC infrastructure reconciliation (2026-11-05; screenshot evidence only)
+
+Founder-provided Azure Portal screenshots identify subscription `Azure subscription 1`,
+resource group `rg-cbc-prod-canadacentral-001` (Canada Central), and these
+**already existing** resources:
+
+| Type | Observed resource | Reuse / verification rule |
+| --- | --- | --- |
+| Container Apps environment | `cae-cbc-prod-cc-001` | Reuse; do not create a second environment |
+| Container App | `ca-cbc-web-stg-cc-001` | Existing staging app; inspect revisions, image, ingress and legacy credentials before deciding whether to replace or isolate |
+| Container registry | `crcbcprodcc001` | Reuse after verifying access and repository/digest |
+| Managed identity | `id-cbc-deploy-cc-001` | Existing deploy identity; verify RBAC before using |
+| Managed identity | `id-cbc-web-cc-001` | Existing web identity; do not silently reuse for clean-start app because older hosting may have broad vault grants |
+| Key Vault | `kv-cbc-prod-cc-001` | Reuse vault; verify RBAC and individual secret scopes |
+| Log Analytics | `log-cbc-prod-cc-001` | Reuse workspace after checking retention and charges |
+| PostgreSQL Flexible Server | `pg-cbc-prod-cc-001` | Reuse server if safe; create a **new application database**, not a duplicate server, after verifying current databases and configuration |
+
+The environment overview shows provisioning status **Succeeded**, project tag
+`checkbeforeclick`, gate tag `006B`, and the existing staging app. September
+2026 billing screenshots show PostgreSQL charges, but do **not** establish
+current monthly run rate, server state or which database incurred them.
+
+**This is an inventory lead, not authenticated Azure verification.** Before
+setting `deployWeb=true`, compare the exact resource IDs, tenant, current
+resource list, role assignments, database names, deployment history and costs
+using read-only Azure access. Inspect Gate 006B/006C history (PRs #30–57)
+alongside Gate 008A/008B (PRs #58–59). The clean-start template deliberately
+creates a *new* web app and identity; those are **additional resources**, not
+in-place upgrades to `ca-cbc-web-stg-cc-001`. Decide explicitly whether this
+is a justified isolated rollout and document incremental costs before apply.
+Do not deploy the legacy `main.bicep` as a shortcut or remove legacy services.
+
 ## Security and cost posture
 
 - `infra/azure/hosting/azure-only-web.bicep` defaults to `deployWeb=false`

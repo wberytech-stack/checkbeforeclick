@@ -11,7 +11,7 @@ const types = new Set([
   'microsoft.app/containerapps', 'microsoft.app/jobs',
   'microsoft.app/managedenvironments', 'microsoft.managedidentity/userassignedidentities',
   'microsoft.containerregistry/registries', 'microsoft.keyvault/vaults',
-  'microsoft.dbforpostgresql/flexibleservers',
+  'microsoft.dbforpostgresql/flexibleservers', 'microsoft.operationalinsights/workspaces',
 ]);
 const protectedExisting = [
   ['Microsoft.App/containerApps','ca-cbc-web-stg-cc-001'],
@@ -21,6 +21,7 @@ const protectedExisting = [
   ['Microsoft.DBforPostgreSQL/flexibleServers','pg-cbc-prod-cc-001'],
   ['Microsoft.ManagedIdentity/userAssignedIdentities','id-cbc-web-cc-001'],
   ['Microsoft.ManagedIdentity/userAssignedIdentities','id-cbc-deploy-cc-001'],
+  ['Microsoft.OperationalInsights/workspaces','log-cbc-prod-cc-001'],
 ].map(([type,name]) => ({type,name}));
 
 function validateList(input, label) {
@@ -52,13 +53,16 @@ if (process.argv.includes('--self-test')) {
   assert.throws(()=>check(sample,sample),/Refusing/);
   assert.throws(()=>check({resources:[protectedExisting[0]]},{resources:[]}),/Refusing/);
   assert.throws(()=>check({resources:[protectedExisting[5]]},{resources:[]}),/Refusing/);
+  assert.throws(()=>check({resources:[protectedExisting[7]]},{resources:[]}),/Refusing/);
   assert.throws(()=>check({resources:[...sample.resources,...sample.resources]},{resources:[]}),/duplicate/);
   assert.throws(()=>check({resources:[{type:'other',name:'x'}]},{resources:[]}),/unsupported/);
   assert.throws(()=>check({resources:[{type:'Microsoft.App/jobs',name:'../foo'}]},{resources:[]}),/resource name only/);
-  console.log('CBC deployment collision preflight: 7 offline checks passed');
+  console.log('CBC deployment collision preflight: 8 offline checks passed');
 } else {
   assert.equal(process.argv.length,4,'Usage: node check-deployment-name-collisions.mjs planned.json inventory.json');
-  const result = check(JSON.parse(readFileSync(process.argv[2],'utf8')),
-    JSON.parse(readFileSync(process.argv[3],'utf8')));
+  const inventory = JSON.parse(readFileSync(process.argv[3],'utf8'));
+  assert.ok(Array.isArray(inventory.resources) && inventory.resources.length > 0,
+    'Refusing deployment preflight without a nonempty authenticated Azure inventory');
+  const result = check(JSON.parse(readFileSync(process.argv[2],'utf8')), inventory);
   console.log('No name collisions:',result.planned,'planned resources against',result.inventoried,'inventory entries');
 }

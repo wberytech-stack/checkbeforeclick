@@ -1,0 +1,22 @@
+# Dedicated Azure Container Apps Job image. No Supabase, Inngest, Next.js
+# build arguments or web-app identity. Build only; deployment requires approval.
+ARG NODE_IMAGE=node:24.14.0-bookworm-slim
+
+FROM ${NODE_IMAGE} AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY tsconfig.json tsconfig.azure-worker.json ./
+COPY src/server/db ./src/server/db
+COPY src/server/workers ./src/server/workers
+COPY scripts/azure-data/azure-url-worker-main.ts ./scripts/azure-data/
+RUN ./node_modules/.bin/tsc --project tsconfig.azure-worker.json
+
+FROM ${NODE_IMAGE} AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+COPY --from=build --chown=node:node /app/.azure-worker-dist ./.azure-worker-dist
+USER node
+CMD ["node", ".azure-worker-dist/scripts/azure-data/azure-url-worker-main.js"]

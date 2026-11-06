@@ -1,0 +1,126 @@
+# Gate 008B: pure offline OIDC/PKCE security validation. No secrets or cloud access.
+name: azure-oidc-validate
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-oidc-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  oidc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.14.0"
+      - name: Install from lockfile without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: TypeScript
+        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
+      - name: Offline OIDC and PKCE security tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-oidc.ts
+      - name: Offline issuer-pinned OIDC transport security tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-transport.ts
+      - name: Offline sealed one-time OIDC login-state security tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-state.ts
+
+      - name: Offline PostgreSQL OIDC state adapter tests
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-state.ts
+      - name: Offline OIDC callback ordering and fail-closed tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-callback.ts
+      - name: Offline opaque Azure session cookie security tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-session.ts
+      - name: Offline PostgreSQL Azure session adapter security tests
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-session.ts
+      - name: Offline PostgreSQL Azure identity provisioning security tests
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-postgres-identity.ts
+      - name: Offline verified callback to committed Azure session tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-login-completion.ts
+      - name: Offline Azure callback HTTP boundary security tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-callback-http.ts
+      - name: Offline Entra login initiation and HTTP boundary tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-login-start.ts
+      - name: Offline certificate-bound Entra confidential-client assertion tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-client-assertion.ts
+      - name: Offline Azure runtime configuration security tests
+        run: node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-runtime-config.ts
+      - name: Offline Azure logout HTTP CSRF and revocation tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-logout-http.ts
+
+      - name: Offline Azure logout route and committed PostgreSQL revocation tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-logout-route.ts
+      - name: Offline Azure login-start route and committed PostgreSQL state tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-login-start-route.ts
+      - name: Offline Azure callback route and committed PostgreSQL session tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-callback-route.ts
+      - name: Offline Azure tenant-session and protected DB transaction tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-tenant-session.ts
+      - name: Offline Azure scan and evidence read tenant isolation tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-read-route.ts
+      - name: Offline Azure scan creation tenant isolation and CSRF tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-create-route.ts
+
+      - name: Offline Azure scan UI validation and fail-safe verdict tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-ui.ts
+
+      - name: Offline Azure history tenant isolation and bounded result tests
+        run: node --import ./scripts/azure-auth/resolve-ts.mjs --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-scan-history-route.ts
+      - name: Offline Azure history UI parser and filter tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-history-ui.ts
+      - name: Offline Azure Light Dark and System appearance preference tests
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-auth/test-theme.ts
+
+      - name: Azure-only web routing fail-closed regression tests
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/azure-auth/test-azure-web-routing.ts
+
+      - name: Offline Azure-only web IaC security and cost guards
+        run: node scripts/azure-auth/test-azure-web-iac.mjs
+
+      - name: Build standalone Azure web image without Supabase build arguments
+        run: docker build --file Dockerfile.azure-web --tag cbc-azure-web:ci .
+      - name: Real-container Azure-only HTTP smoke without legacy credentials
+        run: node scripts/azure-auth/test-azure-web-container.mjs cbc-azure-web:ci
+
+
+  compiled-iac:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.14.0"
+      - name: ARM safety-validator regression tests (no network)
+        run: node scripts/azure-data/validate-compiled-iac.mjs --self-test
+      - name: Offline CBC resource collision guard self-tests
+        run: node scripts/azure-data/check-deployment-name-collisions.mjs --self-test
+      - name: Cross-component clean-start web worker and DB deployment contracts (offline)
+        run: node scripts/azure-data/test-cleanstart-deployment-contract.mjs
+      - name: Compile and lint Azure-only web and worker Bicep (no Azure login)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The runner's Azure CLI may download the free Bicep compiler from GitHub.
+          # This does not authenticate to Azure, call ARM, or deploy any resources.
+          az bicep build --file infra/azure/hosting/azure-only-web.bicep --outfile "$RUNNER_TEMP/cbc-azure-web.arm.json"
+          az bicep build --file infra/azure/hosting/azure-url-worker-job.bicep --outfile "$RUNNER_TEMP/cbc-azure-worker.arm.json"
+          az bicep lint --file infra/azure/hosting/azure-only-web.bicep
+          az bicep lint --file infra/azure/hosting/azure-url-worker-job.bicep
+          az bicep version
+          node scripts/azure-data/validate-compiled-iac.mjs "$RUNNER_TEMP/cbc-azure-web.arm.json" "$RUNNER_TEMP/cbc-azure-worker.arm.json"

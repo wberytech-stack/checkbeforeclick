@@ -123,7 +123,7 @@ export async function runAzureScanCreateRoute(
       async (client, session) => {
         // The database rechecks current membership/role inside app_create_scan;
         // this allowlist additionally fails closed for unexpected role values.
-        if (session.role !== "owner" && session.role !== "admin" && session.role !== "analyst") {
+        if (session.role !== "owner" && session.role !== "admin" && session.role !== "member") {
           return { kind: "forbidden" as const };
         }
         const created = await client.query(CREATE_SQL, [input.inputType, input.rawInput]);

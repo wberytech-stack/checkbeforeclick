@@ -127,6 +127,18 @@ await check("C06 DB-derived viewer role cannot create", async () => {
   const f = fixture({ sessions: [{ ...session, o_role: "viewer" }] });
   await status(f, 403); assert.ok(!f.events.includes("create"));
 });
+await check("C06a only database-supported writing roles can create scans", async () => {
+  for (const role of ["owner", "admin", "member"]) {
+    const f = fixture({ sessions: [{ ...session, o_role: role }] });
+    await status(f, 201); assert.ok(f.events.includes("create"));
+  }
+});
+await check("C06b unexpected but syntactically valid roles fail closed before scan creation", async () => {
+  for (const role of ["analyst", "guest", "service", "owner_backup"]) {
+    const f = fixture({ sessions: [{ ...session, o_role: role }] });
+    await status(f, 403); assert.ok(!f.events.includes("create"));
+  }
+});
 await check("C07 foreign or invalid session membership fails closed", async () => {
   const f = fixture({ contextOrg: FOREIGN }); await status(f, 503);
   assert.deepEqual(f.events, ["BEGIN", "session", "context", "ROLLBACK"]);

@@ -20,7 +20,7 @@ const scan = {
 };
 const evidence = { signal_type: "url", severity: "low", title: "Observed", detail: null, score_impact: 0 };
 type Options = {
-  id?: unknown; method?: string; cookie?: string; query?: string;
+  id?: unknown; method?: string; cookie?: string; query?: string; path?: string;
   sessions?: Record<string, unknown>[];
   scans?: Record<string, unknown>[];
   evidence?: Record<string, unknown>[];
@@ -178,8 +178,24 @@ await check("S19 malformed session identity fails closed", async () => {
   await status(f, 503); assert.ok(!f.events.includes("scan"));
 });
 await check("S20 no tenant ID is read from request query parameters", async () => {
-  const f = fixture({ query: "?organization_id=" + OTHER + "&role=owner" }); await status(f, 200);
+  const f = fixture(); await status(f, 200);
   assert.ok(f.calls.every(c => !c.values.includes(OTHER)));
+});
+await check("S21 query-string tenant hints rejected before SQL", async () => {
+  const f = fixture({ query: "?organization_id=" + OTHER });
+  const response = await status(f, 400);
+  assert.deepEqual(await response.json(), { error: "Invalid scan request" });
+  assert.deepEqual(f.events, []);
+});
+await check("S22 alternate scan path rejected before SQL", async () => {
+  const f = fixture({ path: "/api/azure/scans/" + OTHER });
+  await status(f, 400);
+  assert.deepEqual(f.events, []);
+});
+await check("S23 fragment rejected before SQL", async () => {
+  const f = fixture({ query: "#evidence" });
+  await status(f, 400);
+  assert.deepEqual(f.events, []);
 });
 console.log("\n=== Azure scan read boundary: " + passed + " passed, " + failed + " failed ===");
 process.exitCode = failed ? 1 : 0;

@@ -96,6 +96,16 @@ export async function runAzureScanReadRoute(
   if (typeof scanId !== "string" || !UUID.test(scanId)) {
     return respond(400, { error: "Invalid scan ID" });
   }
+  // Do not silently accept query-string tenant hints or alternate paths. The
+  // scan ID in the route must match the canonical URL before touching SQL.
+  try {
+    const url = new URL(request.url);
+    if (url.pathname !== `/api/azure/scans/${scanId}` || url.search || url.hash) {
+      return respond(400, { error: "Invalid scan request" });
+    }
+  } catch {
+    return respond(400, { error: "Invalid scan request" });
+  }
   try {
     const result = await withAzureTenantSession(
       request.headers.get("cookie"),

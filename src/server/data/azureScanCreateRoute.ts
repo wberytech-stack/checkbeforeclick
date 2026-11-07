@@ -122,8 +122,10 @@ export async function runAzureScanCreateRoute(
     const result = await withAzureTenantSession(request.headers.get("cookie"), deps,
       async (client, session) => {
         // The database rechecks current membership/role inside app_create_scan;
-        // this check only makes the ordinary viewer denial explicit to callers.
-        if (session.role === "viewer") return { kind: "forbidden" as const };
+        // this allowlist additionally fails closed for unexpected role values.
+        if (session.role !== "owner" && session.role !== "admin" && session.role !== "analyst") {
+          return { kind: "forbidden" as const };
+        }
         const created = await client.query(CREATE_SQL, [input.inputType, input.rawInput]);
         if (created.rows.length !== 1 || typeof created.rows[0]?.id !== "string" ||
             !UUID.test(created.rows[0].id)) throw new Error("Invalid scan creation result");

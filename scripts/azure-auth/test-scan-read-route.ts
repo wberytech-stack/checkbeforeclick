@@ -29,7 +29,7 @@ type Options = {
 function fixture(options: Options = {}) {
   const calls: { sql: string; values: unknown[] }[] = [];
   const events: string[] = [];
-  const request = new Request("https://cbc.example/api/azure/scans/" + SCAN + (options.query ?? ""), {
+  const request = new Request("https://cbc.example" + (options.path ?? "/api/azure/scans/" + SCAN) + (options.query ?? ""), {
     method: options.method ?? "GET",
     headers: options.cookie === undefined ? { cookie } : options.cookie ? { cookie: options.cookie } : {},
   });

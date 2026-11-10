@@ -31,10 +31,10 @@ try {
   await check('F01 composite FK exists on correct table with expected columns', async () => {
     const r = await owner.query(`
       SELECT c.contype, c.confdeltype,
-        (SELECT array_agg(a.attname ORDER BY k.ord)
+        (SELECT json_agg(a.attname ORDER BY k.ord)
          FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum,ord)
          JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum) AS columns,
-        (SELECT array_agg(a.attname ORDER BY k.ord)
+        (SELECT json_agg(a.attname ORDER BY k.ord)
          FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum,ord)
          JOIN pg_attribute a ON a.attrelid=c.confrelid AND a.attnum=k.attnum) AS referenced
       FROM pg_constraint c

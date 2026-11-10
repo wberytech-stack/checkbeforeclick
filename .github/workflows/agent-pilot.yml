@@ -1,0 +1,21 @@
+# CBC agent pilot — intentionally inert review artifact.
+# Founder has NOT approved workflow execution, secrets, or agent API calls.
+name: CBC agent pilot (DISABLED)
+on:
+  workflow_dispatch:
+    inputs:
+      approved_task:
+        description: 'Future trusted task identifier (not authorization)'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  disabled:
+    # Deliberately impossible until a separate founder-approved change.
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: No operation
+        run: echo "Pilot intentionally disabled; no agents or APIs invoked."

@@ -79,11 +79,17 @@ try {
     const r = await owner.query('SELECT organization_id FROM public.scan_job_outbox WHERE scan_id=$1', [scan]);
     assert.equal(r.rows[0].organization_id, org);
   });
-  await check('F04 app and worker cannot rewrite outbox tenant', async () => {
+  await check('F04 restricted identities cannot directly mutate protected scan/outbox rows', async () => {
+    const appRole = await app.query('SELECT current_user AS role');
+    const workerRole = await worker.query('SELECT current_user AS role');
+    assert.equal(appRole.rows[0].role, 'cbc_app');
+    assert.equal(workerRole.rows[0].role, 'cbc_worker');
     assert.equal(await sqlState(() => app.query(
       'UPDATE public.scan_job_outbox SET organization_id=$2 WHERE scan_id=$1', [scan, org])), '42501');
     assert.equal(await sqlState(() => worker.query(
       'UPDATE public.scan_job_outbox SET organization_id=$2 WHERE scan_id=$1', [scan, org])), '42501');
+    assert.equal(await sqlState(() => worker.query(
+      "UPDATE public.scans SET status='complete' WHERE id=$1", [scan])), '42501');
   });
   await check('F05 existing outbox has zero mismatched scan/tenant associations', async () => {
     const r = await owner.query(`

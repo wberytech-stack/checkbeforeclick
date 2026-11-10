@@ -140,6 +140,32 @@ try{
     assert.equal(await complete(fifth,lease5.o_lease_token,{status:'failed',verdict:'unknown',vendor:[],evidence:[]}),true);
     assert.equal((await state(fifth)).status,'failed');
   });
+  // A valid completion must reach evidence insertion before failing. This tests
+  // rollback after scan/vendor mutations, unlike input-validation-only failures.
+  const sixth=await create(a,'https://injected-rollback.example'),lease6=await claim();
+  await check('C16 injected evidence failure rolls back scan, vendor and lease writes',async()=>{
+    assert.equal(lease6.o_scan_id,sixth);
+    const trigger='cbc_test_fail_evidence_insert';
+    const functionName='public.cbc_test_fail_evidence_insert';
+    let c;
+    try{
+      await owner.query(`CREATE FUNCTION ${functionName}() RETURNS trigger
+        LANGUAGE plpgsql AS $ BEGIN RAISE EXCEPTION 'CBC_TEST_EVIDENCE_ABORT'; END $`);
+      await owner.query(`CREATE TRIGGER ${trigger} BEFORE INSERT ON public.evidence_items
+        FOR EACH ROW EXECUTE FUNCTION ${functionName}()`);
+      c=await worker.connect();
+      await c.query('BEGIN');
+      assert.equal(await code(()=>c.query(stmt,args(sixth,lease6.o_lease_token))),'P0001');
+      await c.query('ROLLBACK');
+      const s=await state(sixth);
+      assert.deepEqual([s.status,s.verdict,s.job,s.lease_token,s.vendors,s.evidence],
+        ['pending',null,'leased',lease6.o_lease_token,0,0]);
+    }finally{
+      if(c){await c.query('ROLLBACK').catch(()=>{});c.release();}
+      await owner.query(`DROP TRIGGER IF EXISTS ${trigger} ON public.evidence_items`);
+      await owner.query(`DROP FUNCTION IF EXISTS ${functionName}()`);
+    }
+  });
   await check('C14 worker has no direct table mutation privilege',async()=>{
     assert.equal(await code(()=>worker.query("UPDATE public.scans SET verdict='safe' WHERE id=$1",[first])),'42501');
     assert.equal(await code(()=>worker.query('SELECT * FROM public.scan_job_outbox')),'42501');

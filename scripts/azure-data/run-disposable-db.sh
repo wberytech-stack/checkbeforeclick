@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gate 008A - disposable PostgreSQL 16 validation of migrations 001-009 and the Azure data-plane code.
+# Gate 008A - disposable PostgreSQL 16 validation of migrations 001-010 and the Azure data-plane code.
 #
 # Creates a throwaway cluster in a temporary directory, listening ONLY on 127.0.0.1 (no Unix socket outside
 # the temp directory), with random one-time passwords. Applies the migrations as the cluster owner, creates
@@ -83,6 +83,12 @@ node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON s
 echo "apply 009_worker_scan_completion.sql"
 PGPASSWORD="$OWNER_PW" PGOPTIONS="-c client_min_messages=warning" "${PSQL[@]}" -d cbc_test -f "$ROOT/infra/db/migrations/009_worker_scan_completion.sql"
 node scripts/azure-data/validate-worker-completion-db.mjs
+
+# Verify the composite tenant FK on the same disposable cluster. The existing
+# worker-completion suite above validates migration 009 before hardening 010.
+echo "apply 010_outbox_composite_fk.sql"
+PGPASSWORD="$OWNER_PW" PGOPTIONS="-c client_min_messages=warning" "${PSQL[@]}" -d cbc_test -f "$ROOT/infra/db/migrations/010_outbox_composite_fk.sql"
+node scripts/azure-data/validate-outbox-composite-fk-db.mjs
 
 # Read-only release preflight: verify final schema RLS, web/worker separation,
 # protected table grants and the exact allowed/retired function surfaces.

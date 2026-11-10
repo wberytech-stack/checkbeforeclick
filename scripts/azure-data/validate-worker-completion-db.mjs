@@ -150,7 +150,7 @@ try{
     let c;
     try{
       await owner.query(`CREATE FUNCTION ${functionName}() RETURNS trigger
-        LANGUAGE plpgsql AS $ BEGIN RAISE EXCEPTION 'CBC_TEST_EVIDENCE_ABORT'; END $`);
+        LANGUAGE plpgsql AS $cbc_test$ BEGIN RAISE EXCEPTION 'CBC_TEST_EVIDENCE_ABORT'; END $cbc_test$`);
       await owner.query(`CREATE TRIGGER ${trigger} BEFORE INSERT ON public.evidence_items
         FOR EACH ROW EXECUTE FUNCTION ${functionName}()`);
       c=await worker.connect();

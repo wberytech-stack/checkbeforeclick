@@ -20,17 +20,17 @@ export function validateSubmittedUrl(input: string): string | null {
     const url = new URL(value);
     // Mirror the worker's public-URL eligibility checks for immediate feedback.
     // The server and worker remain authoritative; browser validation is UX only.
-    const host = url.hostname.replace(/^\\[|\\]$/g, "").replace(/\\.$/, "").toLowerCase();
+    const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
     const blocked = ["localhost", "local", "internal", "test", "invalid", "example",
       "onion", "home.arpa", "lan", "corp", "intranet"];
     if (!["https:", "http:"].includes(url.protocol) || !url.hostname ||
         url.username || url.password || url.hash || url.href.length > 2048 ||
-        /[\\\\\\s]/u.test(value) || (url.port && !["80", "443"].includes(url.port)) ||
+        /[\\\s]/u.test(value) || (url.port && !["80", "443"].includes(url.port)) ||
         !host.includes(".") || host.length > 253 ||
         blocked.some(suffix => host === suffix || host.endsWith("." + suffix)) ||
         host.split(".").some(part => !part || part.length > 63 ||
           part.startsWith("-") || part.endsWith("-")) ||
-        /^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(host) || host.includes(":")) return null;
+        /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) return null;
     return url.href;
   } catch { return null; }
 }

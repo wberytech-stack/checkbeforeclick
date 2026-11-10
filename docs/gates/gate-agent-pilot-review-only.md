@@ -1,36 +1,38 @@
-# CBC agent pilot — review-only implementation proposal
+# CBC agent pilot — implementation for review, deliberately disabled
 
-**Status:** Draft only. Founder approved preparing scripts and a separate draft PR, **not** enabling or running the workflow, configuring secrets, or touching Azure.
+**Status:** Draft only. Founder authorized code preparation, not workflow activation, dispatch, credential changes, merge, deployment, Azure access or governance amendment.
 
-## Purpose and relation to existing work
-This is a bounded demonstration design, not a new product architecture. Reuse Gate 005A's existing `scripts/orchestrator/` state machine and Gate 005D's reviewer-adapter contract when wiring real providers. The existing state machine does not call AI APIs. The new files are a minimal, independently inspectable fixture prototype; they are not a replacement for the existing protocol.
+## Relationship to existing PRs and code
+PR #60 contains a docs-only proposal; PR #61 is the **single implementation candidate** and supersedes PR #60's proposed implementation path without changing or closing PR #60. Gate 005A (`scripts/orchestrator/`) already provides a local review state machine and Gate 005D specifies a rigorous reviewer adapter. The new narrow runner is a pilot execution adapter, **not** a second general-purpose orchestrator. Production-grade integration should reuse Gate 005A/005D rather than duplicating their protocols.
 
-## Proposed changed files
-- `.github/workflows/agent-pilot.yml` — manual event declaration but job **hard-disabled** by `if: false`; read-only token, no secrets, no external actions.
-- `scripts/agent-pilot/orchestrate.mjs` — offline fixture demonstrating implementation → failing check → review → correction → passing check → founder stop.
-- `scripts/agent-pilot/review.mjs` — fail-closed review-schema/SHA validator; external OpenAI invocation explicitly disabled.
-- `scripts/agent-pilot/verify.mjs` — single allowed documentation file and deterministic acceptance marker.
-- `docs/engineering/agent-pilot-sample.md` — future isolated documentation test target.
-- This gate document.
+## Exact proposed execution and authentication
+1. Founder explicitly approves a **separate activation PR** and one manual dispatch. This PR's workflow remains hard-disabled.
+2. The future GitHub Actions `workflow_dispatch` checks out the pinned `master` SHA, creates the dedicated task branch `gate-agent-pilot-run-001`, and runs the pilot script with a **GitHub App installation token** scoped to this repository and branch (contents write and draft-PR creation only). No broad PAT; GitHub's built-in token is read-only in this draft.
+3. `claude -p` invokes the preinstalled **Claude Code CLI** with its own separate approved Claude authentication (e.g., scoped Anthropic API credential supported by the CLI). It is not assumed that a GitHub-connected Claude web session makes the CLI available in Actions. Exact install method and immutable action/dependency versions must be verified before activation. The CLI is limited to Edit/Write/Read tools and a task allowlist, with filesystem changes verified by git.
+4. The runner uses `fetch('https://api.openai.com/v1/responses')` with `OPENAI_API_KEY` and a founder-selected `CBC_OPENAI_REVIEW_MODEL`; the model receives a bounded diff, task spec and deterministic acceptance outcome. Its JSON findings are checked for exact commit SHA, permitted file and founder-only escalation. **The reviewer is an API agent, not this ChatGPT conversation.**
+5. The first Claude pass intentionally omits the acceptance marker. The **real verifier** reads the changed document and fails. The OpenAI reviewer must independently identify the missing criterion, rather than being supplied a fabricated reviewer response. Claude gets its validated finding, makes exactly one correction, and the verifier must pass on a new SHA. The reviewer re-examines the new SHA. If any step fails, stop for founder.
+6. A separate approved publishing stage would push the task branch and create a **draft PR**, record check IDs, commit SHAs, outcomes and redacted logs. This draft runner deliberately does not push or open a PR. It cannot yet demonstrate the full remote handoff.
 
-## What is real versus simulated
-All AI steps in `--offline-fixture` are **synthetic**. The workflow has not been dispatched. No Claude or OpenAI credential is read, no API is called, no branch is created by the scripts, and no PR is created by them. A successful fixture result does **not** prove agent collaboration.
+## Security and control requirements
+- Allowed changed file: **only** `docs/engineering/agent-pilot-sample.md`. Both worktree and committed diff are checked. No application, migration, infrastructure, environment, workflow or dependency changes in the live pilot.
+- Single trusted task `cbc-doc-pilot-001`, no issue/PR text instructions. Only manual `workflow_dispatch`; no comments, schedules or PR-triggered write jobs.
+- Single run at a time via GitHub Actions `concurrency` and no automatic retries. One correction attempt, two Claude invocations, two OpenAI reviewer invocations.
+- GitHub token read-only until separately approved activation. Implementation/publishing token must have minimal repository scope and no access to protected branches. No Azure, Key Vault or deployment secrets.
+- Pin GitHub Actions by immutable commit SHAs; use an isolated runner with no cloud credentials and no untrusted checkout contexts. Do not enable `pull_request_target`.
+- Manual stop: cancel the Actions run, revoke its short-lived GitHub App token or provider credential if necessary, and leave branch/PR unmerged. Fail closed on timeouts, missing auth, wrong branch, scope violation, changed master, review SHA mismatch or exceeded budgets.
+- No model response is founder authorization. No automatic merge, release, workflow modification or governance change.
 
-## Remaining implementation after founder review
-1. Confirm whether existing Claude Code integration is GitHub Action, GitHub App, or local CLI. Bind it to a single trusted task/branch, with no production credentials.
-2. Implement the Gate 005D OpenAI reviewer adapter using its policy-pinning, secret-scan, immutable SHA and founder-decision rules. Validate schema, scope, and commit identity before handing findings to Claude.
-3. Wire GitHub Actions to the existing Gate 005A orchestrator and provider adapters, with separate read-only review and least-privilege implementation credentials. Keep workflow manual-only, concurrency one, bounded runtime, maximum two correction rounds, no PR comment trigger, no automatic merge or deploy.
-4. Enforce real usage limits or fail closed. Do not call an unbounded provider with a merely advisory budget. Obtain founder approval for each secret/permission change and for the pilot execution.
-5. Demonstrate one actual documentation-only task and correction with logs, exact SHAs, check results, draft PR and founder stop. This has **not** occurred.
+## Costs and limits
+- Hard **call-count ceilings in code**: at most 2 Claude invocations and 2 OpenAI invocations. Each Claude invocation has a 120-second process timeout; each OpenAI request a 30-second abort timeout. OpenAI requests cap output tokens at 700 and diff input at 20 KB. Workflow job timeout must be 10 minutes or less.
+- These limits are **not a monetary hard cap**: provider-side metering, retries inside Claude Code, model pricing, prompt/context expansion, and charges on timed-out calls may exceed estimates. Before activation, select specific models, set provider-side budget alerts and usage caps where supported, and enforce Claude's model/max-turns and a bounded input budget. If a strict spending ceiling cannot be guaranteed, disclose that and obtain explicit founder approval of maximum financial exposure.
+- No Gemini costs in this pilot.
 
-## Existing constitution constraints
-`AGENTS.md` §§5–8, 11, 13, 18–20 apply. Agent instructions and model output are not founder authorization. Changes to constitution require its docs-only amendment procedure. No Azure, Key Vault, non-disposable DB, deployment, dependency, merge, or environment change is part of this PR.
+## Activation plan — separate approval required
+1. Review PR #61, inspect Gate 005A/005D compatibility, and run offline test `node scripts/agent-pilot/test-pilot.mjs` in a disposable local checkout **only after approval to run validation**. This request did not authorize running the pilot.
+2. Obtain founder approval to merge the reviewed workflow and scripts into **default branch `master`**. GitHub normally offers manual `workflow_dispatch` for workflows present on the default branch. This merge is **not** authorized here and may have separate Vercel production implications under AGENTS.md.
+3. In a **separate activation PR**, replace the hard-disabled job with a manual-only, pinned-actions job, install/verify Claude Code CLI, create/pin the isolated task branch, add a safe draft-PR publishing stage, enforce concurrency, verify exact SHA after push, capture CI check conclusions for that SHA, and integrate Gate 005A/005D review contracts. This draft is not yet dispatchable for a real end-to-end loop.
+4. Founder separately approves credential creation/configuration, GitHub App permissions, provider models, budgets, and the exact manual dispatch. No secrets in repository files or chat.
+5. Dispatch exactly once, capture SHA-linked evidence, stop for founder review; never merge or deploy automatically.
 
-## Validation plan (not executed by this request)
-- `node scripts/agent-pilot/orchestrate.mjs --offline-fixture` should produce `fixture_pass` and explicitly `real_agents_invoked: false`.
-- `node scripts/agent-pilot/verify.mjs docs/engineering/agent-pilot-sample.md` should fail until a future task adds the acceptance marker.
-- Schema checks must reject stale review SHAs, founder-decision injection and out-of-scope findings.
-- Inspect workflow job-level `if: false` and read-only permissions before any merge.
-
-## Decisions needed before activation
-Founder approval of the exact workflow change to remove the disabled guard; explicit approval to configure narrowly scoped Claude/OpenAI credentials, model selection, cost caps and a one-time manual dispatch. Nothing in this draft constitutes those approvals.
+## Current validation status
+No workflow dispatched, no AI/API calls made, and no Azure touched. The offline test script is prepared but has **not** been executed in this request. A passing offline test would not establish live AI collaboration.

@@ -10,6 +10,11 @@ check("accept canonical HTTPS URL", () => assert.equal(validateSubmittedUrl(" ht
 for (const raw of ["javascript:alert(1)", "file:///etc/passwd", "ftp://example.com", "https://user:pass@example.com", "https://example.com/#secret", "https://example.com/\nfoo", ""]) {
   check("reject malformed or unsupported URL", () => assert.equal(validateSubmittedUrl(raw), null));
 }
+for (const raw of ["http://localhost/path", "https://127.0.0.1", "https://[::1]/",
+  "https://service.internal", "https://demo.example", "https://site.onion",
+  "https://example.com:8443", "https://user@example.com", "https://example.com\\\\@evil.com"]) {
+  check("reject URLs the Azure worker cannot scan", () => assert.equal(validateSubmittedUrl(raw), null));
+}
 check("accept canonical creation ID", () => assert.equal(parseScanCreated({ id: ID, status: "pending" }), ID));
 for (const body of [null, {}, { id: ID.toUpperCase(), status: "pending" }, { id: ID, status: "complete" }]) {
   check("reject malformed creation response", () => assert.throws(() => parseScanCreated(body)));

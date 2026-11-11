@@ -65,3 +65,23 @@ export function filterAzureHistory(
     return true;
   });
 }
+
+/** Stable, non-mutating history ordering for the security dashboard. */
+export type AzureHistorySort = "newest" | "oldest" | "severity";
+const severityRank = (item: AzureHistoryItem): number => {
+  if (item.status !== "complete") return item.status === "failed" ? 3 : 4;
+  if (item.verdict === "dangerous") return 0;
+  if (item.verdict === "suspicious") return 1;
+  return 2; // Unknown is not safe.
+};
+export function sortAzureHistory(items: readonly AzureHistoryItem[], order: AzureHistorySort): AzureHistoryItem[] {
+  const valid: readonly AzureHistorySort[] = ["newest", "oldest", "severity"];
+  if (!valid.includes(order)) throw new Error("Invalid history sort");
+  return items.map((item, index) => ({ item, index })).sort((a, b) => {
+    const time = Date.parse(a.item.created_at) - Date.parse(b.item.created_at);
+    const primary = order === "severity" ? severityRank(a.item) - severityRank(b.item) :
+      order === "oldest" ? time : -time;
+    const secondary = order === "severity" ? -time : 0;
+    return primary || secondary || a.index - b.index;
+  }).map(({ item }) => item);
+}

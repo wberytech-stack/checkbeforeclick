@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { filterAzureHistory, historyRiskLabel, parseAzureScanHistory } from "../../src/client/azureHistoryUi.ts";
+import { filterAzureHistory, historyRiskLabel, parseAzureScanHistory, sortAzureHistory } from "../../src/client/azureHistoryUi.ts";
 
 const ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ID2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -40,3 +40,19 @@ check("filter suspicious selects only completed suspicious scans", () => assert.
 check("filter active", () => assert.deepEqual(filterAzureHistory(rows, "", "active").map(x => x.id), [ID2]));
 check("filter complete", () => assert.deepEqual(filterAzureHistory(rows, "", "complete").map(x => x.id), [ID]));
 console.log(`Azure history UI: ${count} offline assertions passed`);
+
+check("newest sort does not mutate source", () => {
+  const input = [rows[0], { ...rows[1], created_at: "2026-11-03T00:00:00.000Z" }];
+  assert.deepEqual(sortAzureHistory(input, "newest").map(x => x.id), [ID2, ID]);
+  assert.deepEqual(input.map(x => x.id), [ID, ID2]);
+});
+check("oldest sort", () => assert.deepEqual(sortAzureHistory([
+  rows[0], { ...rows[1], created_at: "2026-11-03T00:00:00.000Z" }
+], "oldest").map(x => x.id), [ID, ID2]));
+check("severity sort puts dangerous ahead of active scans", () => assert.deepEqual(
+  sortAzureHistory([rows[1], rows[0]], "severity").map(x => x.id), [ID, ID2]));
+check("severity sort never treats unknown as safe", () => assert.deepEqual(sortAzureHistory([
+  { ...rows[0], id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", verdict: "unknown" },
+  rows[0],
+], "severity").map(x => x.id), [ID, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"]));
+check("invalid sort rejected", () => assert.throws(() => sortAzureHistory(rows, "arbitrary" as never)));

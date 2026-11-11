@@ -1,0 +1,32 @@
+# REVIEW-ONLY: not executable until a separately approved activation change.
+# The manual dispatch event exists for design inspection; the only job is hard-disabled.
+name: CBC agent pilot (DISABLED)
+on:
+  workflow_dispatch:
+    inputs:
+      approved_task:
+        description: 'Trusted task ID (not proof of founder approval)'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: cbc-agent-pilot-singleton
+  cancel-in-progress: false
+jobs:
+  disabled:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Intentionally disabled
+        run: echo "No agent or API execution; separate founder activation approval required."
+# Future activation PR must:
+# - keep manual-only trigger, concurrency, timeout and restricted permissions
+# - pin checkout and other actions to audited immutable SHAs
+# - verify founder-approved task and trusted base SHA
+# - run bounded Claude Code CLI, deterministic checks and OpenAI review
+# - verify the exact pushed commit SHA and associated CI checks
+# - publish a draft PR and stop for founder; never merge/deploy

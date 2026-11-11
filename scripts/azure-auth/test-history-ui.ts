@@ -37,6 +37,7 @@ check("filter suspicious selects only completed suspicious scans", () => assert.
   { ...rows[0], id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", verdict: "suspicious" },
   { ...rows[0], id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", status: "processing", verdict: "suspicious" },
 ], "", "suspicious").map(x => x.id), ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"]));
+check("invalid filter fails closed", () => assert.throws(() => filterAzureHistory(rows, "", "invalid" as never), /Invalid history filter/));
 check("filter active", () => assert.deepEqual(filterAzureHistory(rows, "", "active").map(x => x.id), [ID2]));
 check("filter complete", () => assert.deepEqual(filterAzureHistory(rows, "", "complete").map(x => x.id), [ID]));
 

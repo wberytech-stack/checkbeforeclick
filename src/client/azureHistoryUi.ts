@@ -52,6 +52,8 @@ export function filterAzureHistory(
   query: string,
   filter: AzureHistoryFilter,
 ): AzureHistoryItem[] {
+  const allowedFilters: readonly AzureHistoryFilter[] = ["all", "attention", "dangerous", "suspicious", "active", "complete"];
+  if (!allowedFilters.includes(filter)) throw new Error("Invalid history filter");
   const term = query.trim().toLocaleLowerCase("en");
   return items.filter((item) => {
     const matches = !term || item.raw_input.toLocaleLowerCase("en").includes(term) ||

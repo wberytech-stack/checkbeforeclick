@@ -39,7 +39,7 @@ check("filter suspicious selects only completed suspicious scans", () => assert.
 ], "", "suspicious").map(x => x.id), ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"]));
 check("filter active", () => assert.deepEqual(filterAzureHistory(rows, "", "active").map(x => x.id), [ID2]));
 check("filter complete", () => assert.deepEqual(filterAzureHistory(rows, "", "complete").map(x => x.id), [ID]));
-console.log(`Azure history UI: ${count} offline assertions passed`);
+
 
 check("newest sort does not mutate source", () => {
   const input = [rows[0], { ...rows[1], created_at: "2026-11-03T00:00:00.000Z" }];
@@ -56,3 +56,4 @@ check("severity sort never treats unknown as safe", () => assert.deepEqual(sortA
   rows[0],
 ], "severity").map(x => x.id), [ID, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"]));
 check("invalid sort rejected", () => assert.throws(() => sortAzureHistory(rows, "arbitrary" as never)));
+console.log(`Azure history UI: ${count} offline assertions passed`);

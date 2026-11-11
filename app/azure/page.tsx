@@ -15,6 +15,7 @@ import {
   type AzureHistoryFilter,
   type AzureHistoryView,
   filterAzureHistory,
+  sortAzureHistory,
   historyRiskLabel,
   parseAzureScanHistory,
 } from "../../src/client/azureHistoryUi";
@@ -39,7 +40,7 @@ export default function AzureScanPage() {
   const [historyKey, setHistoryKey] = useState(0);
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyFilter, setHistoryFilter] = useState<AzureHistoryFilter>("all");
-  const [historySort, setHistorySort] = useState<"newest" | "oldest">("newest");
+  const [historySort, setHistorySort] = useState<"newest" | "oldest" | "severity">("newest");
 
   useEffect(() => {
     try {
@@ -210,10 +211,7 @@ export default function AzureScanPage() {
   const isDangerous = scan?.scan.verdict === "dangerous" && scan.scan.status === "complete";
   const recentScans = history?.scans ?? [];
   const selectedHistory = recentScans.find((item) => item.id === scanId);
-  const filteredHistory = filterAzureHistory(recentScans, historyQuery, historyFilter)
-    .sort((a, b) => historySort === "newest"
-      ? b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)
-      : a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  const filteredHistory = sortAzureHistory(filterAzureHistory(recentScans, historyQuery, historyFilter), historySort);
   const attentionCount = recentScans.filter((item) => item.status === "complete" &&
     (item.verdict === "dangerous" || item.verdict === "suspicious")).length;
   const activeCount = recentScans.filter((item) =>
@@ -408,9 +406,9 @@ export default function AzureScanPage() {
                       <tr><th scope="col" className="px-5 py-3 font-semibold">URL</th><th scope="col" className="px-3 py-3 font-semibold">Status</th>
                         <th scope="col" className="px-3 py-3 font-semibold">Risk</th>
                         <th scope="col" className="px-3 py-3 font-semibold">
-                          <button type="button" onClick={() => setHistorySort((value) => value === "newest" ? "oldest" : "newest")}
-                            aria-label={historySort === "newest" ? "Sort oldest first" : "Sort newest first"}
-                            className="rounded underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500">Submitted {historySort === "newest" ? "↓" : "↑"}</button>
+                          <button type="button" onClick={() => setHistorySort((value) => value === "newest" ? "oldest" : value === "oldest" ? "severity" : "newest")}
+                            aria-label={historySort === "newest" ? "Sort oldest first" : historySort === "oldest" ? "Sort by severity" : "Sort newest first"}
+                            className="rounded underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500">{historySort === "severity" ? "Severity ↓" : "Submitted " + (historySort === "newest" ? "↓" : "↑")}</button>
                         </th><th scope="col" className="px-5 py-3 font-semibold">Details</th></tr>
                     </thead>
                     <tbody>

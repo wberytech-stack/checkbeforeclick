@@ -23,6 +23,12 @@ const payload = { scan: { id: ID, input_type: "url", raw_input: "https://example
 check("parse tenant-filtered read shape", () => assert.equal(parseScanRead(payload, ID).scan.id, ID));
 check("reject mismatched scan ID", () => assert.throws(() => parseScanRead(payload, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")));
 check("reject wrong scan type", () => assert.throws(() => parseScanRead({ ...payload, scan: { ...payload.scan, input_type: "email" } }, ID)));
+for (const verdict of ["benign", "SAFE", "", "malicious", 42, {}, []]) {
+  check("reject unsupported verdict response", () => assert.throws(() => parseScanRead({ ...payload, scan: { ...payload.scan, verdict } }, ID)));
+}
+for (const verdict of [null, "safe", "suspicious", "dangerous", "unknown"]) {
+  check("accept documented verdict response", () => assert.equal(parseScanRead({ ...payload, scan: { ...payload.scan, verdict } }, ID).scan.verdict, verdict));
+}
 check("reject unbounded evidence", () => assert.throws(() => parseScanRead({ ...payload, evidence: Array(501).fill({ title: "a", detail: null }) }, ID)));
 check("reject malformed evidence", () => assert.throws(() => parseScanRead({ ...payload, evidence: [{ title: 7, detail: null }] }, ID)));
 check("unknown verdict never says safe", () => assert.match(scanPresentation(payload.scan as ReturnType<typeof parseScanRead>["scan"]).label, /not confirmed/i));

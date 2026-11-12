@@ -52,10 +52,13 @@ function isoDate(value: unknown, nullable: boolean): string | null {
 }
 
 function scanRecord(row: Record<string, unknown>, id: string) {
-  if (row.id !== id || typeof row.input_type !== "string" ||
-      typeof row.raw_input !== "string" || typeof row.status !== "string" ||
-      !optionalText(row.verdict) || !optionalNumber(row.risk_score) ||
-      !optionalNumber(row.confidence_score)) {
+  if (row.id !== id || row.input_type !== "url" ||
+      typeof row.raw_input !== "string" || row.raw_input.length > 2048 ||
+      !["pending", "processing", "complete", "failed"].includes(String(row.status)) ||
+      !(row.verdict === null || ["safe", "suspicious", "dangerous", "unknown"].includes(row.verdict as string)) ||
+      !optionalNumber(row.risk_score) || !optionalNumber(row.confidence_score) ||
+      (row.risk_score !== null && (row.risk_score < 0 || row.risk_score > 100)) ||
+      (row.confidence_score !== null && (row.confidence_score < 0 || row.confidence_score > 100))) {
     throw new Error("Invalid scan record");
   }
   return {
@@ -72,9 +75,12 @@ function scanRecord(row: Record<string, unknown>, id: string) {
 }
 
 function evidenceRecord(row: Record<string, unknown>) {
-  if (typeof row.signal_type !== "string" || typeof row.severity !== "string" ||
-      typeof row.title !== "string" || !optionalText(row.detail) ||
-      typeof row.score_impact !== "number" || !Number.isFinite(row.score_impact)) {
+  if (typeof row.signal_type !== "string" || row.signal_type.length > 128 ||
+      !["critical", "high", "medium", "low", "info", "good"].includes(String(row.severity)) ||
+      typeof row.title !== "string" || row.title.length > 300 ||
+      !optionalText(row.detail) || (typeof row.detail === "string" && row.detail.length > 4000) ||
+      typeof row.score_impact !== "number" || !Number.isInteger(row.score_impact) ||
+      row.score_impact < -100 || row.score_impact > 100) {
     throw new Error("Invalid evidence record");
   }
   return {

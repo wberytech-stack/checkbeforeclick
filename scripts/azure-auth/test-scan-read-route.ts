@@ -197,5 +197,35 @@ await check("S23 fragment rejected before SQL", async () => {
   await status(f, 400);
   assert.deepEqual(f.events, []);
 });
+await check("S24 malformed verdict fails closed", async () => {
+  const f = fixture({ scans: [{ ...scan, verdict: "verified_safe" }] });
+  await status(f, 503);
+  assert.ok(!f.events.includes("evidence"));
+});
+await check("S25 out-of-range risk score fails closed", async () => {
+  const f = fixture({ scans: [{ ...scan, risk_score: 101 }] });
+  await status(f, 503);
+  assert.ok(!f.events.includes("evidence"));
+});
+await check("S26 unsupported scan status fails closed", async () => {
+  const f = fixture({ scans: [{ ...scan, status: "published" }] });
+  await status(f, 503);
+});
+await check("S27 unknown evidence severity fails closed", async () => {
+  const f = fixture({ evidence: [{ ...evidence, severity: "verified" }] });
+  await status(f, 503);
+});
+await check("S28 out-of-range evidence impact fails closed", async () => {
+  const f = fixture({ evidence: [{ ...evidence, score_impact: 101 }] });
+  await status(f, 503);
+});
+await check("S29 valid dangerous verdict and critical evidence pass", async () => {
+  const f = fixture({ scans: [{ ...scan, verdict: "dangerous", risk_score: 95 }],
+    evidence: [{ ...evidence, severity: "critical", score_impact: 95 }] });
+  const response = await status(f, 200);
+  const body = await response.json();
+  assert.equal(body.scan.verdict, "dangerous");
+  assert.equal(body.evidence[0].severity, "critical");
+});
 console.log("\n=== Azure scan read boundary: " + passed + " passed, " + failed + " failed ===");
 process.exitCode = failed ? 1 : 0;

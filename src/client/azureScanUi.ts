@@ -52,7 +52,7 @@ export function parseScanRead(value: unknown, id: string): AzureScanView {
   if (!UUID.test(id) || s.id !== id || s.input_type !== "url" ||
       typeof s.raw_input !== "string" || s.raw_input.length > 10000 ||
       !["pending", "processing", "complete", "failed"].includes(String(s.status)) ||
-      !(s.verdict === null || typeof s.verdict === "string") ||
+      !(s.verdict === null || ["safe", "suspicious", "dangerous", "unknown"].includes(s.verdict as string)) ||
       !Array.isArray(row.evidence) || row.evidence.length > 500) throw new Error("Invalid scan response");
   const evidence = row.evidence.map((entry: unknown) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("Invalid evidence");

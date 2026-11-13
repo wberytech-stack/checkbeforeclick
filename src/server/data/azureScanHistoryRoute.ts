@@ -32,7 +32,7 @@ export function parseAzureHistoryRow(row: Record<string, unknown>) {
   if (typeof row.id !== "string" || !UUID.test(row.id) ||
       typeof row.raw_input !== "string" || row.raw_input.length > 10000 ||
       (typeof row.status !== "string" || !["pending", "processing", "complete", "failed"].includes(row.status)) ||
-      !(row.verdict === null || (typeof row.verdict === "string" && row.verdict.length <= 64))) {
+      !(row.verdict === null || ["safe", "suspicious", "dangerous", "unknown"].includes(row.verdict as string))) {
     throw new Error("Invalid history record");
   }
   const date = row.created_at instanceof Date ? row.created_at :

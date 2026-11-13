@@ -64,10 +64,13 @@ export async function runAzureScanHistoryRoute(
       async (client, session) => {
         const rows = (await client.query(HISTORY_SQL, [session.organizationId])).rows;
         if (rows.length > MAX_ROWS + 1) throw new Error("Unbounded history result");
-        return {
-          scans: rows.slice(0, MAX_ROWS).map(parseAzureHistoryRow),
-          has_more: rows.length > MAX_ROWS,
-        };
+        const scans = rows.slice(0, MAX_ROWS).map(parseAzureHistoryRow);
+        // A repeated identifier indicates a malformed query/result. Reject it
+        // before sending history to the browser, which also requires unique IDs.
+        if (new Set(scans.map((scan) => scan.id)).size !== scans.length) {
+          throw new Error("Duplicate history identifier");
+        }
+        return { scans, has_more: rows.length > MAX_ROWS };
       },
     );
     if (!result.authenticated) return respond(401, { error: "Unauthorized" });

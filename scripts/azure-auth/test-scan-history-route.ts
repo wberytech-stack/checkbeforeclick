@@ -133,10 +133,16 @@ await check("H09 empty history returns zero items", async () => {
   assert.deepEqual(await r.json(), { scans: [], has_more: false });
 });
 await check("H10 51st row is only used for has_more", async () => {
-  const f = fixture({ rows: Array.from({ length: 51 }, (_, i) => ({ ...row, id: i === 50 ? OTHER : SCAN })) });
+  const f = fixture({ rows: Array.from({ length: 51 }, (_, i) => ({ ...row, id: i === 50 ? OTHER : `44444444-4444-4444-8444-${String(i).padStart(12, "0")}` })) });
   const r = await status(f, 200); const body = await r.json();
   assert.equal(body.scans.length, 50); assert.equal(body.has_more, true);
   assert.ok(!JSON.stringify(body).includes(OTHER));
+});
+await check("H10a duplicate history identifiers fail closed before browser response", async () => {
+  const f = fixture({ rows: [row, { ...row }] });
+  const r = await status(f, 503);
+  assert.deepEqual(await r.json(), { error: "Scan history temporarily unavailable" });
+  assert.equal(f.events.at(-1), "ROLLBACK");
 });
 await check("H11 unbounded result fails closed", async () => {
   const f = fixture({ rows: Array(52).fill(row) }); await status(f, 503);

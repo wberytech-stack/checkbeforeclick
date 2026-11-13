@@ -20,6 +20,12 @@ for (const bad of [
 ]) {
   check("reject malformed history row", () => assert.throws(() => parseAzureScanHistory({ scans: [bad], has_more: false })));
 }
+for (const verdict of ["safe", "suspicious", "dangerous", "unknown", null]) {
+  check("accept supported history verdict", () => assert.equal(parseAzureScanHistory({ scans: [{ ...row, verdict }], has_more: false }).scans[0].verdict, verdict));
+}
+for (const verdict of ["benign", "SAFE", "x".repeat(64)]) {
+  check("reject unsupported history verdict", () => assert.throws(() => parseAzureScanHistory({ scans: [{ ...row, verdict }], has_more: false })));
+}
 check("duplicate scan IDs are rejected", () => assert.throws(() => parseAzureScanHistory({ scans: [row, row], has_more: false })));
 check("dangerous verdict is explicit", () => assert.equal(historyRiskLabel(row as ReturnType<typeof parseAzureScanHistory>["scans"][number]), "Dangerous"));
 check("unknown verdict is not called safe", () => assert.equal(historyRiskLabel({ ...row, verdict: "safe" } as ReturnType<typeof parseAzureScanHistory>["scans"][number]), "Unconfirmed"));

@@ -162,11 +162,18 @@ await check("H14a oversized verdict fails closed before browser parsing", async 
   assert.deepEqual(await r.json(), { error: "Scan history temporarily unavailable" });
   assert.equal(f.events.at(-1), "ROLLBACK");
 });
-await check("H14b maximum-length verdict remains valid", async () => {
+await check("H14b unsupported verdict at maximum length fails closed", async () => {
   const f = fixture({ rows: [{ ...row, verdict: "x".repeat(64) }] });
-  const r = await status(f, 200);
-  const body = await r.json();
-  assert.equal(body.scans[0].verdict.length, 64);
+  const r = await status(f, 503);
+  assert.deepEqual(await r.json(), { error: "Scan history temporarily unavailable" });
+  assert.equal(f.events.at(-1), "ROLLBACK");
+});
+await check("H14c all supported verdicts remain accepted", async () => {
+  for (const verdict of ["safe", "suspicious", "dangerous", "unknown", null]) {
+    const f = fixture({ rows: [{ ...row, verdict }] });
+    const r = await status(f, 200);
+    assert.equal((await r.json()).scans[0].verdict, verdict);
+  }
 });
 await check("H15 malformed tenant context rolls back", async () => {
   const f = fixture({ contextOrg: OTHER }); await status(f, 503);

@@ -10,7 +10,7 @@ import { createAzureClientAssertion } from "../../src/server/auth/azureClientAss
 const dir = mkdtempSync(join(tmpdir(), "cbc-client-assertion-"));
 const endpoint = "https://tenant.ciamlogin.com/tenant/oauth2/v2.0/token";
 const clientId = "cbc-client";
-const now = Date.now();
+let now = Date.now();
 let passed = 0;
 let input: Parameters<typeof createAzureClientAssertion>[0];
 function check(label: string, action: () => void) { action(); passed++; console.log("PASS", label); }
@@ -27,6 +27,9 @@ try {
     "-subj", "/CN=cbc-offline-test", "-days", "2"], { stdio: "ignore" });
   const certPem = readFileSync(certPath, "utf8");
   const cert = new X509Certificate(certPem);
+  // Certificate creation can cross a second boundary after the test starts.
+  // Use a clock after issuance so validFrom is not accidentally in the future.
+  now = Date.now() + 1000;
   input = { clientId, tokenEndpoint: endpoint, privateKeyPemBase64: Buffer.from(pem).toString("base64"),
     certificatePemBase64: Buffer.from(certPem).toString("base64"), now: () => now };
   check("C01 PS256 signature and certificate thumbprint", () => {

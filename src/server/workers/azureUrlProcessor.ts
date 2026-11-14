@@ -12,7 +12,7 @@ const ALLOWED_THREATS = new Set([
 ]);
 const BLOCKED_SUFFIXES = [
   "localhost", "local", "internal", "test", "invalid", "example", "onion",
-  "home.arpa", "lan", "corp", "intranet",
+  "arpa", "alt", "localdomain", "lan", "corp", "intranet",
 ];
 
 export function canonicalPublicUrl(raw: string): string | null {

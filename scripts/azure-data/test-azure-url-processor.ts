@@ -27,6 +27,7 @@ await check("U03 block internal/reserved names and single-label hosts", async ()
 });
 await check("U04 reject credentials, unusual ports and non-web schemes", async () => {
   for (const url of ["https://user:pass@example.com/", "http://example.com:8080/",
+    "http://example.com:443/", "https://example.com:80/",
     "file:///etc/passwd", "ftp://example.com/", "http://example.com\\@127.0.0.1/",
     "https://example.com/\n", "https://example.com/ a"]) {
     assert.equal(canonicalPublicUrl(url), null, url);

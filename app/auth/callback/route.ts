@@ -1,47 +1,18 @@
-﻿import { type NextRequest, NextResponse } from "next/server"
-import { createServerClient } from "@supabase/ssr"
+/**
+ * Azure-native Entra authorization-code callback. Legacy Supabase account
+ * preservation is intentionally not required for the clean-room migration.
+ * This route does not issue a browser credential until PostgreSQL commits.
+ */
+import "server-only";
+import { runAzureCallbackRoute } from "../../../src/server/auth/azureCallbackRoute";
+import { withPgTransaction } from "../../../src/server/db/postgres";
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const code = searchParams.get("code")
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  const rawNext = searchParams.get("next")
-  const safeNext =
-    rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//")
-      ? rawNext
-      : "/dashboard"
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? request.nextUrl.origin
-
-  if (!code) {
-    return NextResponse.redirect(new URL("/login", appUrl))
-  }
-
-  const response = NextResponse.redirect(new URL(safeNext, appUrl))
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set(name, value, options)
-          })
-        },
-      },
-    }
-  )
-
-  const { error } = await supabase.auth.exchangeCodeForSession(code)
-
-  if (error) {
-    console.error("[auth/callback] exchangeCodeForSession error:", error.message)
-    return NextResponse.redirect(new URL("/login", appUrl))
-  }
-
-  return response
+export async function GET(request: Request): Promise<Response> {
+  return runAzureCallbackRoute(request, {
+    env: process.env,
+    transaction: withPgTransaction,
+  });
 }

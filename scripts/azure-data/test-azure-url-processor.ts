@@ -20,7 +20,8 @@ await check("U02 block private/loopback IPs and numeric IPv4 aliases", async () 
 });
 await check("U03 block internal/reserved names and single-label hosts", async () => {
   for (const host of ["localhost", "foo.localhost", "metadata.internal", "foo.local",
-    "foo.test", "foo.example", "foo.onion", "foo.home.arpa", "intranet", "db"]) {
+    "foo.test", "foo.example", "foo.onion", "foo.home.arpa", "intranet", "db",
+    "router.localdomain", "localhost.localdomain", "service.alt", "1.0.0.127.in-addr.arpa"]) {
     assert.equal(canonicalPublicUrl("http://" + host + "/"), null, host);
   }
 });

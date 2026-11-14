@@ -36,6 +36,9 @@ CREATE TABLE public.scan_job_outbox (
 );
 CREATE INDEX scan_job_claim_idx ON public.scan_job_outbox (state, created_at, scan_id)
   WHERE attempt_count < 8;
+-- Keep terminal recovery bounded even with a large backlog of expired leases.
+CREATE INDEX scan_job_exhausted_idx ON public.scan_job_outbox (leased_until, scan_id)
+  WHERE state = 'leased' AND attempt_count = 8;
 ALTER TABLE public.scan_job_outbox ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.scan_job_outbox FROM PUBLIC, cbc_app, cbc_worker;
 -- Zero RLS policies; only the narrowly granted SECURITY DEFINER functions
@@ -82,6 +85,40 @@ BEGIN
      p_lease_seconds IS NULL OR p_lease_seconds NOT BETWEEN 30 AND 600 THEN
     RAISE EXCEPTION 'invalid worker lease request' USING ERRCODE = '22023';
   END IF;
+  -- An exhausted, expired lease must not leave a customer-facing scan
+  -- "pending" forever. Reconcile at most ten abandoned jobs per invocation,
+  -- even when there is no new work to claim. The worker role cannot directly
+  -- mutate either table; this remains inside the restricted definer function.
+  -- Never classify a provider failure as safe or fabricate threat evidence.
+  WITH exhausted AS (
+    SELECT j.scan_id, j.organization_id
+      FROM public.scan_job_outbox j
+      JOIN public.scans s ON s.id = j.scan_id AND s.organization_id = j.organization_id
+     WHERE j.state = 'leased' AND j.attempt_count = 8
+       AND j.leased_until <= pg_catalog.clock_timestamp()
+       AND s.status = 'pending'
+     ORDER BY j.leased_until, j.scan_id
+     FOR UPDATE OF j SKIP LOCKED
+     LIMIT 10
+  ), failed_scans AS (
+    UPDATE public.scans s
+       SET status = 'failed', verdict = 'unknown',
+           risk_score = NULL, confidence_score = NULL,
+           ai_explanation = 'The reputation check could not finish after repeated attempts.',
+           recommended_action = 'Do not assume this URL is safe. Try again later or verify independently.',
+           completed_at = pg_catalog.clock_timestamp()
+      FROM exhausted e
+     WHERE s.id = e.scan_id AND s.organization_id = e.organization_id
+       AND s.status = 'pending'
+    RETURNING s.id
+  )
+  UPDATE public.scan_job_outbox j
+     SET state = 'done', lease_token = NULL, leased_until = NULL,
+         completed_at = pg_catalog.clock_timestamp(),
+         updated_at = pg_catalog.clock_timestamp()
+    FROM failed_scans f
+   WHERE j.scan_id = f.id;
+
   RETURN QUERY
   WITH candidates AS (
     SELECT j.scan_id

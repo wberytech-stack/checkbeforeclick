@@ -21,7 +21,7 @@ export function canonicalPublicUrl(raw: string): string | null {
   let parsed: URL;
   try { parsed = new URL(raw); } catch { return null; }
   if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password ||
-      !parsed.hostname || (parsed.port && !["80", "443"].includes(parsed.port))) return null;
+      !parsed.hostname || (parsed.port && parsed.port !== (parsed.protocol === "http:" ? "80" : "443"))) return null;
   const host = parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
   if (!host.includes(".") || isIP(host) !== 0 ||
       BLOCKED_SUFFIXES.some(suffix => host === suffix || host.endsWith("." + suffix)) ||

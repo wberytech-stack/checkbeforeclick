@@ -33,6 +33,13 @@ await check("U04 reject credentials, unusual ports and non-web schemes", async (
     assert.equal(canonicalPublicUrl(url), null, url);
   }
 });
+await check("U13 reject malformed DNS labels before provider lookup", async () => {
+  for (const host of ["foo_bar.example.org", "_service.example.org",
+    "bad!label.example.org", "a".repeat(64) + ".example.org"]) {
+    assert.equal(canonicalPublicUrl("https://" + host + "/"), null, host);
+  }
+  assert.equal(canonicalPublicUrl("https://a-b.example.org/"), "https://a-b.example.org/");
+});
 await check("U05 reject oversized URLs", async () => {
   assert.equal(canonicalPublicUrl("https://example.com/" + "x".repeat(2100)), null);
 });
@@ -81,4 +88,4 @@ await check("U12 provider never receives URL fragment or lease token", async () 
   assert.equal(seen.includes("11111111"), false);
 });
 console.log("\n=== Azure URL processor offline: " + passed + " passed ===");
-if (passed !== 12) process.exitCode = 1;
+if (passed !== 13) process.exitCode = 1;

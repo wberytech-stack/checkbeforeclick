@@ -25,7 +25,7 @@ export function canonicalPublicUrl(raw: string): string | null {
   const host = parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
   if (!host.includes(".") || isIP(host) !== 0 ||
       BLOCKED_SUFFIXES.some(suffix => host === suffix || host.endsWith("." + suffix)) ||
-      host.split(".").some(part => !part || part.length > 63 || part.startsWith("-") || part.endsWith("-")) ||
+      host.split(".").some(part => part.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(part)) ||
       host.length > 253) return null;
   parsed.hash = ""; // fragments are never sent to a reputation provider
   return parsed.href;

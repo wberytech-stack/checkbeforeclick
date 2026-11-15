@@ -4,7 +4,7 @@
 // Run: node scripts/azure-data/test-cleanstart-whatif.mjs
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { checkWhatIf, validateProfile, expectedIds, ROLE, COMPILED_PRINCIPAL, checkCompiledPrincipals } from "./check-cleanstart-whatif.mjs";
+import { checkWhatIf, validateProfile, expectedIds, ROLE, COMPILED_PRINCIPAL, checkCompiledPrincipals, checkCompiledNetwork, parseCidr } from "./check-cleanstart-whatif.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const read = (f) => readFileSync(path.join(ROOT, f), "utf8");
@@ -64,6 +64,7 @@ const kvUrl = (n) => `https://${p.existing.keyVaultName}.vault.azure.net/secrets
 const webAfter = () => ({
   identity: { type: "UserAssigned", userAssignedIdentities: { [ids.webIdentity]: {} } },
   properties: {
+    managedEnvironmentId: ids.newEnvironment,
     configuration: {
       activeRevisionsMode: "Single",
       ingress: { external: true, targetPort: 3000, transport: "auto", allowInsecure: false },
@@ -108,6 +109,7 @@ const webWhatIf = () => ({
 const workerAfter = () => ({
   identity: { type: "UserAssigned", userAssignedIdentities: { [ids.workerIdentity]: {} } },
   properties: {
+    environmentId: ids.newEnvironment,
     configuration: {
       triggerType: "Schedule", scheduleTriggerConfig: { cronExpression: p.worker.scheduleCron, parallelism: 1, replicaCompletionCount: 1 },
       replicaTimeout: 180, replicaRetryLimit: 0,
@@ -246,6 +248,115 @@ for (const [name, edit] of [
   ["N43 profile pointing the database at another server", (x) => { x.database.host = "other.postgres.database.azure.com"; }],
   ["N44 profile with a non-https public origin", (x) => { x.web.publicOrigin = "http://app.cbc.example"; }],
   ["N45 profile new app name colliding with the legacy app", (x) => { x.web.webAppName = "ca-cbc-web-stg-cc-001"; }],
+]) {
+  const x = clone(p); edit(x);
+  check(name + " -> refused", validateProfile(x, { requireComplete: true }).length > 0);
+}
+
+// ================================================================ Gate 008E private network
+{
+  const netSrc = read("infra/azure/hosting/azure-private-network.bicep");
+  const netParams = new Set([...netSrc.matchAll(/^param (\w+)/gm)].map((m) => m[1]));
+  const profNet = Object.keys(repoProfile.network).filter((k) => !k.startsWith("_"));
+  check("E01 every profile network field is a parameter of azure-private-network.bicep", profNet.every((k) => netParams.has(k)), profNet.filter((k) => !netParams.has(k)).join(","));
+  for (const k of ["vnetAddressPrefix", "appsSubnetPrefix", "endpointSubnetPrefix"]) {
+    check(`E02 Bicep default ${k} equals the profile value`, netSrc.includes(`param ${k} string = '${repoProfile.network[k]}'`));
+  }
+  check("E03 network template literals match the guard (subnet names, DNS zone, groupId, delegation)",
+    netSrc.includes("var appsSubnetName = 'snet-cbc-aca'") && netSrc.includes("var endpointSubnetName = 'snet-cbc-pe'") &&
+    netSrc.includes("'privatelink.postgres.database.azure.com'") && netSrc.includes("'postgresqlServer'") && netSrc.includes("serviceName: 'Microsoft.App/environments'") &&
+    netSrc.includes("param deployNetwork bool = false"));
+  const compiled = JSON.parse(read("scripts/azure-data/fixtures/azure-private-network.compiled.json"));
+  check("E04 committed compiled network template passes the compiled check", checkCompiledNetwork(compiled).length === 0, checkCompiledNetwork(compiled).join("; "));
+  const cres = (t) => (Array.isArray(t.resources) ? t.resources : Object.values(t.resources));
+  for (const [name, edit] of [
+    ["E05 deployNetwork defaulting to true", (t) => { t.parameters.deployNetwork.defaultValue = true; }],
+    ["E06 an unconditional resource", (t) => { delete cres(t).find((r) => r.type === "Microsoft.Network/virtualNetworks").condition; }],
+    ["E07 an added AllowAllAzure firewall rule", (t) => { cres(t).push({ type: "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules", name: "x/AllowAllAzureServicesAndResourcesWithinAzureIps", condition: "[parameters('deployNetwork')]", properties: { startIpAddress: "0.0.0.0", endIpAddress: "0.0.0.0" } }); }],
+    ["E08 an added public IP", (t) => { cres(t).push({ type: "Microsoft.Network/publicIPAddresses", name: "pip", condition: "[parameters('deployNetwork')]" }); }],
+    ["E09 a Dedicated workload profile", (t) => { cres(t).find((r) => r.type === "Microsoft.App/managedEnvironments").properties.workloadProfiles.push({ name: "D4", workloadProfileType: "D4" }); }],
+    ["E10 an internal-only environment", (t) => { cres(t).find((r) => r.type === "Microsoft.App/managedEnvironments").properties.vnetConfiguration.internal = true; }],
+    ["E11 a wrong endpoint groupId", (t) => { const pe = cres(t).find((r) => r.type === "Microsoft.Network/privateEndpoints"); pe.properties.privateLinkServiceConnections[0].properties.groupIds = ["sqlServer"]; }],
+    // Same resource set, forbidden content only: proves these checks independently of the exact-set check.
+    ["E13 a 0.0.0.0/0 default address space", (t) => { t.parameters.vnetAddressPrefix.defaultValue = "0.0.0.0/0"; }],
+    ["E14 a NAT gateway attached to a subnet", (t) => { cres(t).find((r) => r.type === "Microsoft.Network/virtualNetworks").properties.subnets[0].properties.natGateway = { id: "[resourceId('Microsoft.Network/natGateways', 'nat')]" }; }],
+  ]) {
+    const t = structuredClone(compiled); edit(t);
+    check(name + " -> refused by the compiled check", checkCompiledNetwork(t).length > 0);
+  }
+  check("E12 CIDR parser rejects host addresses and accepts network addresses",
+    parseCidr("10.80.0.5/24") === null && parseCidr("10.80.0.0/24")?.bits === 24 && parseCidr("10.80.0.128/28")?.start === parseCidr("10.80.0.0/24").start + 128);
+}
+const netAfter = {
+  vnet: () => ({ properties: { addressSpace: { addressPrefixes: [p.network.vnetAddressPrefix] }, subnets: [
+    { name: "snet-cbc-aca", properties: { addressPrefix: p.network.appsSubnetPrefix, delegations: [{ name: "container-apps", properties: { serviceName: "Microsoft.App/environments" } }] } },
+    { name: "snet-cbc-pe", properties: { addressPrefix: p.network.endpointSubnetPrefix } },
+  ] } }),
+  dnsZone: () => ({ location: "global" }),
+  dnsLink: () => ({ location: "global", properties: { registrationEnabled: false, virtualNetwork: { id: ids.vnet } } }),
+  endpoint: () => ({ properties: { subnet: { id: ids.endpointSubnet }, privateLinkServiceConnections: [{ name: "postgres", properties: { privateLinkServiceId: ids.postgres, groupIds: ["postgresqlServer"] } }] } }),
+  endpointDns: () => ({ properties: { privateDnsZoneConfigs: [{ name: "postgres", properties: { privateDnsZoneId: ids.dnsZone } }] } }),
+  environment: () => ({ properties: { vnetConfiguration: { infrastructureSubnetId: ids.appsSubnet, internal: false }, workloadProfiles: [{ name: "Consumption", workloadProfileType: "Consumption" }],
+    zoneRedundant: false, appLogsConfiguration: { destination: "log-analytics", logAnalyticsConfiguration: { customerId: "[reference('log').customerId]", sharedKey: "[listKeys('log').primarySharedKey]" } } } }),
+};
+const netWhatIf = () => ({ status: "Succeeded", potentialChanges: [], diagnostics: [], changes: [
+  { resourceId: ids.vnet, changeType: "Create", after: netAfter.vnet() },
+  { resourceId: ids.dnsZone, changeType: "Create", after: netAfter.dnsZone() },
+  { resourceId: ids.dnsLink, changeType: "Create", after: netAfter.dnsLink() },
+  { resourceId: ids.endpoint, changeType: "Create", after: netAfter.endpoint() },
+  { resourceId: ids.endpointDns, changeType: "Create", after: netAfter.endpointDns() },
+  { resourceId: ids.newEnvironment, changeType: "Create", after: netAfter.environment() },
+  { resourceId: ids.postgres, changeType: "Ignore" },
+  { resourceId: ids.existingEnvironment, changeType: "Ignore" },
+] });
+const nrun = (w, enabled = true) => checkWhatIf(p, w, { component: "network", enabled }).problems;
+const at = (w, id) => w.changes.find((c) => c.resourceId === id).after;
+check("NW01 exact private-network what-if is accepted", nrun(netWhatIf()).length === 0, nrun(netWhatIf()).join("; "));
+check("NW02 deployNetwork=false what-if with no changes is accepted", nrun({ status: "Succeeded", changes: [] }, false).length === 0);
+const netNegatives = [
+  ["NN01 AllowAllAzure firewall rule (0.0.0.0) on the existing server", () => nrun(mutate(netWhatIf, (w) => { w.changes.push({ resourceId: `${ids.postgres}/firewallRules/AllowAllAzureServicesAndResourcesWithinAzureIps`, changeType: "Create", after: { properties: { startIpAddress: "0.0.0.0", endIpAddress: "0.0.0.0" } } }); }))],
+  ["NN02 Modify of the existing PostgreSQL server", () => nrun(mutate(netWhatIf, (w) => { w.changes.find((c) => c.resourceId === ids.postgres).changeType = "Modify"; }))],
+  ["NN03 Modify of the existing Container Apps environment", () => nrun(mutate(netWhatIf, (w) => { w.changes.find((c) => c.resourceId === ids.existingEnvironment).changeType = "Modify"; }))],
+  ["NN04 private endpoint to another server", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.endpoint).properties.privateLinkServiceConnections[0].properties.privateLinkServiceId = `${ids.rg}/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg-other`; }))],
+  ["NN05 private endpoint with the wrong groupId", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.endpoint).properties.privateLinkServiceConnections[0].properties.groupIds = ["sqlServer"]; }))],
+  ["NN06 private endpoint placed in the Container Apps subnet", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.endpoint).properties.subnet.id = ids.appsSubnet; }))],
+  ["NN07 manual (unapproved) private link connection", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.endpoint).properties.manualPrivateLinkServiceConnections = [{}]; }))],
+  ["NN08 Dedicated workload profile (management charge)", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.newEnvironment).properties.workloadProfiles.push({ name: "D4", workloadProfileType: "D4" }); }))],
+  ["NN09 internal-only environment (website unreachable)", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.newEnvironment).properties.vnetConfiguration.internal = true; }))],
+  ["NN10 environment in the endpoint subnet", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.newEnvironment).properties.vnetConfiguration.infrastructureSubnetId = ids.endpointSubnet; }))],
+  ["NN11 zone-redundant environment (unapproved cost)", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.newEnvironment).properties.zoneRedundant = true; }))],
+  ["NN12 virtual network peering", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.vnet).properties.virtualNetworkPeerings = [{ name: "to-elsewhere" }]; }))],
+  ["NN13 Container Apps subnet without delegation", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.vnet).properties.subnets[0].properties.delegations = []; }))],
+  ["NN14 extra subnet", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.vnet).properties.subnets.push({ name: "snet-extra", properties: { addressPrefix: "10.80.0.160/28" } }); }))],
+  ["NN15 different address space", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.vnet).properties.addressSpace.addressPrefixes = ["10.0.0.0/16"]; }))],
+  ["NN16 NAT gateway attached to a subnet", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.vnet).properties.subnets[0].properties.natGateway = { id: "nat" }; }))],
+  ["NN17 DDoS protection plan", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.vnet).properties.enableDdosProtection = true; }))],
+  ["NN18 DNS zone linked to another network", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.dnsLink).properties.virtualNetwork.id = `${ids.rg}/providers/Microsoft.Network/virtualNetworks/other`; }))],
+  ["NN19 DNS auto-registration enabled", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.dnsLink).properties.registrationEnabled = true; }))],
+  ["NN20 endpoint registered in another DNS zone", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.endpointDns).properties.privateDnsZoneConfigs[0].properties.privateDnsZoneId = `${ids.rg}/providers/Microsoft.Network/privateDnsZones/privatelink.database.windows.net`; }))],
+  ["NN21 public IP created", () => nrun(mutate(netWhatIf, (w) => { w.changes.push({ resourceId: `${ids.rg}/providers/Microsoft.Network/publicIPAddresses/pip-cbc`, changeType: "Create" }); }))],
+  ["NN22 duplicate virtual network change", () => nrun(mutate(netWhatIf, (w) => { w.changes.push(structuredClone(w.changes[0])); }))],
+  ["NN23 missing private endpoint", () => nrun(mutate(netWhatIf, (w) => { w.changes = w.changes.filter((c) => c.resourceId !== ids.endpoint); }))],
+  ["NN24 disabled network that still creates something", () => nrun({ status: "Succeeded", changes: [{ resourceId: ids.vnet, changeType: "Create", after: netAfter.vnet() }] }, false)],
+  ["NN25 workspace key in clear in the what-if", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.newEnvironment).properties.appLogsConfiguration.logAnalyticsConfiguration.sharedKey = "c2VjcmV0LWtleS12YWx1ZQ=="; }))],
+  ["NN26 web app deployed into the EXISTING environment", () => run(mutate(webWhatIf, (w) => { webApp(w).properties.managedEnvironmentId = ids.existingEnvironment; }))],
+  ["NN27 worker job deployed into the EXISTING environment", () => run(mutate(workerWhatIf, (w) => { job(w).properties.environmentId = ids.existingEnvironment; }), "worker")],
+];
+for (const [name, fn] of netNegatives) {
+  let problems = [];
+  let threw = null;
+  try { problems = fn(); } catch (e) { threw = e; }
+  check(name + " -> refused", threw === null && problems.length > 0, threw ? "test threw: " + threw.message : "");
+}
+for (const [name, edit] of [
+  ["NP01 network environment equal to the existing environment", (x) => { x.network.environmentName = x.existing.environmentName; }],
+  ["NP02 Container Apps subnet smaller than /27", (x) => { x.network.appsSubnetPrefix = "10.80.0.0/28"; }],
+  ["NP03 overlapping subnets", (x) => { x.network.endpointSubnetPrefix = "10.80.0.64/28"; }],
+  ["NP04 subnet outside the virtual network", (x) => { x.network.endpointSubnetPrefix = "10.81.0.0/28"; }],
+  ["NP05 public (non-RFC 1918) address space", (x) => { x.network.vnetAddressPrefix = "20.80.0.0/24"; x.network.appsSubnetPrefix = "20.80.0.0/25"; x.network.endpointSubnetPrefix = "20.80.0.128/28"; }],
+  ["NP06 host address instead of a network address", (x) => { x.network.vnetAddressPrefix = "10.80.0.5/24"; }],
+  ["NP07 missing network section", (x) => { delete x.network; }],
+  ["NP08 invalid endpoint name", (x) => { x.network.privateEndpointName = "PE CBC"; }],
 ]) {
   const x = clone(p); edit(x);
   check(name + " -> refused", validateProfile(x, { requireComplete: true }).length > 0);

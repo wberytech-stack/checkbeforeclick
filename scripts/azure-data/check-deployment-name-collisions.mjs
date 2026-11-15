@@ -12,6 +12,8 @@ const types = new Set([
   'microsoft.app/managedenvironments', 'microsoft.managedidentity/userassignedidentities',
   'microsoft.containerregistry/registries', 'microsoft.keyvault/vaults',
   'microsoft.dbforpostgresql/flexibleservers', 'microsoft.operationalinsights/workspaces',
+  // Gate 008E private network
+  'microsoft.network/virtualnetworks', 'microsoft.network/privateendpoints', 'microsoft.network/privatednszones',
 ]);
 const protectedExisting = [
   ['Microsoft.App/containerApps','ca-cbc-web-stg-cc-001'],
@@ -57,7 +59,10 @@ if (process.argv.includes('--self-test')) {
   assert.throws(()=>check({resources:[...sample.resources,...sample.resources]},{resources:[]}),/duplicate/);
   assert.throws(()=>check({resources:[{type:'other',name:'x'}]},{resources:[]}),/unsupported/);
   assert.throws(()=>check({resources:[{type:'Microsoft.App/jobs',name:'../foo'}]},{resources:[]}),/resource name only/);
-  console.log('CBC deployment collision preflight: 8 offline checks passed');
+  // Gate 008E: a second private DNS zone of the same name, or an existing network name, is refused.
+  const zone={type:'Microsoft.Network/privateDnsZones',name:'privatelink.postgres.database.azure.com'};
+  assert.throws(()=>check({resources:[zone]},{resources:[zone]}),/Refusing/);
+  console.log('CBC deployment collision preflight: 9 offline checks passed');
 } else {
   assert.equal(process.argv.length,4,'Usage: node check-deployment-name-collisions.mjs planned.json inventory.json');
   const inventory = JSON.parse(readFileSync(process.argv[3],'utf8'));

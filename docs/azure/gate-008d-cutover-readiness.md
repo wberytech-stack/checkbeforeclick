@@ -138,6 +138,8 @@ CI recompiles both templates (`--compiled-drift`), so the guard and the Bicep ou
 | Stage | Action (founder) | Accept when | Evidence |
 | --- | --- | --- | --- |
 | S0 | Capture E1–E10 | the profile is complete; the collision guard passes; Key Vault is in RBAC mode; PG has Entra auth | E-files kept locally |
+| S0b | Private-network prerequisites N1–N7 (read-only; `docs/azure/gate-008e-private-network.md`) | the server is private-endpoint eligible; no address overlap; no duplicate DNS zone; the cost range is confirmed | N-files kept locally |
+| S2a | What-if, then apply `azure-private-network.bicep` (`deployNetwork=true`): new VNet, private endpoint to the existing server, private DNS, NEW environment | `check-cleanstart-whatif --component network` accepts **and** a human review; the existing server, `cbc_prod`, environment and legacy app are unchanged; this sets the new default domain and so `publicOrigin` | guard output, default domain |
 | S1 | Build and push the `cbc-azure-web` image by digest (no deploy) | the `azure-oidc-validate` image smoke and the 008C origin tests pass on the same commit | digest |
 | S2 | What-if for web with `--enabled true` | `check-cleanstart-whatif` accepts **and** a human review | guard output |
 | S3 | Apply web (`deployWeb=true`, `minReplicas` 0) | the new revision is ready; `/api/healthz` returns 200; the legacy app is unchanged | revision name, health |

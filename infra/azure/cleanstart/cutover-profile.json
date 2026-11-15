@@ -4,7 +4,8 @@
     "Single source of truth for scripts/azure-data/check-cleanstart-whatif.mjs and docs/azure/gate-008d-cutover-readiness.md.",
     "Values starting with REQUIRED: must be filled by the founder from authenticated read-only Azure / Entra evidence;",
     "the what-if guard refuses real evidence while any placeholder remains. New resource names are PROPOSALS.",
-    "Never put secret values, keys, certificates, connection strings with passwords or tokens in this file."
+    "Never put secret values, keys, certificates, connection strings with passwords or tokens in this file.",
+    "Gate 008E: the web app and worker job run in the NEW private-network environment (network.environmentName), never in existing.environmentName."
   ],
   "schemaVersion": 1,
   "subscriptionId": "REQUIRED:subscription GUID from `az account show --query id`",
@@ -19,14 +20,38 @@
     "logAnalyticsName": "log-cbc-prod-cc-001"
   },
   "protectedExisting": [
-    { "type": "Microsoft.App/containerApps", "name": "ca-cbc-web-stg-cc-001" },
-    { "type": "Microsoft.App/managedEnvironments", "name": "cae-cbc-prod-cc-001" },
-    { "type": "Microsoft.ContainerRegistry/registries", "name": "crcbcprodcc001" },
-    { "type": "Microsoft.KeyVault/vaults", "name": "kv-cbc-prod-cc-001" },
-    { "type": "Microsoft.DBforPostgreSQL/flexibleServers", "name": "pg-cbc-prod-cc-001" },
-    { "type": "Microsoft.ManagedIdentity/userAssignedIdentities", "name": "id-cbc-web-cc-001" },
-    { "type": "Microsoft.ManagedIdentity/userAssignedIdentities", "name": "id-cbc-deploy-cc-001" },
-    { "type": "Microsoft.OperationalInsights/workspaces", "name": "log-cbc-prod-cc-001" }
+    {
+      "type": "Microsoft.App/containerApps",
+      "name": "ca-cbc-web-stg-cc-001"
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "name": "cae-cbc-prod-cc-001"
+    },
+    {
+      "type": "Microsoft.ContainerRegistry/registries",
+      "name": "crcbcprodcc001"
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "name": "kv-cbc-prod-cc-001"
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "name": "pg-cbc-prod-cc-001"
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "name": "id-cbc-web-cc-001"
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "name": "id-cbc-deploy-cc-001"
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "name": "log-cbc-prod-cc-001"
+    }
   ],
   "database": {
     "host": "pg-cbc-prod-cc-001.postgres.database.azure.com",
@@ -34,10 +59,19 @@
     "webRole": "cbc_app",
     "workerRole": "cbc_worker"
   },
+  "network": {
+    "_note": "Gate 008E private network (proposed names; deployNetwork stays false until founder approval).",
+    "vnetName": "vnet-cbc-azweb-cc-001",
+    "environmentName": "cae-cbc-azweb-cc-001",
+    "privateEndpointName": "pe-cbc-pg-cc-001",
+    "vnetAddressPrefix": "10.80.0.0/24",
+    "appsSubnetPrefix": "10.80.0.0/25",
+    "endpointSubnetPrefix": "10.80.0.128/28"
+  },
   "web": {
     "webIdentityName": "id-cbc-azweb-cc-001",
     "webAppName": "ca-cbc-azweb-cc-001",
-    "publicOrigin": "REQUIRED:https origin users will use, e.g. https://app.checkbeforeclick.com (no path)",
+    "publicOrigin": "REQUIRED:https://ca-cbc-azweb-cc-001.<default domain of the NEW environment, known only after the network stage> (no path)",
     "oidcIssuer": "REQUIRED:Entra External ID issuer, https://<tenant>.ciamlogin.com/<tenant-id>/v2.0",
     "oidcClientId": "REQUIRED:Entra app registration (client) ID",
     "oidcStateActiveKid": "k1",

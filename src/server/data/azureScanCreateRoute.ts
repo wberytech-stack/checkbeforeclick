@@ -93,7 +93,12 @@ export async function runAzureScanCreateRoute(
   try {
     const url = new URL(request.url);
     if (request.method !== "POST") return respond(405, { error: "Method not allowed" });
-    if (url.origin !== origin || url.pathname !== "/api/azure/scans" || url.search || url.hash ||
+    // Gate 008C: request.url's ORIGIN is never authorization input. The Next standalone server builds it from
+    // the BIND address (measured: http(s)://0.0.0.0:<port> whatever Host/X-Forwarded-Host say), so comparing it
+    // with publicOrigin rejected every real request. Only path and query are read from request.url; the trusted
+    // origin is the server-configured publicOrigin, and no Host/X-Forwarded-* header is consulted.
+    // CSRF protection is unchanged: the browser-set Origin header must equal publicOrigin.
+    if (url.pathname !== "/api/azure/scans" || url.search || url.hash ||
         request.headers.get("origin") !== origin ||
         ![null, "same-origin"].includes(request.headers.get("sec-fetch-site"))) {
       return respond(403, { error: "Forbidden" });

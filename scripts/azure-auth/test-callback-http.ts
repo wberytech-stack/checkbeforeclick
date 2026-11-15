@@ -55,8 +55,6 @@ const malformed: [string, string][] = [
   ["H03 duplicate code", callbackUrl + "&code=def"],
   ["H04 duplicate state", callbackUrl + "&state=" + state],
   ["H05 untrusted next redirect", callbackUrl + "&next=https://evil.example"],
-  ["H06 hostile request origin", "https://evil.example/auth/callback?code=abc&state=" + state],
-  ["H07 insecure request origin", "http://cbc.example/auth/callback?code=abc&state=" + state],
   ["H08 wrong path", origin + "/auth/other?code=abc&state=" + state],
   ["H09 code and provider error", callbackUrl + "&error=access_denied"],
   ["H10 provider error only", origin + "/auth/callback?error=access_denied&error_description=secret"],
@@ -111,5 +109,53 @@ await check("H30 untrusted provider error description never reflected", async ()
   denied(response);
   assert.ok(!JSON.stringify([...response.headers]).includes("secret"));
 });
+// ---- Gate 008C: proxy path and hostile headers ------------------------------------------------------------
+// Measured on the real Next standalone server (HOSTNAME=0.0.0.0): request.url is http(s)://0.0.0.0:<port>/...
+// whatever Host / X-Forwarded-Host say; only the scheme follows X-Forwarded-Proto.
+const hostile = {
+  Host: "evil.example", "X-Forwarded-Host": "evil.example, cbc.example", "X-Forwarded-Proto": "http",
+  Forwarded: "for=1.2.3.4;host=evil.example;proto=http", Origin: "https://evil.example", Referer: "https://evil.example/x",
+};
+let seen: AzureCallbackFields | null = null;
+for (const bind of ["http://0.0.0.0:3000", "https://0.0.0.0:3000", "http://127.0.0.1:3000", "http://[::]:3000"]) {
+  await check(`H06 legitimate proxied callback with internal request origin ${bind} completes`, async () => {
+    const response = await run(make(bind + "/auth/callback?code=abc&state=" + state));
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get("location"), origin + "/azure");
+    assert.deepEqual(cookies(response), [loginStateClearCookie(), session]);
+    assert.equal(calls, 1);
+  });
+}
+await check("H07 hostile Host/X-Forwarded-*/Forwarded/Origin headers cannot change Location or reach completion", async () => {
+  complete = async (fields) => { calls++; seen = fields; return success; };
+  const request = new Request("http://0.0.0.0:3000/auth/callback?code=abc&state=" + state, { headers: { Cookie: cookieHeader, ...hostile } });
+  const response = await run(request);
+  assert.equal(response.headers.get("location"), origin + "/azure");
+  assert.deepEqual(cookies(response), [loginStateClearCookie(), session]);
+  // completion receives only code, state and the sealed cookie: nothing derived from request headers
+  assert.deepEqual(Object.keys(seen ?? {}).sort(), ["code", "cookie", "state"]);
+  assert.deepEqual(seen, { code: "abc", state, cookie: sealed });
+  assert.ok(!JSON.stringify([...response.headers]).includes("evil.example"));
+  complete = async () => { calls++; return success; };
+});
+await check("H07b hostile headers on a failed callback still redirect only to the configured origin", async () => {
+  const request = new Request("http://0.0.0.0:3000/auth/callback?error=access_denied", { headers: { Cookie: cookieHeader, ...hostile } });
+  const response = await run(request);
+  denied(response);
+  assert.ok(!JSON.stringify([...response.headers]).includes("evil.example"));
+});
+await check("H07c wrong path on the internal origin is still denied", async () => denied(await run(make("http://0.0.0.0:3000/auth/other?code=abc&state=" + state))));
+await check("H31 replay: completion reporting a consumed state never yields a session", async () => {
+  let redeemed = false;
+  complete = async () => { calls++; if (redeemed) return { ok: false, setCookies: [loginStateClearCookie()] }; redeemed = true; return success; };
+  const first = await run(make("http://0.0.0.0:3000/auth/callback?code=abc&state=" + state));
+  assert.deepEqual(cookies(first), [loginStateClearCookie(), session]);
+  calls = 0;
+  const second = await handleAzureCallbackHttp(make("http://0.0.0.0:3000/auth/callback?code=abc&state=" + state),
+    { publicOrigin: origin, issuer, complete: (f) => complete(f) });
+  assert.equal(second.status, 303); assert.deepEqual(cookies(second), [loginStateClearCookie()]);
+  complete = async () => { calls++; return success; };
+});
+
 console.log("\n=== Gate 008B Azure callback HTTP boundary: " + passed + " passed, " + failed + " failed ===");
 process.exitCode = failed ? 1 : 0;

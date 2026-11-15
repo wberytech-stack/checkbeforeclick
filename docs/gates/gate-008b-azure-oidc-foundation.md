@@ -202,3 +202,48 @@ The offline `test-runtime-config.ts` suite exercises 37 positive/negative cases 
 - The route uses the verified-TLS, managed-identity PostgreSQL pool from draft PR #58, copied **unchanged** into this PR as a temporary cross-PR dependency. It must not use the legacy \`rejectUnauthorized: false\` pool. When integrating #58 and #59, preserve the secure shared implementation without duplicating pools.
 - Malformed database boolean results now raise a sanitized storage error rather than being interpreted as an idempotent logout. A failed revocation returns HTTP 503 and clears the browser cookie, but does not claim the durable credential was revoked.
 - Added offline route-level regression tests and CI wiring. **Not deployed**, not executed against any persistent database; migration 007 and managed-identity principal require separate founder approval. Existing Supabase logout remains unchanged until cutover.
+
+## Gate 008C: callback-origin correctness behind a reverse proxy (2026-11-15)
+
+**Observed:** the real Next 16 standalone server (`.next/standalone/server.js`, the `Dockerfile.azure-web`
+entrypoint, `HOSTNAME=0.0.0.0`) was built with `CBC_AZURE_ONLY_MODE=1` and probed through a temporary,
+uncommitted route handler. Route handlers receive `request.url` with the **bind origin**:
+
+| Request headers | `request.url` origin |
+| --- | --- |
+| `Host: 127.0.0.1:3917` | `http://0.0.0.0:3917` |
+| `Host: cbc.example`, `X-Forwarded-Proto: https` | `https://0.0.0.0:3917` |
+| `Host: internal`, `X-Forwarded-Host: cbc.example`, `X-Forwarded-Proto: https` | `https://0.0.0.0:3917` |
+| `Host: evil.example`, `X-Forwarded-Host: evil2.example`, `X-Forwarded-Proto: http` | `http://0.0.0.0:3917` |
+
+The host is never taken from `Host` or `X-Forwarded-Host`; only the scheme follows `X-Forwarded-Proto`.
+
+**Defect:** callback, login start, logout and scan creation required `new URL(request.url).origin === publicOrigin`,
+which can never hold in that server. Every legitimate request was rejected (fail closed, not a security hole).
+
+**Fix:** the `request.url` origin is no longer authorization input. Only its path and query are read. The trusted
+origin is the server-configured `CBC_AZURE_PUBLIC_ORIGIN`, which alone builds `Location` and `redirect_uri`.
+No `Host`, `X-Forwarded-*` or `Forwarded` header is consulted.
+
+The following are unchanged:
+- the one-time state and nonce sealed into the host-only `__Secure-`/`__Host-` cookies;
+- the strict allow-list of callback parameters (an attacker-supplied `redirect_uri` or `next` is denied);
+- the RFC 9207 `iss` check;
+- the browser-set `Origin` header and Fetch Metadata CSRF checks on logout and scan creation;
+- issuing the session cookie only after the database commit.
+
+**Evidence:**
+- Unit regressions in `test-callback-http`, `test-callback-route`, `test-login-start`, `test-login-start-route`,
+  `test-logout-http` and `test-scan-create-route`. They cover:
+  - a proxied request with an internal origin is accepted;
+  - hostile `Host`, `X-Forwarded-*`, `Forwarded` and `Origin` headers change nothing;
+  - a full committed callback sequence with `redirect_uri` equal to `publicOrigin/auth/callback`;
+  - replay, a forged nonce and an attacker `redirect_uri` are denied;
+  - CSRF is still enforced.
+- `scripts/azure-auth/test-standalone-origin.mjs` runs the real server, directly or as the CI image:
+  - 7/7 pass on the fix;
+  - 4/7 on the previous code, where O1, O2 and O6 fail (proxied logout and scan creation rejected).
+- Mutation check: 7/7 killed.
+
+**Not established:** live Entra login, and Azure Container Apps' exact ingress headers. The fix does not depend on
+either, because nothing reads those headers.

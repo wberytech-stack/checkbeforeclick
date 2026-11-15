@@ -191,8 +191,19 @@ await check("C19 missing Origin rejected before SQL", async () => {
 await check("C20 cross-site Fetch Metadata rejected before SQL", async () => {
   const f = fixture({ fetchSite: "cross-site" }); await status(f, 403); assert.deepEqual(f.events, []);
 });
-await check("C21 wrong path, query and untrusted URL origin rejected", async () => {
-  for (const url of [ORIGIN + "/api/azure/scans/", ORIGIN + "/api/azure/scans?role=owner", "https://evil.example/api/azure/scans"]) {
+// Gate 008C: request.url carries the bind origin in the standalone server (measured). A proxied same-origin POST
+// must work; CSRF protection is the browser-set Origin header plus Fetch Metadata, which a proxy cannot fake.
+await check("C21b proxied same-origin POST with internal request origin creates the scan", async () => {
+  const f = fixture({ url: "http://0.0.0.0:3000/api/azure/scans" }); await status(f, 201);
+  assert.deepEqual(f.calls[1].values, [USER, ORG]);
+});
+await check("C21c proxied POST with a cross-site Origin header is refused before SQL", async () => {
+  for (const origin of ["https://evil.example", "http://0.0.0.0:3000", "null"]) {
+    const f = fixture({ url: "http://0.0.0.0:3000/api/azure/scans", origin }); await status(f, 403); assert.deepEqual(f.events, []);
+  }
+});
+await check("C21 wrong path and query rejected", async () => {
+  for (const url of [ORIGIN + "/api/azure/scans/", ORIGIN + "/api/azure/scans?role=owner", "http://0.0.0.0:3000/api/azure/scans?org=x"]) {
     const f = fixture({ url }); await status(f, 403); assert.deepEqual(f.events, []);
   }
 });

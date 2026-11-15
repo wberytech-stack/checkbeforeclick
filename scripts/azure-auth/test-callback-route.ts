@@ -46,6 +46,7 @@ type Options = {
   exchangeError?: boolean;
   omitAssertionFactory?: boolean;
   signerError?: boolean;
+  headers?: Record<string, string>;
 };
 async function fixture(options: Options = {}) {
   const events: string[] = [];
@@ -65,7 +66,7 @@ async function fixture(options: Options = {}) {
   let transportFactories = 0;
   async function invoke(overrides: Options = {}) {
     const opt = { ...options, ...overrides };
-    const request = new Request(opt.url ?? url, { headers: { cookie: opt.cookie ?? cookie } });
+    const request = new Request(opt.url ?? url, { headers: { ...(opt.headers ?? {}), cookie: opt.cookie ?? cookie } });
     return runAzureCallbackRoute(request, {
       env: opt.env ?? env,
       async transaction<T>(fn: (client: CommittedStateQuery) => Promise<T>): Promise<T> {
@@ -192,10 +193,36 @@ await check("C08 missing configuration returns sanitized 503 and clears state", 
   const f = await fixture(); denied(await f.invoke({ env: {} }), 503);
   assert.deepEqual(f.calls, []); assert.equal(f.transportFactories, 0);
 });
-await check("C09 hostile origin denied before SQL", async () => {
+// Gate 008C: measured on the real Next standalone server, request.url carries the BIND origin
+// (http(s)://0.0.0.0:<port>) whatever Host / X-Forwarded-* say. A legitimate proxied callback must complete,
+// and hostile headers must not change redirect_uri, Location, state/nonce checks or the session.
+const HOSTILE = { host: "evil.example", "x-forwarded-host": "evil.example", "x-forwarded-proto": "http",
+  forwarded: "host=evil.example;proto=http", origin: "https://evil.example" };
+await check("C09 proxied callback (internal request origin, hostile headers) completes the full committed sequence", async () => {
   const f = await fixture();
-  denied(await f.invoke({ url: f.url.replace(origin, "https://evil.example") }));
+  const response = await f.invoke({ url: f.url.replace(origin, "http://0.0.0.0:3000"), headers: HOSTILE });
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get("location"), origin + "/azure");
+  // the fake token endpoint asserts redirectUri === publicOrigin + "/auth/callback"; exchange ran exactly once
+  assert.deepEqual(f.events, ["consume", "commit1", "exchange", "jwks", "provision", "commit2", "session", "commit3"]);
+  assert.equal(response.headers.getSetCookie().length, 2);
+  assert.ok(!JSON.stringify([...response.headers]).includes("evil.example"));
+  assert.ok(!JSON.stringify(f.calls).includes("evil.example"));
+});
+await check("C09b replayed proxied callback (state already consumed) never exchanges a code or creates a session", async () => {
+  const f = await fixture({ consumeRows: [] });
+  denied(await f.invoke({ url: f.url.replace(origin, "http://0.0.0.0:3000"), headers: HOSTILE }));
+  assert.ok(!f.events.includes("exchange") && !f.events.includes("session"), f.events.join(","));
+});
+await check("C09c attacker-supplied redirect_uri parameter denied before SQL", async () => {
+  const f = await fixture();
+  denied(await f.invoke({ url: f.url.replace(origin, "http://0.0.0.0:3000") + "&redirect_uri=" + encodeURIComponent("https://evil.example/auth/callback") }));
   assert.deepEqual(f.calls, []);
+});
+await check("C09d forged nonce in a proxied callback creates no session", async () => {
+  const f = await fixture({ tokenClaims: { nonce: "forged-nonce-value-0000000000000000000000" } });
+  denied(await f.invoke({ url: f.url.replace(origin, "http://0.0.0.0:3000"), headers: HOSTILE }));
+  assert.ok(!f.events.includes("provision") && !f.events.includes("session"), f.events.join(","));
 });
 await check("C10 state consume SQL failure prevents token exchange", async () => {
   const f = await fixture(); denied(await f.invoke({ sqlErrorAt: 1 }));

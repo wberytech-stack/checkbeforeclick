@@ -98,8 +98,12 @@ export async function handleAzureCallbackHttp(
     return safeResponse(null);
   }
   try {
+    // Gate 008C: request.url's ORIGIN is never authorization input. The Next standalone server builds it from
+    // the BIND address (measured: http(s)://0.0.0.0:<port> whatever Host/X-Forwarded-Host say), so comparing it
+    // with publicOrigin rejected every real request. Only path and query are read from request.url; the trusted
+    // origin is the server-configured publicOrigin, and no Host/X-Forwarded-* header is consulted.
     const url = new URL(request.url);
-    if (request.method !== "GET" || url.origin !== origin ||
+    if (request.method !== "GET" ||
         url.pathname !== "/auth/callback" || url.hash || url.search.length > QUERY_MAX) {
       return safeResponse(origin);
     }

@@ -49,12 +49,26 @@ await check("S01 successful start redirects only to issuer-pinned endpoint", asy
   assert.equal(res.headers.get("vary"), "Cookie");
   assert.equal(called, 1);
 });
+// Gate 008C: the real Next standalone server gives handlers request.url = http(s)://0.0.0.0:<port>/... (bind
+// origin) whatever Host / X-Forwarded-* say. Proxied requests must work; headers must change nothing.
+for (const bind of ["http://0.0.0.0:3000", "https://0.0.0.0:3000"]) {
+  await check(`S05 proxied start with internal request origin ${bind} redirects to the pinned endpoint`, async () => {
+    const res = await handleAzureLoginStartHttp(new Request(bind + "/auth/azure/start", { headers: { host: "evil.example", "x-forwarded-host": "evil.example", "x-forwarded-proto": "http", forwarded: "host=evil.example;proto=http" } }), config());
+    assert.equal(res.status, 303); assert.equal(res.headers.get("location"), url.href); assert.deepEqual(res.headers.getSetCookie(), [cookie]);
+    assert.ok(!JSON.stringify([...res.headers]).includes("evil.example"));
+  });
+}
+await check("S06 an authorization URL whose redirect_uri is not publicOrigin/auth/callback is refused", async () => {
+  const bad = new URL(url.href); bad.searchParams.set("redirect_uri", "https://evil.example/auth/callback");
+  start = async () => { called++; return { authorizationUrl: bad.href, setCookie: cookie }; };
+  const res = await handleAzureLoginStartHttp(new Request("http://0.0.0.0:3000/auth/azure/start"), config());
+  assert.equal(res.status, 503); assert.equal(res.headers.get("location"), null); assert.deepEqual(res.headers.getSetCookie(), []);
+  start = async () => { called++; return valid; };
+});
 for (const [name, target, method] of [
   ["S02 next redirect injection", origin + "/auth/azure/start?next=https://evil.example", "GET"],
   ["S03 duplicate query", origin + "/auth/azure/start?state=x&state=y", "GET"],
   ["S04 wrong path", origin + "/auth/callback", "GET"],
-  ["S05 wrong host", "https://evil.example/auth/azure/start", "GET"],
-  ["S06 insecure origin", "http://cbc.example/auth/azure/start", "GET"],
   ["S07 POST", origin + "/auth/azure/start", "POST"],
   ["S08 HEAD", origin + "/auth/azure/start", "HEAD"],
   ["S09 fragment", origin + "/auth/azure/start#secret", "GET"],

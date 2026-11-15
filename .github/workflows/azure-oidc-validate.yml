@@ -96,6 +96,8 @@ jobs:
         run: docker build --file Dockerfile.azure-web --tag cbc-azure-web:ci .
       - name: Real-container Azure-only HTTP smoke without legacy credentials
         run: node scripts/azure-auth/test-azure-web-container.mjs cbc-azure-web:ci
+      - name: Gate 008C real-container origin regression behind a reverse proxy (loopback, placeholder config)
+        run: node scripts/azure-auth/test-standalone-origin.mjs --image cbc-azure-web:ci
 
 
   compiled-iac:

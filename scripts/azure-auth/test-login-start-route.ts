@@ -22,6 +22,7 @@ const metadata = {
 type Options = {
   target?: string;
   method?: string;
+  headers?: Record<string, string>;
   env?: Record<string, string | undefined>;
   rows?: Record<string, unknown>[];
   sqlError?: boolean;
@@ -33,7 +34,7 @@ async function invoke(options: Options = {}) {
   const calls: { sql: string; values: unknown[] }[] = [];
   let commits = 0, metadataCalls = 0, factoryIssuer = "";
   const response = await runAzureLoginStartRoute(
-    new Request(options.target ?? origin + "/auth/azure/start", { method: options.method ?? "GET" }),
+    new Request(options.target ?? origin + "/auth/azure/start", { method: options.method ?? "GET", headers: options.headers ?? {} }),
     {
       env: options.env ?? env,
       async transaction<T>(fn: (client: CommittedStateQuery) => Promise<T>): Promise<T> {
@@ -127,9 +128,14 @@ await check("R09 query redirect injection rejected before side effects", async (
   const result = await invoke({ target: origin + "/auth/azure/start?next=https://evil.example" });
   denied(result, 400); assert.equal(result.metadataCalls, 0); assert.deepEqual(result.calls, []);
 });
-await check("R10 wrong request origin rejected before side effects", async () => {
-  const result = await invoke({ target: "https://evil.example/auth/azure/start" });
-  denied(result, 400); assert.equal(result.metadataCalls, 0); assert.deepEqual(result.calls, []);
+// Gate 008C: request.url carries the bind origin in the standalone server; headers are attacker-controlled.
+await check("R10 proxied start (internal request origin, hostile headers): redirect_uri stays publicOrigin/auth/callback", async () => {
+  const result = await invoke({ target: "http://0.0.0.0:3000/auth/azure/start", headers: { host: "evil.example", "x-forwarded-host": "evil.example", "x-forwarded-proto": "http", forwarded: "host=evil.example;proto=http" } });
+  assert.equal(result.response.status, 303); assert.equal(result.commits, 1);
+  const location = new URL(result.response.headers.get("location")!);
+  assert.equal(location.origin + location.pathname, endpoint);
+  assert.equal(location.searchParams.get("redirect_uri"), origin + "/auth/callback");
+  assert.ok(!JSON.stringify([...result.response.headers]).includes("evil.example"));
 });
 await check("R11 POST cannot initiate login", async () => {
   const result = await invoke({ method: "POST" });

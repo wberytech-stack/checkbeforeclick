@@ -66,8 +66,10 @@ const denied: [string, Parameters<typeof request>[0]][] = [
   ["L08 cross-origin Origin", { headers: { origin: "https://evil.example" } }],
   ["L09 sibling subdomain Origin", { headers: { origin: "https://other.cbc.example" } }],
   ["L10 multiple Origin injection", { headers: { origin: `${origin}, https://evil.example` } }],
-  ["L11 wrong request host", { url: "https://evil.example/auth/azure/logout" }],
-  ["L12 HTTP downgrade", { url: "http://cbc.example/auth/azure/logout" }],
+  ["L11 cross-origin Origin header (CSRF)", { headers: { origin: "https://evil.example" } }],
+  ["L12 Origin header downgraded to http", { headers: { origin: "http://cbc.example" } }],
+  ["L12b missing Origin header", { headers: { origin: "" } }],
+  ["L12c proxied request with a hostile Origin header", { url: "http://0.0.0.0:3000/auth/azure/logout", headers: { origin: "https://evil.example", host: "cbc.example" } }],
   ["L13 GET not allowed", { method: "GET" }],
   ["L14 query not allowed", { url: `${origin}/auth/azure/logout?next=evil` }],
   ["L15 fragment not allowed", { url: `${origin}/auth/azure/logout#frag` }],
@@ -79,6 +81,12 @@ const denied: [string, Parameters<typeof request>[0]][] = [
 ];
 for (const [name, options] of denied) await check(name, async () => {
   expectResponse(await run(options), 403, false); assert.deepEqual(calls, []);
+});
+// Gate 008C: request.url carries the bind origin in the standalone server (measured); a proxied same-origin
+// logout must work, and Host / X-Forwarded-* cannot stand in for the browser's Origin header.
+await check("L21b proxied logout with internal request origin and hostile forwarded headers revokes and clears", async () => {
+  const res = await run({ url: "http://0.0.0.0:3000/auth/azure/logout", headers: { "sec-fetch-site": "same-origin", ...{ host: "evil.example", "x-forwarded-host": "evil.example", "x-forwarded-proto": "http", forwarded: "host=evil.example;proto=http" } } });
+  expectResponse(res, 303, true); assert.deepEqual(calls, [digest]);
 });
 await check("L21 same-origin fetch metadata accepted", async () => {
   expectResponse(await run({ headers: { "sec-fetch-site": "same-origin", "content-length": "0" } }), 303, true);

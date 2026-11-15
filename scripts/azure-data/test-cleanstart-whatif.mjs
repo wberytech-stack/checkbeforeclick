@@ -4,7 +4,7 @@
 // Run: node scripts/azure-data/test-cleanstart-whatif.mjs
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { checkWhatIf, validateProfile, expectedIds, ROLE } from "./check-cleanstart-whatif.mjs";
+import { checkWhatIf, validateProfile, expectedIds, ROLE, COMPILED_PRINCIPAL, checkCompiledPrincipals } from "./check-cleanstart-whatif.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const read = (f) => readFileSync(path.join(ROOT, f), "utf8");
@@ -56,8 +56,10 @@ check("P08 a filled profile is accepted", validateProfile(p, { requireComplete: 
 const ids = expectedIds(p);
 const DIGEST = "a".repeat(64);
 const GUIDS = ["0f0e0d0c-0b0a-4909-8807-060504030201", "1f0e0d0c-0b0a-4909-8807-060504030201", "2f0e0d0c-0b0a-4909-8807-060504030201", "3f0e0d0c-0b0a-4909-8807-060504030201"];
-const role = (scope, r, i) => ({ resourceId: `${scope}/providers/Microsoft.Authorization/roleAssignments/${GUIDS[i]}`, changeType: "Create",
-  after: { properties: { roleDefinitionId: ids.roleDef(r), principalType: "ServicePrincipal", principalId: "[reference('x').principalId]" } } });
+// principalId as the compiled Bicep emits it (verified against az bicep 0.48.1 output; CI re-checks with --compiled-drift)
+const role = (scope, r, i, principalId = COMPILED_PRINCIPAL("webIdentityName")) => ({ resourceId: `${scope}/providers/Microsoft.Authorization/roleAssignments/${GUIDS[i]}`, changeType: "Create",
+  after: { properties: { roleDefinitionId: ids.roleDef(r), principalType: "ServicePrincipal", principalId } } });
+const wrole = (scope, r, i) => role(scope, r, i, COMPILED_PRINCIPAL("workerIdentityName"));
 const kvUrl = (n) => `https://${p.existing.keyVaultName}.vault.azure.net/secrets/${n}`;
 const webAfter = () => ({
   identity: { type: "UserAssigned", userAssignedIdentities: { [ids.webIdentity]: {} } },
@@ -124,12 +126,12 @@ const workerWhatIf = () => ({
   status: "Succeeded", potentialChanges: [], diagnostics: [],
   changes: [
     { resourceId: ids.workerIdentity, changeType: "Create" },
-    role(ids.registry, ROLE.acrPull, 0),
-    role(ids.secret(p.worker.webRiskSecretName), ROLE.kvSecretsUser, 1),
+    wrole(ids.registry, ROLE.acrPull, 0),
+    wrole(ids.secret(p.worker.webRiskSecretName), ROLE.kvSecretsUser, 1),
     { resourceId: ids.workerJob, changeType: "Create", after: workerAfter() },
   ],
 });
-const run = (w, component = "web", enabled = true, digest = DIGEST, profile = p) => checkWhatIf(profile, w, { component, enabled, imageDigest: digest }).problems;
+const run = (w, component = "web", enabled = true, digest = DIGEST, profile = p, principalId = undefined) => checkWhatIf(profile, w, { component, enabled, imageDigest: digest, principalId }).problems;
 
 // ---------------------------------------------------------------- positives
 check("W01 exact web provisioning what-if is accepted", run(webWhatIf()).length === 0, run(webWhatIf()).join("; "));
@@ -138,11 +140,56 @@ check("W03 deployWeb=false what-if with no changes is accepted", run({ status: "
 check("W04 deployWeb=false what-if that would still create something is refused",
   run({ status: "Succeeded", changes: [{ resourceId: ids.webIdentity, changeType: "Create" }] }, "web", false, undefined).length > 0);
 
-// ---------------------------------------------------------------- negatives (each must be refused)
 const mutate = (base, fn) => { const w = base(); fn(w); return w; };
 const webApp = (w) => w.changes.find((c) => c.resourceId === ids.webApp).after;
 const webEnv = (w) => webApp(w).properties.template.containers[0].env;
 const job = (w) => w.changes.find((c) => c.resourceId === ids.workerJob).after;
+
+// ---- Gate 008D hardening: principal binding (lead review 6899949127) --------------------------------------------
+const WEB_PRINCIPAL = "9a9a9a9a-1b1b-4c2c-8d3d-4e4e4e4e4e4e";
+const setPrincipal = (w, value, which = 1) => { w.changes[which].after.properties.principalId = value; };
+const lit = (name) => `[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', '${name}'), '2023-01-31').principalId]`;
+const fullId = (name) => `[reference('${ids.rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${name}', '2023-01-31').principalId]`;
+{
+  const w = webWhatIf(); for (let i = 1; i <= 4; i++) setPrincipal(w, WEB_PRINCIPAL, i);
+  check("W05 concrete principal GUIDs equal to the supplied --principal-id are accepted", run(w, "web", true, DIGEST, p, WEB_PRINCIPAL).length === 0, run(w, "web", true, DIGEST, p, WEB_PRINCIPAL).join("; "));
+  const l = webWhatIf(); for (let i = 1; i <= 4; i++) setPrincipal(l, lit(p.web.webIdentityName), i);
+  check("W06 literal-name form for the intended identity is accepted", run(l).length === 0, run(l).join("; "));
+  const f = webWhatIf(); for (let i = 1; i <= 4; i++) setPrincipal(f, fullId(p.web.webIdentityName), i);
+  check("W07 full-resource-ID form for the intended identity is accepted", run(f).length === 0, run(f).join("; "));
+  const ok = { resources: [0, 1].map(() => ({ type: "Microsoft.Authorization/roleAssignments", name: "x", properties: { principalType: "ServicePrincipal", principalId: COMPILED_PRINCIPAL("webIdentityName") } })) };
+  const bad = structuredClone(ok); bad.resources[1].properties.principalId = COMPILED_PRINCIPAL("workerIdentityName");
+  check("W08 compiled-drift check accepts the template's own identity and refuses another", checkCompiledPrincipals(ok, "webIdentityName").problems.length === 0 &&
+    checkCompiledPrincipals(bad, "webIdentityName").problems.length === 1 && checkCompiledPrincipals({ resources: [] }, "webIdentityName").problems.length === 1);
+}
+const principalNegatives = [
+  ["N46 web role assignment to another managed identity (literal name)", () => run(mutate(webWhatIf, (w) => setPrincipal(w, lit("id-cbc-other-cc-001"))))],
+  ["N47 web role assignment to the legacy broad-vault identity", () => run(mutate(webWhatIf, (w) => setPrincipal(w, lit("id-cbc-web-cc-001"), 2)))],
+  ["N48 web role assignment to the worker identity's parameter", () => run(mutate(webWhatIf, (w) => setPrincipal(w, COMPILED_PRINCIPAL("workerIdentityName"), 3)))],
+  ["N49 worker role assignment bound to the web identity parameter (worker template declares webIdentityName too)", () => run(mutate(workerWhatIf, (w) => setPrincipal(w, COMPILED_PRINCIPAL("webIdentityName"))), "worker")],
+  ["N50 arbitrary service-principal GUID with no supplied principal ID", () => run(mutate(webWhatIf, (w) => setPrincipal(w, "12345678-90ab-4cde-8f01-234567890abc")))],
+  ["N51 service-principal GUID different from the supplied principal ID", () => run(mutate(webWhatIf, (w) => { for (let i = 1; i <= 4; i++) setPrincipal(w, WEB_PRINCIPAL, i); setPrincipal(w, "12345678-90ab-4cde-8f01-234567890abc", 4); }), "web", true, DIGEST, p, WEB_PRINCIPAL)],
+  ["N52 lookalike expression wrapped in concat()", () => run(mutate(webWhatIf, (w) => setPrincipal(w, "[concat(reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('webIdentityName')), '2023-01-31').principalId, '')]")))],
+  ["N53 lookalike expression with an extra resourceId segment", () => run(mutate(webWhatIf, (w) => setPrincipal(w, "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('webIdentityName'), 'x'), '2023-01-31').principalId]")))],
+  ["N54 identity full resource ID of another identity", () => run(mutate(webWhatIf, (w) => setPrincipal(w, fullId("id-cbc-other-cc-001"))))],
+  ["N55 full resource ID in another resource group with the same identity name", () => run(mutate(webWhatIf, (w) => setPrincipal(w, `[reference('/subscriptions/${p.subscriptionId}/resourceGroups/other-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${p.web.webIdentityName}', '2023-01-31').principalId]`)))],
+  ["N56 missing principalId", () => run(mutate(webWhatIf, (w) => { delete w.changes[1].after.properties.principalId; }))],
+  ["N57 principalType Group", () => run(mutate(webWhatIf, (w) => { w.changes[1].after.properties.principalType = "Group"; }))],
+  ["N58 duplicate change for the same role-assignment resource ID", () => run(mutate(webWhatIf, (w) => { w.changes.push(structuredClone(w.changes[1])); }))],
+  ["N59 duplicate change for the same app resource ID", () => run(mutate(webWhatIf, (w) => { w.changes.push({ resourceId: ids.webApp, changeType: "NoChange" }); }))],
+  ["N60 supplied principal ID that is not a GUID", () => run(webWhatIf(), "web", true, DIGEST, p, "not-a-guid")],
+  ["N61 valid expression followed by extra text", () => run(mutate(webWhatIf, (w) => setPrincipal(w, COMPILED_PRINCIPAL("webIdentityName") + "x")))],
+  ["N62 valid expression preceded by extra text", () => run(mutate(webWhatIf, (w) => setPrincipal(w, "x" + COMPILED_PRINCIPAL("webIdentityName"))))],
+];
+for (const [name, fn] of principalNegatives) {
+  let problems = [];
+  let threw = null;
+  try { problems = fn(); } catch (e) { threw = e; }
+  // An exception is a broken test, never evidence of refusal.
+  check(name + " -> refused", threw === null && problems.length > 0, threw ? "test threw: " + threw.message : "");
+}
+
+// ---------------------------------------------------------------- negatives (each must be refused)
 const negatives = [
   ["N01 placeholder profile", () => checkWhatIf(repoProfile, webWhatIf(), { component: "web", enabled: true, imageDigest: DIGEST }).problems],
   ["N02 what-if status Failed", () => run(mutate(webWhatIf, (w) => { w.status = "Failed"; }))],
@@ -185,8 +232,10 @@ const negatives = [
 ];
 for (const [name, fn] of negatives) {
   let problems = [];
-  try { problems = fn(); } catch (e) { problems = ["threw " + e.message]; }
-  check(name + " -> refused", problems.length > 0);
+  let threw = null;
+  try { problems = fn(); } catch (e) { threw = e; }
+  // An exception is a broken test, never evidence of refusal.
+  check(name + " -> refused", threw === null && problems.length > 0, threw ? "test threw: " + threw.message : "");
 }
 // profile-level negatives
 for (const [name, edit] of [

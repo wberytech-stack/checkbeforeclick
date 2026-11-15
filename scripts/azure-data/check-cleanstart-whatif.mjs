@@ -8,7 +8,10 @@
 //
 // Usage:
 //   node scripts/azure-data/check-cleanstart-whatif.mjs --profile <profile.json> --component web|worker \
-//     --enabled true|false --whatif <whatif.json> [--image-digest <64 hex>]
+//     --enabled true|false --whatif <whatif.json> [--image-digest <64 hex>] [--principal-id <guid>]
+//   --principal-id: the intended identity's principal (object) ID from authenticated evidence; required only when
+//   the what-if shows concrete principal GUIDs instead of the unresolved compiled expression.
+//   node scripts/azure-data/check-cleanstart-whatif.mjs --compiled-drift --web <web.arm.json> --worker <worker.arm.json>
 import { readFileSync } from "node:fs";
 
 export const ROLE = {
@@ -97,10 +100,40 @@ const roleScope = (id) => {
   return m ? m[1] : null;
 };
 const envMap = (container) => new Map((container?.env ?? []).map((e) => [e.name, e]));
+// Gate 008D hardening (lead review 6899949127): a role assignment is only acceptable for the INTENDED identity.
+// The compiled Bicep (az bicep 0.48.1) emits exactly:
+//   [reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('<param>')), '2023-01-31').principalId]
+// with <param> = webIdentityName (web template) or workerIdentityName (worker template). A new identity's principal ID
+// is unknown at what-if time, so the expression may appear unresolved. Accepted forms, all bound to ONE identity:
+//   - that expression with parameters('<the component's own identity parameter>') - the same what-if must also
+//     Create the identity under the profile name (checked separately), which binds the parameter value;
+//   - the same expression with the identity name as a literal, or its full resource ID as a literal;
+//   - a GUID, only when it equals a principal ID the operator supplied from authenticated evidence.
+// Anything else - another identity, the other component's parameter, an arbitrary service principal, extra
+// expression text, a missing value - fails closed.
+export const COMPILED_PRINCIPAL = (param) =>
+  `[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('${param}')), '2023-01-31').principalId]`;
+const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+export function principalBinding(value, { param, identityName, identityId, knownPrincipalId }) {
+  if (typeof value !== "string" || value.length === 0) return "principalId is missing";
+  if (GUID.test(value)) {
+    if (!knownPrincipalId) return "principalId is a concrete GUID but no expected principal ID was supplied (--principal-id from authenticated evidence)";
+    return value === knownPrincipalId ? null : "principalId " + value + " is not the intended identity's principal";
+  }
+  const head = "^\\[reference\\(";
+  const tail = ", '2023-01-31'(?:, 'Full')?\\)\\.principalId\\]$";
+  const forms = [
+    new RegExp(head + "resourceId\\('Microsoft\\.ManagedIdentity/userAssignedIdentities', parameters\\('" + escapeRe(param) + "'\\)\\)" + tail),
+    new RegExp(head + "resourceId\\('Microsoft\\.ManagedIdentity/userAssignedIdentities', '" + escapeRe(identityName) + "'\\)" + tail),
+    new RegExp(head + "'" + escapeRe(identityId) + "'" + tail, "i"),
+  ];
+  return forms.some((re) => re.test(value)) ? null : "principalId does not reference the intended identity " + identityName + ": " + value.slice(0, 160);
+}
+
 // A new identity's clientId is unknown at what-if time: accept a GUID or an unresolved reference to that identity.
 const identityRef = (v, identityName) => (typeof v === "string" && (GUID.test(v) || (v.startsWith("[") && v.includes(identityName))));
 
-export function checkWhatIf(p, result, { component, enabled, imageDigest }) {
+export function checkWhatIf(p, result, { component, enabled, imageDigest, principalId }) {
   const problems = [];
   const need = (cond, msg) => { if (!cond) problems.push(msg); };
   problems.push(...validateProfile(p, { requireComplete: true }));
@@ -139,8 +172,15 @@ export function checkWhatIf(p, result, { component, enabled, imageDigest }) {
 
   const seen = new Set();
   const roleSeen = [];
+  const allIds = new Set();
+  const binding = component === "worker"
+    ? { param: "workerIdentityName", identityName: p.worker.workerIdentityName, identityId: ids.workerIdentity, knownPrincipalId: principalId }
+    : { param: "webIdentityName", identityName: p.web.webIdentityName, identityId: ids.webIdentity, knownPrincipalId: principalId };
+  if (principalId !== undefined && principalId !== null) need(GUID.test(principalId), "a supplied principal ID must be a lowercase GUID");
   for (const c of changes) {
     const id = c?.resourceId;
+    need(!allIds.has(lc(id)), `duplicate change for one resource ID: ${id}`);
+    allIds.add(lc(id));
     need(typeof id === "string" && lc(id).startsWith(lc(ids.rg) + "/"), `change outside ${p.resourceGroup}: ${id ?? "(no id)"}`);
     if (["NoChange", "Ignore"].includes(c?.changeType)) continue;
     need(c?.changeType === "Create", `${c?.changeType ?? "unknown"} is never allowed for a clean-start provisioning: ${id}`);
@@ -152,6 +192,8 @@ export function checkWhatIf(p, result, { component, enabled, imageDigest }) {
       const match = roleWant.find(([s, r]) => lc(s) === lc(scope) && lc(def) === lc(ids.roleDef(r)));
       need(Boolean(match), `unexpected role assignment at ${scope} (${def.split("/").pop() || "no role"}); only the exact registry and named secrets are allowed`);
       need(c?.after?.properties?.principalType === "ServicePrincipal", `role assignment at ${scope} must target the managed identity (ServicePrincipal)`);
+      const why = principalBinding(c?.after?.properties?.principalId, binding);
+      need(why === null, `role assignment at ${scope}: ${why}`);
       if (match) roleSeen.push(match);
       continue;
     }
@@ -241,16 +283,40 @@ function checkWorkerJob(p, ids, after, digest) {
   return problems;
 }
 
+// ------------------------------------------------------------------------------------------- compiled drift
+// Run on freshly compiled ARM JSON (CI compiled-iac job): every role assignment in each template must bind exactly
+// the expression principalBinding() accepts for that template's own identity.
+export function checkCompiledPrincipals(template, param) {
+  const problems = [];
+  const resources = Array.isArray(template?.resources) ? template.resources : Object.values(template?.resources ?? {});
+  const roles = resources.filter((r) => r?.type === "Microsoft.Authorization/roleAssignments");
+  if (roles.length === 0) problems.push("no role assignments found in the compiled template");
+  for (const r of roles) {
+    if (r?.properties?.principalId !== COMPILED_PRINCIPAL(param)) problems.push(`role assignment ${r?.name ?? "?"} binds ${r?.properties?.principalId}, expected ${COMPILED_PRINCIPAL(param)}`);
+    if (r?.properties?.principalType !== "ServicePrincipal") problems.push(`role assignment ${r?.name ?? "?"} principalType is not ServicePrincipal`);
+  }
+  return { problems, count: roles.length };
+}
+
 // ------------------------------------------------------------------------------------------- CLI
 if (import.meta.url === `file://${process.argv[1]}`) {
   const arg = (n) => { const i = process.argv.indexOf("--" + n); return i > 0 ? process.argv[i + 1] : undefined; };
+  if (process.argv.includes("--compiled-drift")) {
+    const web = checkCompiledPrincipals(JSON.parse(readFileSync(arg("web"), "utf8")), "webIdentityName");
+    const worker = checkCompiledPrincipals(JSON.parse(readFileSync(arg("worker"), "utf8")), "workerIdentityName");
+    const problems = [...web.problems, ...worker.problems];
+    for (const x of problems) console.error("DRIFT: " + x);
+    if (problems.length || web.count !== 4 || worker.count !== 2) { console.error(`expected 4 web and 2 worker role assignments, found ${web.count} and ${worker.count}`); process.exit(1); }
+    console.log(`compiled principal binding matches the what-if guard: ${web.count} web and ${worker.count} worker role assignments`);
+    process.exit(0);
+  }
   const profilePath = arg("profile"), whatifPath = arg("whatif"), component = arg("component"), enabledRaw = arg("enabled");
   if (!profilePath || !whatifPath || !component || !["true", "false"].includes(enabledRaw ?? "")) {
     console.error("usage: check-cleanstart-whatif.mjs --profile <p.json> --component web|worker --enabled true|false --whatif <w.json> [--image-digest <hex>]");
     process.exit(2);
   }
   const { problems, summary } = checkWhatIf(JSON.parse(readFileSync(profilePath, "utf8")), JSON.parse(readFileSync(whatifPath, "utf8")),
-    { component, enabled: enabledRaw === "true", imageDigest: arg("image-digest") });
+    { component, enabled: enabledRaw === "true", imageDigest: arg("image-digest"), principalId: arg("principal-id") });
   for (const s of summary) console.log("  " + s);
   if (problems.length) {
     for (const x of problems) console.error("REFUSE: " + x);

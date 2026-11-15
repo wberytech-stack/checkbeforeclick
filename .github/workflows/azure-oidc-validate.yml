@@ -130,3 +130,6 @@ jobs:
           az bicep lint --file infra/azure/hosting/azure-url-worker-job.bicep
           az bicep version
           node scripts/azure-data/validate-compiled-iac.mjs "$RUNNER_TEMP/cbc-azure-web.arm.json" "$RUNNER_TEMP/cbc-azure-worker.arm.json"
+          # Gate 008D: every compiled role assignment must bind its own template's identity, in exactly the form the
+          # what-if guard accepts (fails if Bicep output and guard drift apart).
+          node scripts/azure-data/check-cleanstart-whatif.mjs --compiled-drift --web "$RUNNER_TEMP/cbc-azure-web.arm.json" --worker "$RUNNER_TEMP/cbc-azure-worker.arm.json"

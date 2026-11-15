@@ -87,6 +87,37 @@ check("workflow: no secrets.* references", !/secrets\./.test(wfText));
 check("workflow: no client-secret / creds input", !/client-secret|creds:/.test(wfText));
 
 const jobs: Record<string, Job> = wf.jobs ?? {};
+
+// Azure-native images are build-and-validate only. The existing staging and production Container Apps
+// are LEGACY apps (Supabase Key Vault references); an Azure-native image must never reach them, and
+// nothing for that flavor may sign in to Azure, push or deploy.
+{
+  const legacyOnly = (j: Job | undefined) => typeof j?.if === "string" && j.if.includes("inputs.image_flavor == 'legacy'");
+  for (const [id, job] of Object.entries(jobs)) {
+    const touchesAzure = job.environment !== undefined || job.permissions?.["id-token"] === "write" ||
+      (job.steps ?? []).some((st) => typeof st.uses === "string" && st.uses.startsWith("azure/login@")) ||
+      (typeof (job as { uses?: unknown }).uses === "string");
+    if (touchesAzure) check(`workflow: job ${id} (Azure sign-in, environment or deploy) runs only for image_flavor legacy`, legacyOnly(job), String(job.if));
+  }
+  check("workflow: deploy (production), staging and verify-staging are all legacy-only",
+    legacyOnly(jobs.deploy) && legacyOnly(jobs.staging) && legacyOnly(jobs["verify-staging"]));
+  const build = jobs.build;
+  check("workflow: build job never signs in to Azure and has no environment",
+    build !== undefined && build.environment === undefined && build.permissions?.["id-token"] === undefined &&
+    !(build.steps ?? []).some((st) => typeof st.uses === "string" && st.uses.startsWith("azure/login@")));
+  check("workflow: build job does not gate on image_flavor (legacy builds unchanged)",
+    typeof build?.if === "string" && !build.if.includes("image_flavor"));
+  type RunStep = Step & { name?: string; if?: string; run?: string };
+  const smoke = ((build?.steps ?? []) as RunStep[]).filter((st) => /test-azure-web-container\.mjs/.test(st.run ?? ""));
+  check("workflow: Azure-native build runs the real-container smoke test, only for that flavor",
+    smoke.length === 1 && smoke[0].if === "inputs.image_flavor == 'azure-native'" &&
+    /node scripts\/azure-auth\/test-azure-web-container\.mjs "cbc-web:\$IMAGE_TAG"/.test(smoke[0].run ?? ""));
+  check("workflow: the Azure-native docker build passes no build arguments",
+    /docker build -f Dockerfile\.azure-web -t "cbc-web:\$IMAGE_TAG" \.\n/.test(wfText) &&
+    !/docker build -f Dockerfile\.azure-web[^\n]*--build-arg/.test(wfText));
+  check("workflow: the legacy docker build still uses the default Dockerfile (no -f)",
+    /else\n\s+docker build \\\n\s+--build-arg NEXT_PUBLIC_SUPABASE_URL=/.test(wfText));
+}
 for (const [id, job] of Object.entries(jobs)) {
   check(`workflow: job ${id} is gated on CBC_AZURE_DEPLOY_ENABLED == 'enabled'`,
     typeof job.if === "string" && job.if.includes("vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled'"));
@@ -263,10 +294,23 @@ check(".dockerignore: never re-includes .env", !di.some((l) => l.startsWith("!")
 check("next.config: output standalone", /output:\s*"standalone"/.test(read("next.config.ts")));
 const health = read("app/api/healthz/route.ts");
 check("healthz: no supabase / db / env access", !/supabase|from "pg"|process\.env/.test(health));
-check("proxy: matcher excludes exactly api/healthz", read("proxy.ts").includes("api/healthz$|"));
+// Anchored exclusion of exactly api/healthz (it may be the last alternative of the lookahead).
+check("proxy: matcher excludes exactly api/healthz", /\(\?!(?:[^)]*\|)?api\/healthz\$(?:\||\))/.test(read("proxy.ts")) &&
+  !/\(\?![^)]*\bapi\/(?:\||\)|\.\*)/.test(read("proxy.ts")));
 // PR #32 review: in the container request.url is the bind address (0.0.0.0:3000), so
 // absolute redirects must prefer NEXT_PUBLIC_APP_URL (Vercel previews leave it unset).
-for (const f of ["app/auth/signout/route.ts", "app/auth/callback/route.ts"]) {
+// Gate 008B: the callback delegates to the Azure handler, whose Location comes only from the
+// server-configured public origin (never request.url, Host or query); checked there instead.
+{
+  const cb = read("app/auth/callback/route.ts");
+  if (/runAzureCallbackRoute\(/.test(cb)) {
+    const http = read("src/security/azureCallbackHttp.ts");
+    check("app/auth/callback/route.ts: Azure callback redirects only to the configured public origin",
+      !/new URL\(/.test(cb) && /const origin = trustedOrigin\(config\.publicOrigin\);/.test(http) &&
+      (http.match(/headers\.set\("Location"/g) ?? []).length === 1 && /headers\.set\("Location", `\$\{origin\}/.test(http));
+  }
+}
+for (const f of ["app/auth/signout/route.ts", "app/auth/callback/route.ts"].filter((f) => !/runAzureCallbackRoute\(/.test(read(f)))) {
   const src = read(f);
   const redirects = [...src.matchAll(/new URL\(\s*[^,()]+,\s*([^)]+)\)/g)].map((m) => m[1].trim());
   check(`${f}: absolute redirects prefer NEXT_PUBLIC_APP_URL`,

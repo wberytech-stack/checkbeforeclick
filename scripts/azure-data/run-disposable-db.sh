@@ -31,19 +31,38 @@ trap cleanup EXIT
 as_pg() { if [ "$(id -u)" = 0 ]; then runuser -u "$OS_USER" -- "$@"; else "$@"; fi; }
 if [ "$(id -u)" = 0 ]; then chown "$OS_USER" "$WORK"; fi
 
+# CBC_TEST_OWNER_MODE=azure-like (Gate 008D): the migration owner is NOT a superuser, as on Azure Database for
+# PostgreSQL, where the admin is a member of azure_pg_admin with CREATEDB/CREATEROLE but no SUPERUSER/BYPASSRLS.
+# A separate bootstrap superuser (the platform) only creates those roles; everything else runs as cbc_owner.
+OWNER_MODE="${CBC_TEST_OWNER_MODE:-superuser}"
+case "$OWNER_MODE" in superuser|azure-like) ;; *) echo "CBC_TEST_OWNER_MODE must be superuser or azure-like" >&2; exit 2 ;; esac
 OWNER_PW="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+BOOT_PW="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 APP_PW="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 WORKER_PW="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-printf '%s\n' "$OWNER_PW" > "$WORK/pw"; chmod 600 "$WORK/pw"
+INIT_USER=cbc_owner; INIT_PW="$OWNER_PW"
+if [ "$OWNER_MODE" = azure-like ]; then INIT_USER=cbc_platform_bootstrap; INIT_PW="$BOOT_PW"; fi
+printf '%s\n' "$INIT_PW" > "$WORK/pw"; chmod 600 "$WORK/pw"
 if [ "$(id -u)" = 0 ]; then chown "$OS_USER" "$WORK/pw"; fi
 
-as_pg "$PG_BIN/initdb" -D "$WORK/data" -U cbc_owner --pwfile="$WORK/pw" --auth=scram-sha-256 -E UTF8 >/dev/null
+as_pg "$PG_BIN/initdb" -D "$WORK/data" -U "$INIT_USER" --pwfile="$WORK/pw" --auth=scram-sha-256 -E UTF8 >/dev/null
 rm -f "$WORK/pw"
 as_pg "$PG_BIN/pg_ctl" -D "$WORK/data" -l "$WORK/log" -w \
   -o "-c listen_addresses=127.0.0.1 -c port=$PORT -c unix_socket_directories=$WORK" start >/dev/null
 
+if [ "$OWNER_MODE" = azure-like ]; then
+  PGPASSWORD="$BOOT_PW" psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -U cbc_platform_bootstrap -d postgres \
+    -c "CREATE ROLE azure_pg_admin NOLOGIN" \
+    -c "CREATE ROLE cbc_owner LOGIN NOSUPERUSER NOBYPASSRLS CREATEDB CREATEROLE PASSWORD '$OWNER_PW'" \
+    -c "GRANT azure_pg_admin TO cbc_owner"
+  echo "owner mode: azure-like (cbc_owner is NOSUPERUSER NOBYPASSRLS CREATEDB CREATEROLE, member of azure_pg_admin)"
+fi
+unset BOOT_PW
 export PGPASSWORD="$OWNER_PW"
 PSQL=(psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -U cbc_owner)
+# Fail closed if the owner is not what this mode claims.
+SU="$("${PSQL[@]}" -d postgres -Atc "SELECT rolsuper::text || ',' || rolbypassrls::text FROM pg_roles WHERE rolname = current_user")"
+if [ "$OWNER_MODE" = azure-like ] && [ "$SU" != "false,false" ]; then echo "azure-like owner is privileged ($SU)" >&2; exit 1; fi
 "${PSQL[@]}" -d postgres -c "CREATE DATABASE cbc_test"
 # Runtime role BEFORE 002, so 002's conditional grants apply (as on a real server).
 "${PSQL[@]}" -d cbc_test -c "CREATE ROLE cbc_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '$APP_PW'" \

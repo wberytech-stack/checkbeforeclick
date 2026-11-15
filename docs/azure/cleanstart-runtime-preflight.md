@@ -11,12 +11,14 @@ independent of Supabase data and legacy migration compatibility.
 - `node scripts/azure-data/test-azure-runtime-preflight.mjs` uses mock catalog
   queries and deliberate privilege/role/RLS mutations. It makes **no** DB,
   network or Azure calls.
-- `scripts/azure-data/run-disposable-db.sh` applies migrations 001–009 to a
-  temporary PostgreSQL 16 database on 127.0.0.1. After migration 009 it runs
+- `scripts/azure-data/run-disposable-db.sh` applies migrations 001–010 to a
+  temporary PostgreSQL 16 database on 127.0.0.1. After migrations 009 and 010 it runs
   `node scripts/azure-data/azure-runtime-preflight.mjs --disposable` as the
   actual `cbc_app` and `cbc_worker` roles, using the existing disposable
   one-time credentials. The preflight rejects any non-loopback host, any
   database other than `cbc_test`, or any role name mismatch.
+- With `CBC_TEST_OWNER_MODE=azure-like` (also in CI) the same run uses a **non-superuser,
+  non-BYPASSRLS** migration owner in `azure_pg_admin` with `CREATEDB`/`CREATEROLE`, as on Azure.
 - The preflight executes **SELECT-only catalog and privilege queries**:
   current role attributes and role membership, RLS enabled on 14 tenant and
   security tables, absence of direct protected table writes, worker absence

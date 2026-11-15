@@ -70,3 +70,11 @@ jobs:
         env:
           PG_BIN: /usr/lib/postgresql/16/bin
         run: bash scripts/azure-data/run-disposable-db.sh
+
+      # Gate 008D: same suites with a NON-superuser, non-BYPASSRLS migration owner (member of azure_pg_admin with
+      # CREATEDB/CREATEROLE), matching Azure Database for PostgreSQL. A superuser owner could hide permission issues.
+      - name: Gate 008D migrations 001-010 and all DB suites with an Azure-like non-superuser owner (disposable)
+        env:
+          PG_BIN: /usr/lib/postgresql/16/bin
+          CBC_TEST_OWNER_MODE: azure-like
+        run: bash scripts/azure-data/run-disposable-db.sh

@@ -90,6 +90,20 @@ The guard **accepts only**:
 - the web identity assigned to the worker;
 - `potentialChanges`, non-Info diagnostics, or secret-looking text in the output.
 
+**Principal binding** (hardening after lead review 6899949127): every role assignment must be granted to the
+**intended** new identity. The what-if `principalId` must be one of:
+- the compiled Bicep expression for that template's own identity, `[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('webIdentityName' | 'workerIdentityName')), '2023-01-31').principalId]`;
+- the same expression with that identity's literal name or full resource ID;
+- a concrete GUID equal to `--principal-id <guid>`, supplied from authenticated evidence (for example `az identity show --query principalId`).
+
+These are refused:
+- another identity, the legacy identity, or the other component's identity parameter;
+- an arbitrary service principal;
+- extra expression text, or a missing value;
+- duplicate resource IDs anywhere in the what-if.
+
+CI recompiles both templates (`--compiled-drift`), so the guard and the Bicep output cannot silently diverge.
+
 **Passing is necessary, not sufficient:** a human still reads the what-if before any approved apply.
 
 ## 4. Entra External ID, certificate and Key Vault bindings
@@ -141,6 +155,6 @@ The guard **accepts only**:
 4. Approval of each stage S0–S9 individually.
 
 ## 8. Known gaps (offline follow-ups, not blockers for S0)
-- The disposable database runner applies migrations as a **superuser**. Azure's admin is **not** a superuser (`azure_pg_admin`). Re-run the migration suite with a non-superuser owner to match Azure before S4.
+- **Closed:** migrations 001–010 and every database suite now also run with a **non-superuser, non-BYPASSRLS** owner that is a member of `azure_pg_admin` with `CREATEDB` and `CREATEROLE` (`CBC_TEST_OWNER_MODE=azure-like`, in CI). All suites pass, including the owner-level integrity triggers and the runtime-role preflight.
 - `azure-runtime-preflight.mjs` cannot target a live database by design. A read-only live mode needs its own reviewed change.
-- `cleanstart-runtime-preflight.md` says "migrations 001–009"; the runner also applies and validates `010`.
+- **Closed:** `cleanstart-runtime-preflight.md` now says 001–010.

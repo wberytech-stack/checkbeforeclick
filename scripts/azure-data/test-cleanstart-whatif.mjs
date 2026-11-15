@@ -341,6 +341,10 @@ const netNegatives = [
   ["NN25 workspace key in clear in the what-if", () => nrun(mutate(netWhatIf, (w) => { at(w, ids.newEnvironment).properties.appLogsConfiguration.logAnalyticsConfiguration.sharedKey = "c2VjcmV0LWtleS12YWx1ZQ=="; }))],
   ["NN26 web app deployed into the EXISTING environment", () => run(mutate(webWhatIf, (w) => { webApp(w).properties.managedEnvironmentId = ids.existingEnvironment; }))],
   ["NN27 worker job deployed into the EXISTING environment", () => run(mutate(workerWhatIf, (w) => { job(w).properties.environmentId = ids.existingEnvironment; }), "worker")],
+  // Lead review (Gate 008E): the production database and the existing firewall rule must be untouchable.
+  ["NN28 Delete of the production database cbc_prod", () => nrun(mutate(netWhatIf, (w) => { w.changes.push({ resourceId: `${ids.postgres}/databases/cbc_prod`, changeType: "Delete" }); }))],
+  ["NN29 Modify of the existing firewall rule admin-current-ip", () => nrun(mutate(netWhatIf, (w) => { w.changes.push({ resourceId: `${ids.postgres}/firewallRules/admin-current-ip`, changeType: "Modify", after: { properties: { startIpAddress: "0.0.0.0", endIpAddress: "255.255.255.255" } } }); }))],
+  ["NN30 server public access changed (publicNetworkAccess Disabled) inside the network deployment", () => nrun(mutate(netWhatIf, (w) => { const c = w.changes.find((x) => x.resourceId === ids.postgres); c.changeType = "Modify"; c.after = { properties: { network: { publicNetworkAccess: "Disabled" } } }; }))],
 ];
 for (const [name, fn] of netNegatives) {
   let problems = [];

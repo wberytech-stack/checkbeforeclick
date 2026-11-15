@@ -127,6 +127,31 @@ RG=rg-cbc-prod-canadacentral-001; PG=pg-cbc-prod-cc-001; PGID=$(az postgres flex
 
 **Who applies:** the legacy deployer identity has `Reader` + `CBC Staging Deployer` on the resource group, which likely lacks network permissions. The founder applies interactively, or approves a separate, scoped role. That is a decision, not an assumption.
 
+## 7a. The server's public exposure (separate from the new app's private path)
+
+**A private endpoint does not reduce the server's public exposure.** After S2a:
+- `publicNetworkAccess` stays `Enabled`;
+- the firewall rule `admin-current-ip` (`129.224.217.0/24`) stays;
+- password authentication stays enabled.
+
+The template and the what-if guard deliberately **cannot** change any of these (NN02, NN28, NN29). Each reduction is a separate founder decision.
+
+| | After S2a (this gate) |
+| --- | --- |
+| New web app and worker | **private only.** Their DNS resolves the server to the private endpoint, and their environment's egress IPs are in no firewall rule, so they have no public path at all |
+| Server public endpoint | unchanged: reachable from `129.224.217.0/24` with the admin password |
+
+**Proposed reduction steps.** None is part of this gate; each needs its own approval, and they are ordered from cheapest and safest first.
+
+| Step | When | Change | Effect and trade-off |
+| --- | --- | --- | --- |
+| R1 | any time | narrow `admin-current-ip` to the founder's single address (`/32`), or delete it between admin sessions and re-add it when needed | free; removes the 255 neighbouring addresses; Cloud Shell and other locations need a temporary rule |
+| R2 | with S4 (Entra on the server) | enable Entra authentication and set an Entra admin; **then**, once no client still uses the admin password, set `passwordAuth: Disabled` | removes password guessing as an attack path. **Precondition:** an inventory of who uses `cbc_prod` and with what credentials (the legacy app uses Supabase, not this server; any other client is unknown and must be checked first) |
+| R3 | after cutover (S9) and R2 | **no standing firewall rules**: the public endpoint stays enabled but admits nothing; add a temporary `/32` rule only for a scheduled admin session | free; keeps emergency admin access possible without a VPN |
+| R4 | optional, later | `publicNetworkAccess: Disabled` | strongest, but the founder can then only administer from inside the VNet (VPN gateway, a jump host, or VNet-connected Cloud Shell), which **adds cost and complexity**; a separate cost decision |
+
+The recommended target is **R1 now, R2 at S4, R3 after cutover**. R4 only if a compliance need justifies its cost.
+
 ## 8. Rollback
 
 **Before any app uses the network,** delete in this order:
@@ -149,12 +174,12 @@ The server, its public endpoint, its firewall rule and `cbc_prod` are unaffected
 
 ## 10. Tests (offline, in PR CI)
 
-- **`test-cleanstart-whatif.mjs`** (129 → **131** checks), Gate 008E part:
+- **`test-cleanstart-whatif.mjs`** (129 → 131 → **134** checks), Gate 008E part:
   - profile fields equal the Bicep parameters, and Bicep defaults equal the profile prefixes;
   - template literals match the guard;
   - the committed compiled template passes; 9 compiled-template mutations are refused, including a `0.0.0.0/0` default, an attached NAT gateway, an AllowAllAzure firewall rule and a Dedicated profile;
   - the exact network what-if is accepted;
-  - 27 network negatives (NN01–NN27) and 8 profile negatives (NP01–NP08).
+  - 30 network negatives (NN01–NN30, including a `cbc_prod` delete, a change to `admin-current-ip`, and a server public-access change) and 8 profile negatives (NP01–NP08).
 - **Mutation check of the guard:** 11/11 killed.
 - **CI `compiled-iac`:** compiles and lints `azure-private-network.bicep` with the pinned CLI, and runs `--compiled-drift --network`.
 - **Not exercised:** any Azure API, a real what-if, real DNS resolution, actual prices.

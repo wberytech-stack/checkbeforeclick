@@ -88,6 +88,10 @@ jobs:
       - name: Offline Azure-only web IaC security and cost guards
         run: node scripts/azure-auth/test-azure-web-iac.mjs
 
+      # The deploy workflow runs this suite before every build; running it on PRs too means a
+      # change that would fail every azure-deploy dispatch (legacy or azure-native) fails here first.
+      - name: Hosting and deploy-workflow safety (azure-deploy image flavors and guards, offline)
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/azure-hosting/test-hosting-safety.ts
       - name: Build standalone Azure web image without Supabase build arguments
         run: docker build --file Dockerfile.azure-web --tag cbc-azure-web:ci .
       - name: Real-container Azure-only HTTP smoke without legacy credentials

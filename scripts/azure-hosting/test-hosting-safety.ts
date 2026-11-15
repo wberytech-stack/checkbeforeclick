@@ -65,6 +65,22 @@ check("workflow: environment input is staging|production choice",
   inputs.environment?.type === "choice" &&
   JSON.stringify(inputs.environment?.options) === JSON.stringify(["staging", "production"]));
 check("workflow: commit input required", inputs.commit?.required === true);
+check("workflow: explicit legacy or azure-native image choice",
+  inputs.image_flavor?.required === true && inputs.image_flavor?.type === "choice" &&
+  JSON.stringify(inputs.image_flavor?.options) === JSON.stringify(["legacy", "azure-native"]));
+check("workflow: Azure-native image selected only by explicit choice",
+  wfText.includes('if [ "$IMAGE_FLAVOR" = azure-native ]; then') &&
+  wfText.includes('docker build -f Dockerfile.azure-web -t "cbc-web:$IMAGE_TAG" .'));
+check("workflow: legacy image path and public args retained",
+  wfText.includes('if [ "$IMAGE_FLAVOR" = legacy ] &&') &&
+  wfText.includes('--build-arg NEXT_PUBLIC_SUPABASE_URL="$url"') &&
+  wfText.includes('--build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="$anon"') &&
+  wfText.includes('--build-arg NEXT_PUBLIC_APP_URL="$app"'));
+check("workflow: image flavor included in image tag to prevent collisions",
+  wfText.includes('image_tag=${COMMIT}-${suffix}-${IMAGE_FLAVOR}'));
+check("workflow: Azure-native image never receives Supabase build args",
+  /if \[ "\$IMAGE_FLAVOR" = azure-native \]; then\s+#[^\n]*\n\s+docker build -f Dockerfile\.azure-web[^\n]*\n\s+else/.test(wfText));
+
 check("workflow: top-level permissions are contents: read only",
   JSON.stringify(wf.permissions) === JSON.stringify({ contents: "read" }));
 check("workflow: no secrets.* references", !/secrets\./.test(wfText));

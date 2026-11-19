@@ -5,10 +5,12 @@
  *   $env:NODE_OPTIONS="--conditions=react-server"
  *   $env:CBC_DATABASE_URL="postgresql://postgres:postgres@localhost:55433/gate_003h_validation"
  *   $env:CBC_DATABASE_SSL="false"
+ *   $env:CBC_DISPOSABLE_PG_CONFIRM="gate_003h_validation"
  *   npm run validate:pg-helper
  *   Remove-Item Env:NODE_OPTIONS
  *   Remove-Item Env:CBC_DATABASE_URL
  *   Remove-Item Env:CBC_DATABASE_SSL
+ *   Remove-Item Env:CBC_DISPOSABLE_PG_CONFIRM
  *
  * Requires CBC_DATABASE_URL to point to a local disposable PostgreSQL only.
  * Refuses production, Azure, Supabase, cbc_prod, or non-localhost URLs.
@@ -19,6 +21,7 @@
  */
 
 const url = process.env.CBC_DATABASE_URL;
+const EXPECTED_DATABASE = "gate_003h_validation";
 
 if (!url) {
   console.error("FAIL: CBC_DATABASE_URL is not set.");
@@ -52,8 +55,19 @@ try {
     console.error("This script only runs against localhost. Refusing non-local host.");
     process.exit(1);
   }
+  if (!["postgres:", "postgresql:"].includes(parsed.protocol) ||
+      decodeURIComponent(parsed.pathname.slice(1)) !== EXPECTED_DATABASE ||
+      parsed.search || parsed.hash) {
+    console.error("FAIL: expected exact disposable database name and no URL options.");
+    process.exit(1);
+  }
 } catch {
   console.error("FAIL: CBC_DATABASE_URL is not a valid URL.");
+  process.exit(1);
+}
+
+if (process.env.CBC_DISPOSABLE_PG_CONFIRM !== EXPECTED_DATABASE) {
+  console.error("FAIL: explicit disposable database confirmation is required.");
   process.exit(1);
 }
 
@@ -85,7 +99,6 @@ function fail(name: string, reason: string) {
 }
 
 async function setup(client: import("pg").PoolClient) {
-  await client.query(`DROP TABLE IF EXISTS ${TABLE}`);
   await client.query(
     `CREATE TABLE ${TABLE} (id serial PRIMARY KEY, marker text NOT NULL)`
   );
@@ -95,12 +108,30 @@ async function teardown(client: import("pg").PoolClient) {
   await client.query(`DROP TABLE IF EXISTS ${TABLE}`);
 }
 
+async function assertDisposableDatabase(client: import("pg").PoolClient) {
+  // Read-only preflight; do not modify an existing or nonempty database.
+  const identity = await client.query(
+    `SELECT current_database() AS name,
+      (SELECT count(*)::int FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+         AND n.nspname NOT LIKE 'pg_toast%'
+         AND c.relkind IN ('r', 'p', 'v', 'm', 'f')) AS objects`
+  );
+  if (identity.rows.length !== 1 ||
+      identity.rows[0].name !== EXPECTED_DATABASE ||
+      Number(identity.rows[0].objects) !== 0) {
+    throw new Error("Disposable database identity/preflight failed; no DDL attempted");
+  }
+}
+
 async function runValidation() {
   const { withPgTransaction } = await import("../src/server/db/postgres.js");
   console.log("\n=== Gate 003H: pg transaction helper validation ===\n");
 
   // Setup: create disposable table in its own transaction.
   await withPgTransaction(async (client) => {
+    await assertDisposableDatabase(client);
     await setup(client);
   });
 

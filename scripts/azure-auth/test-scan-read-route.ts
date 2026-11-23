@@ -16,6 +16,7 @@ const session = { o_user_id: USER, o_organization_id: ORG, o_role: "owner" };
 const scan = {
   id: SCAN, input_type: "url", raw_input: "https://example.test/",
   status: "complete", verdict: "safe", risk_score: 0, confidence_score: 90,
+  ai_explanation: "No listed threats in the available signals.", recommended_action: "Remain cautious.",
   created_at: new Date("2026-01-01T00:00:00.000Z"), completed_at: null,
 };
 const evidence = { signal_type: "url", severity: "low", title: "Observed", detail: null, score_impact: 0 };
@@ -98,6 +99,9 @@ await check("S01 authenticated scan and evidence commit before 200", async () =>
   const body = await response.json();
   assert.equal(body.scan.id, SCAN);
   assert.equal(body.scan.created_at, "2026-01-01T00:00:00.000Z");
+  assert.equal(body.scan.ai_explanation, scan.ai_explanation);
+  assert.equal(body.scan.recommended_action, scan.recommended_action);
+  assert.match(f.calls[2].sql, /ai_explanation, recommended_action/);
   assert.deepEqual(body.evidence, [evidence]);
   assert.ok(!JSON.stringify(body).includes(ORG));
   assert.ok(!JSON.stringify(body).includes(USER));

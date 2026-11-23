@@ -37,6 +37,11 @@ check("reject malformed evidence", () => assert.throws(() => parseScanRead({ ...
 check("unknown verdict never says safe", () => assert.match(scanPresentation(payload.scan as ReturnType<typeof parseScanRead>["scan"]).label, /not confirmed/i));
 check("failed scan never says safe", () => assert.match(scanPresentation({ ...payload.scan, status: "failed" } as ReturnType<typeof parseScanRead>["scan"]).description, /not assume/i));
 check("dangerous result explicitly warns", () => assert.match(scanPresentation({ ...payload.scan, verdict: "dangerous" } as ReturnType<typeof parseScanRead>["scan"]).label, /do not open/i));
+check("dangerous verdict does not invent a threat-intelligence source", () => {
+  const description = scanPresentation({ ...payload.scan, verdict: "dangerous" } as ReturnType<typeof parseScanRead>["scan"]).description;
+  assert.match(description, /high-risk signals/i);
+  assert.doesNotMatch(description, /known threat|threat intelligence reported/i);
+});
 for (const value of ["light", "dark", "system"] as const) {
   check("accept supported theme preference", () => assert.equal(parseAzureThemePreference(value), value));
 }

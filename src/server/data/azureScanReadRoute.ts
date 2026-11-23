@@ -21,7 +21,7 @@ const HEADERS = {
 };
 
 const SCAN_SQL = `SELECT id, input_type, raw_input, status, verdict, risk_score,
-  confidence_score, created_at, completed_at
+  confidence_score, ai_explanation, recommended_action, created_at, completed_at
   FROM public.scans
   WHERE id = $1::uuid AND organization_id = $2::uuid`;
 
@@ -57,6 +57,9 @@ function scanRecord(row: Record<string, unknown>, id: string) {
       !["pending", "processing", "complete", "failed"].includes(String(row.status)) ||
       !(row.verdict === null || ["safe", "suspicious", "dangerous", "unknown"].includes(row.verdict as string)) ||
       !optionalNumber(row.risk_score) || !optionalNumber(row.confidence_score) ||
+      !optionalText(row.ai_explanation) || !optionalText(row.recommended_action) ||
+      (typeof row.ai_explanation === "string" && row.ai_explanation.length > 4000) ||
+      (typeof row.recommended_action === "string" && row.recommended_action.length > 2000) ||
       (row.risk_score !== null && (row.risk_score < 0 || row.risk_score > 100)) ||
       (row.confidence_score !== null && (row.confidence_score < 0 || row.confidence_score > 100))) {
     throw new Error("Invalid scan record");
@@ -69,6 +72,8 @@ function scanRecord(row: Record<string, unknown>, id: string) {
     verdict: row.verdict,
     risk_score: row.risk_score,
     confidence_score: row.confidence_score,
+    ai_explanation: row.ai_explanation,
+    recommended_action: row.recommended_action,
     created_at: isoDate(row.created_at, false),
     completed_at: isoDate(row.completed_at, true),
   };

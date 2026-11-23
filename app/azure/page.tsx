@@ -343,6 +343,18 @@ export default function AzureScanPage() {
                           <p className="mt-2 text-sm leading-relaxed text-slate-700 dark:text-slate-200">{presentation.description}</p>
                         </div>
                       ) : <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">Loading scan status…</p>}
+                      {scan?.scan.status === "complete" && scan.scan.ai_explanation && (
+                        <div className="mt-4 rounded-lg border border-slate-200 p-4 text-sm dark:border-slate-700">
+                          <h3 className="font-semibold">Analysis explanation</h3>
+                          <p className="mt-2 whitespace-pre-wrap break-words text-slate-700 dark:text-slate-200">{scan.scan.ai_explanation}</p>
+                        </div>
+                      )}
+                      {scan?.scan.status === "complete" && scan.scan.recommended_action && (
+                        <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm dark:border-[#35587c] dark:bg-[#152c45]">
+                          <h3 className="font-semibold">Recommended action</h3>
+                          <p className="mt-2 whitespace-pre-wrap break-words">{scan.scan.recommended_action}</p>
+                        </div>
+                      )}
                       {scan && scan.evidence.length > 0 && (
                         <div className="mt-5 space-y-3">
                           <h3 className="text-sm font-bold">Evidence ({scan.evidence.length})</h3>

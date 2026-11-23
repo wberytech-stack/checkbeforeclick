@@ -231,5 +231,30 @@ await check("S29 valid dangerous verdict and critical evidence pass", async () =
   assert.equal(body.scan.verdict, "dangerous");
   assert.equal(body.evidence[0].severity, "critical");
 });
+await check("S30 oversized AI explanation fails closed before evidence", async () => {
+  const f = fixture({ scans: [{ ...scan, ai_explanation: "x".repeat(4001) }] });
+  const response = await status(f, 503);
+  assert.deepEqual(await response.json(), { error: "Scan temporarily unavailable" });
+  assert.ok(!f.events.includes("evidence"));
+});
+await check("S31 oversized recommended action fails closed before evidence", async () => {
+  const f = fixture({ scans: [{ ...scan, recommended_action: "x".repeat(2001) }] });
+  await status(f, 503);
+  assert.ok(!f.events.includes("evidence"));
+});
+await check("S32 malformed AI explanation type fails closed", async () => {
+  const f = fixture({ scans: [{ ...scan, ai_explanation: { prompt: "unsafe" } }] });
+  await status(f, 503);
+  assert.ok(!f.events.includes("evidence"));
+});
+await check("S33 nullable explanation and action remain valid for pending scans", async () => {
+  const f = fixture({ scans: [{ ...scan, status: "pending", verdict: null,
+    risk_score: null, confidence_score: null,
+    ai_explanation: null, recommended_action: null }] });
+  const response = await status(f, 200);
+  const body = await response.json();
+  assert.equal(body.scan.ai_explanation, null);
+  assert.equal(body.scan.recommended_action, null);
+});
 console.log("\n=== Azure scan read boundary: " + passed + " passed, " + failed + " failed ===");
 process.exitCode = failed ? 1 : 0;

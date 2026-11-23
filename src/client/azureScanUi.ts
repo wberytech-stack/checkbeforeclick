@@ -81,7 +81,7 @@ export function scanPresentation(scan: AzureScanView["scan"]): { label: string; 
   if (scan.status === "failed")
     return { label: "Check unavailable", description: "The scan did not finish. Do not assume this link is safe." };
   if (scan.verdict === "dangerous")
-    return { label: "Dangerous — do not open", description: "Threat intelligence reported a known threat." };
+    return { label: "Dangerous — do not open", description: "High-risk signals were detected. Do not visit this link." };
   if (scan.verdict === "suspicious")
     return { label: "Use caution", description: "Signals suggest this link may be risky." };
   return { label: "Safety not confirmed", description: "No confirmed threat was returned; this does not prove the link is safe." };

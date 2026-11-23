@@ -1,0 +1,226 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.48.1.52935",
+      "templateHash": "16276685199880740777"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "postgresServerName": {
+      "type": "string",
+      "metadata": {
+        "description": "EXISTING PostgreSQL flexible server (public-access mode). Referenced only."
+      }
+    },
+    "logAnalyticsName": {
+      "type": "string",
+      "metadata": {
+        "description": "EXISTING Log Analytics workspace for the new environment logs. Referenced only."
+      }
+    },
+    "vnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "NEW virtual network name."
+      }
+    },
+    "environmentName": {
+      "type": "string",
+      "metadata": {
+        "description": "NEW Container Apps environment name (must differ from the existing environment)."
+      }
+    },
+    "privateEndpointName": {
+      "type": "string",
+      "metadata": {
+        "description": "NEW private endpoint name for PostgreSQL."
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.80.0.0/24"
+    },
+    "appsSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.80.0.0/25"
+    },
+    "endpointSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.80.0.128/28"
+    },
+    "deployNetwork": {
+      "type": "bool",
+      "defaultValue": false
+    }
+  },
+  "variables": {
+    "appsSubnetName": "snet-cbc-aca",
+    "endpointSubnetName": "snet-cbc-pe",
+    "postgresPrivateDnsZone": "privatelink.postgres.database.azure.com",
+    "tags": {
+      "project": "checkbeforeclick",
+      "component": "private-network"
+    }
+  },
+  "resources": [
+    {
+      "condition": "[parameters('deployNetwork')]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2024-05-01",
+      "name": "[parameters('vnetName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('appsSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('appsSubnetPrefix')]",
+              "delegations": [
+                {
+                  "name": "container-apps",
+                  "properties": {
+                    "serviceName": "Microsoft.App/environments"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "[variables('endpointSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('endpointSubnetPrefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[parameters('deployNetwork')]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2024-06-01",
+      "name": "[variables('postgresPrivateDnsZone')]",
+      "location": "global",
+      "tags": "[variables('tags')]"
+    },
+    {
+      "condition": "[parameters('deployNetwork')]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2024-06-01",
+      "name": "[format('{0}/{1}', variables('postgresPrivateDnsZone'), format('{0}-link', parameters('vnetName')))]",
+      "location": "global",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('postgresPrivateDnsZone'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('deployNetwork')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-05-01",
+      "name": "[parameters('privateEndpointName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), variables('endpointSubnetName'))]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "postgres",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('postgresServerName'))]",
+              "groupIds": [
+                "postgresqlServer"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('deployNetwork')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/{1}', parameters('privateEndpointName'), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "postgres",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('postgresPrivateDnsZone'))]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('postgresPrivateDnsZone'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', parameters('privateEndpointName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('deployNetwork')]",
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('environmentName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "vnetConfiguration": {
+          "infrastructureSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), variables('appsSubnetName'))]",
+          "internal": false
+        },
+        "workloadProfiles": [
+          {
+            "name": "Consumption",
+            "workloadProfileType": "Consumption"
+          }
+        ],
+        "zoneRedundant": false,
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName')), '2023-09-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName')), '2023-09-01').primarySharedKey]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones/virtualNetworkLinks', variables('postgresPrivateDnsZone'), format('{0}-link', parameters('vnetName')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "networkEnabled": {
+      "type": "bool",
+      "value": "[parameters('deployNetwork')]"
+    },
+    "environmentDefaultDomain": {
+      "type": "string",
+      "value": "[if(parameters('deployNetwork'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), '2024-03-01').defaultDomain, '')]"
+    }
+  }
+}

@@ -39,6 +39,20 @@
 #   The same run creates the app the first time and updates it later. No retries.
 #   Then verify-staging runs the read-only staging-verify workflow against the app.
 # Production keeps the image-only update in the deploy job and never touches Bicep.
+#
+# Image flavor (input image_flavor, required, no default):
+#   legacy        the existing Supabase-dependent Dockerfile; staging and production behave
+#                 exactly as before.
+#   azure-native  Dockerfile.azure-web (no Supabase/Inngest build args, no secrets).
+#                 BUILD AND VALIDATE ONLY: the image is built from the requested master
+#                 commit and must pass the real-container smoke test
+#                 (scripts/azure-auth/test-azure-web-container.mjs, no credentials, loopback
+#                 only). No job that signs in to Azure, pushes an image or deploys runs for
+#                 this flavor: the existing staging and production Container Apps are the
+#                 LEGACY apps (Supabase Key Vault references) and must never receive an
+#                 Azure-native image. Deploying the Azure-native web service needs its own
+#                 target (infra/azure/hosting/azure-only-web.bicep, deployWeb=false today)
+#                 and a separate founder-approved change to this workflow.
 name: azure-deploy
 
 on:
@@ -51,6 +65,13 @@ on:
         options:
           - staging
           - production
+      image_flavor:
+        description: "Image type (legacy retains existing staging behavior)"
+        required: true
+        type: choice
+        options:
+          - legacy
+          - azure-native
       commit:
         description: "Full 40-character commit SHA on master to deploy"
         required: true
@@ -78,6 +99,7 @@ jobs:
         shell: bash
         env:
           TARGET_ENV: ${{ inputs.environment }}
+          IMAGE_FLAVOR: ${{ inputs.image_flavor }}
           COMMIT: ${{ inputs.commit }}
           STG_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_URL }}
           STG_ANON: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -95,13 +117,16 @@ jobs:
           if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::commit must be a full lowercase 40-hex SHA"; exit 1
           fi
-          if [ -z "$url" ] || [ -z "$anon" ]; then
+          if [ "$IMAGE_FLAVOR" != legacy ] && [ "$IMAGE_FLAVOR" != azure-native ]; then
+            echo "::error::unknown image flavor"; exit 1
+          fi
+          if [ "$IMAGE_FLAVOR" = legacy ] && { [ -z "$url" ] || [ -z "$anon" ]; }; then
             echo "::error::NEXT_PUBLIC Supabase variables for $TARGET_ENV are not set; refusing to build"; exit 1
           fi
           if ! [[ "$app" =~ ^https://[a-z0-9.-]+$ ]]; then
             echo "::error::NEXT_PUBLIC_APP_URL for $TARGET_ENV must be set to an https origin without a path; refusing to build"; exit 1
           fi
-          echo "image_tag=${COMMIT}-${suffix}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${COMMIT}-${suffix}-${IMAGE_FLAVOR}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
@@ -137,6 +162,7 @@ jobs:
           TARGET_ENV: ${{ inputs.environment }}
           COMMIT: ${{ inputs.commit }}
           IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+          IMAGE_FLAVOR: ${{ inputs.image_flavor }}
           STG_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_URL }}
           STG_ANON: ${{ vars.CBC_STG_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           STG_APP_URL: ${{ vars.CBC_STG_NEXT_PUBLIC_APP_URL }}
@@ -150,13 +176,33 @@ jobs:
           else
             url="$STG_URL"; anon="$STG_ANON"; app="$STG_APP_URL"
           fi
-          docker build \
-            --build-arg NEXT_PUBLIC_SUPABASE_URL="$url" \
-            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="$anon" \
-            --build-arg NEXT_PUBLIC_APP_URL="$app" \
-            --build-arg CBC_BUILD_SHA="$COMMIT" \
-            -t "cbc-web:$IMAGE_TAG" .
+          if [ "$IMAGE_FLAVOR" = azure-native ]; then
+            # Azure-only image: no Supabase/Inngest build arguments and no credentials of any kind.
+            docker build -f Dockerfile.azure-web -t "cbc-web:$IMAGE_TAG" .
+          else
+            docker build \
+              --build-arg NEXT_PUBLIC_SUPABASE_URL="$url" \
+              --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="$anon" \
+              --build-arg NEXT_PUBLIC_APP_URL="$app" \
+              --build-arg CBC_BUILD_SHA="$COMMIT" \
+              -t "cbc-web:$IMAGE_TAG" .
+          fi
           docker save "cbc-web:$IMAGE_TAG" | gzip > "$RUNNER_TEMP/cbc-web.tar.gz"
+
+      # Azure-native images are validated here and go no further (see header).
+      - name: Azure-native image - real-container smoke test (no credentials, loopback only)
+        if: inputs.image_flavor == 'azure-native'
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          node scripts/azure-auth/test-azure-web-container.mjs "cbc-web:$IMAGE_TAG"
+          {
+            echo "### Azure-native image validated (build only)"
+            echo "Image \`cbc-web:$IMAGE_TAG\` built from Dockerfile.azure-web and passed the container smoke test."
+            echo "Not pushed and not deployed: no Azure-native deployment target is approved yet."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -166,7 +212,7 @@ jobs:
 
   deploy:
     needs: build
-    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'production'
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'production' && inputs.image_flavor == 'legacy'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: azure-${{ inputs.environment }}
@@ -257,7 +303,7 @@ jobs:
 
   staging:
     needs: build
-    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'staging'
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'staging' && inputs.image_flavor == 'legacy'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: azure-staging
@@ -406,7 +452,7 @@ jobs:
   # environment, no Azure sign-in, no repository secret; only after the staging job succeeds.
   verify-staging:
     needs: staging
-    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'staging'
+    if: vars.CBC_AZURE_DEPLOY_ENABLED == 'enabled' && github.ref == 'refs/heads/master' && inputs.environment == 'staging' && inputs.image_flavor == 'legacy'
     permissions:
       contents: read
     uses: ./.github/workflows/staging-verify.yml

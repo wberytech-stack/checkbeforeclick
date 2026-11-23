@@ -19,8 +19,11 @@ check("accept canonical creation ID", () => assert.equal(parseScanCreated({ id: 
 for (const body of [null, {}, { id: ID.toUpperCase(), status: "pending" }, { id: ID, status: "complete" }]) {
   check("reject malformed creation response", () => assert.throws(() => parseScanCreated(body)));
 }
-const payload = { scan: { id: ID, input_type: "url", raw_input: "https://example.com", status: "complete", verdict: "unknown" }, evidence: [] };
+const payload = { scan: { id: ID, input_type: "url", raw_input: "https://example.com", status: "complete", verdict: "unknown", ai_explanation: "No listed threats.", recommended_action: "Use caution." }, evidence: [] };
 check("parse tenant-filtered read shape", () => assert.equal(parseScanRead(payload, ID).scan.id, ID));
+check("preserve evidence-backed explanation", () => assert.equal(parseScanRead(payload, ID).scan.ai_explanation, "No listed threats."));
+check("preserve recommended action", () => assert.equal(parseScanRead(payload, ID).scan.recommended_action, "Use caution."));
+check("reject oversized explanation", () => assert.throws(() => parseScanRead({ ...payload, scan: { ...payload.scan, ai_explanation: "x".repeat(4001) } }, ID)));
 check("reject mismatched scan ID", () => assert.throws(() => parseScanRead(payload, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")));
 check("reject wrong scan type", () => assert.throws(() => parseScanRead({ ...payload, scan: { ...payload.scan, input_type: "email" } }, ID)));
 for (const verdict of ["benign", "SAFE", "", "malicious", 42, {}, []]) {

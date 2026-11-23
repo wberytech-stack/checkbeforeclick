@@ -7,6 +7,8 @@ export type AzureScanView = {
     raw_input: string;
     status: "pending" | "processing" | "complete" | "failed";
     verdict: string | null;
+    ai_explanation: string | null;
+    recommended_action: string | null;
   };
   evidence: Array<{ title: string; detail: string | null }>;
 };
@@ -52,6 +54,8 @@ export function parseScanRead(value: unknown, id: string): AzureScanView {
   if (!UUID.test(id) || s.id !== id || s.input_type !== "url" ||
       typeof s.raw_input !== "string" || s.raw_input.length > 10000 ||
       !["pending", "processing", "complete", "failed"].includes(String(s.status)) ||
+      !(s.ai_explanation === null || (typeof s.ai_explanation === "string" && s.ai_explanation.length <= 4000)) ||
+      !(s.recommended_action === null || (typeof s.recommended_action === "string" && s.recommended_action.length <= 2000)) ||
       !(s.verdict === null || ["safe", "suspicious", "dangerous", "unknown"].includes(s.verdict as string)) ||
       !Array.isArray(row.evidence) || row.evidence.length > 500) throw new Error("Invalid scan response");
   const evidence = row.evidence.map((entry: unknown) => {
@@ -66,6 +70,8 @@ export function parseScanRead(value: unknown, id: string): AzureScanView {
     id, input_type: "url", raw_input: s.raw_input,
     status: s.status as AzureScanView["scan"]["status"],
     verdict: s.verdict as string | null,
+    ai_explanation: s.ai_explanation as string | null,
+    recommended_action: s.recommended_action as string | null,
   }, evidence };
 }
 

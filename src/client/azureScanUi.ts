@@ -53,7 +53,7 @@ export function parseScanRead(value: unknown, id: string): AzureScanView {
   const s = scan as Record<string, unknown>;
   if (!UUID.test(id) || s.id !== id || s.input_type !== "url" ||
       typeof s.raw_input !== "string" || s.raw_input.length > 10000 ||
-      !["pending", "processing", "complete", "failed"].includes(String(s.status)) ||
+      (typeof s.status !== "string" || !["pending", "processing", "complete", "failed"].includes(s.status)) ||
       !(s.ai_explanation === null || (typeof s.ai_explanation === "string" && s.ai_explanation.length <= 4000)) ||
       !(s.recommended_action === null || (typeof s.recommended_action === "string" && s.recommended_action.length <= 2000)) ||
       !(s.verdict === null || ["safe", "suspicious", "dangerous", "unknown"].includes(s.verdict as string)) ||

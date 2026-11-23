@@ -26,6 +26,12 @@ check("preserve recommended action", () => assert.equal(parseScanRead(payload, I
 check("reject oversized explanation", () => assert.throws(() => parseScanRead({ ...payload, scan: { ...payload.scan, ai_explanation: "x".repeat(4001) } }, ID)));
 check("reject mismatched scan ID", () => assert.throws(() => parseScanRead(payload, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")));
 check("reject wrong scan type", () => assert.throws(() => parseScanRead({ ...payload, scan: { ...payload.scan, input_type: "email" } }, ID)));
+for (const status of [null, 0, {}, [], { toString: () => "complete" }]) {
+  check("reject non-string scan status", () => assert.throws(() => parseScanRead({ ...payload, scan: { ...payload.scan, status } }, ID)));
+}
+for (const status of ["pending", "processing", "complete", "failed"]) {
+  check("accept documented scan status", () => assert.equal(parseScanRead({ ...payload, scan: { ...payload.scan, status } }, ID).scan.status, status));
+}
 for (const verdict of ["benign", "SAFE", "", "malicious", 42, {}, []]) {
   check("reject unsupported verdict response", () => assert.throws(() => parseScanRead({ ...payload, scan: { ...payload.scan, verdict } }, ID)));
 }

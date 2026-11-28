@@ -191,7 +191,7 @@ Nothing here is created by this gate. **Never paste any value into chat.**
 | GitHub App (Settings, Developer settings) | `cbc-implementer` | App | Webhook off. Install on **this repository only**. Permissions: Metadata read, Contents read and write, Pull requests read and write, Issues read and write. Nothing else. |
 | Environment `agent-publisher` | `CBC_APP_PRIVATE_KEY` | secret | the App's `.pem` private key. Used only by publish jobs and the identity test. Never visible to the model. |
 | Environment `agent-model` | `ANTHROPIC_API_KEY` | secret | an Anthropic API key with a console spend limit. Used only by edit jobs. Never alongside the App key. |
-| Both environments | (settings) | environment | deployment branches: `master` only. Required reviewer: **none proposed** (decision 1, section 9; recommendation, not yet confirmed by the founder). |
+| Both environments | (settings) | environment | deployment branches: `master` only. Required reviewer: **none** (decision 1, section 9, confirmed by the founder). |
 | Repository variables | `CBC_APP_ID` | variable | the App's numeric ID |
 | | `CBC_APP_SLUG` | variable | `cbc-implementer` (the name, without `[bot]`) |
 | | `CBC_FOUNDER_LOGIN` | variable | the founder's GitHub login |
@@ -246,12 +246,12 @@ Not run: `actionlint` (not installed in the session), any GitHub-hosted run, any
 
 ## 9. Open founder decisions
 
-Decisions 1 to 3 below are **recommendations relayed from Codex review text. They are not recorded as decided.** Per AGENTS.md section 3, only the founder's own explicit statement counts. Until the founder confirms each in their own words, nothing here may be activated.
+**Founder confirmation (2026-11-28, in the founder's own words in chat):** "I confirm decisions 1-3: no required reviewer for the dedicated agent-model and agent-publisher environments; Issues read/write for the CBC-only App; and a docs-only pilot with AGENTS.md unchanged." The founder stated that this **does not authorize merging or activation**. The founder's decisions 1, 2 and 3 map to items 1, 2 and 4 below. Item 3 (which Anthropic credential to use) is **not yet confirmed**; the API key remains a proposal. Merge, activation, App and environment creation, secrets and Codex settings still each need the founder's separate approval.
 
-1. **Environments without a required reviewer** (`agent-model` and `agent-publisher` only; production protections unchanged). Needed for unattended rounds (section 3.5). Alternative: keep the founder as required reviewer, so each run waits for one click, which is semi-automatic.
-2. **Wider App permission** (Issues read and write, this repository only), required by the Claude docs.
-3. **Credential:** an Anthropic API key (proposed), or the subscription OAuth token, or federation.
-4. **Seeding the pilot.** Recommendation: keep the first pilot docs-only and accept an empty review as a valid outcome; do not change `AGENTS.md` just to manufacture findings; test the fix path with the controlled fixtures in `test-guard.mjs`. Alternative: the founder approves a "## Code Review Rules" section in `AGENTS.md` (an amendment under section 19, a separate docs-only gate) that tells Codex to treat contradictions with the gate document as P1.
+1. **Environments without a required reviewer** (`agent-model` and `agent-publisher` only; production protections unchanged). **Confirmed.** Needed for unattended rounds (section 3.5). Alternative: keep the founder as required reviewer, so each run waits for one click, which is semi-automatic.
+2. **Wider App permission** (Issues read and write, this repository only), required by the Claude docs. **Confirmed.**
+3. **Credential (open, awaiting the founder):** an Anthropic API key (proposed), or the subscription OAuth token, or federation.
+4. **Pilot scope** (the founder's decision 3). **Confirmed:** docs-only, `AGENTS.md` unchanged. Keep the first pilot docs-only and accept an empty review as a valid outcome; do not change `AGENTS.md` just to manufacture findings; test the fix path with the controlled fixtures in `test-guard.mjs`. Alternative: the founder approves a "## Code Review Rules" section in `AGENTS.md` (an amendment under section 19, a separate docs-only gate) that tells Codex to treat contradictions with the gate document as P1.
 5. **Older pilot draft (PR #61).** This gate is an alternative that avoids a separate API-key reviewer script. Close, keep or merge it later. This gate does not touch it.
 
 ## 9a. Cost note

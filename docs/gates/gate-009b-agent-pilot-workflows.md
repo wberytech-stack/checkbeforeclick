@@ -1,96 +1,144 @@
-# Gate 009B: disabled agent pilot workflows, identity acceptance test and pilot runbook
+# Gate 009B: event-driven agent pilot (disabled), identity acceptance test and runbook
 
 **Status:** draft for Codex review and founder approval. Preparation and offline validation only.
 
 - No workflow is enabled. Every job is hard-disabled with `if: ${{ false }}`.
-- No workflow was dispatched. No secret was created or read. No GitHub setting changed.
+- No workflow was dispatched or run. No secret, variable or setting was created or changed.
 - No GitHub App exists yet. No model, provider or Azure call was made.
 - Merging, activating and running any of this are founder actions (AGENTS.md section 6.3).
 
 Builds on Gate 009A (draft PR #64: protocol, guardrails, App setup). Gate 009A is not merged, so this gate cites it by number and does not depend on its files.
 
+**Founder authorization for this revision (2026-11-28):** the founder asked for automatic GitHub handoffs: a new implementation commit triggers Codex review, and a completed review triggers Claude to assess and fix in-scope findings. Two rounds, no duplicate runs, no loops, merge and deployment stay with the founder, execution stays disabled until Codex reviews the workflow. This revises the earlier founder-triggered design in the same gate. The manual dispatch path stays as a fallback.
+
 ## 1. What this gate adds
 
 | File | Purpose |
 | --- | --- |
-| `.github/workflows/agent-pilot-run.yml` | Founder-dispatched pilot: `implement` (round 1) and `fix` (rounds 2 and 3). Disabled. |
+| `.github/workflows/agent-pilot-router.yml` | Secret-free router. On a Codex review, dispatches the privileged run. Optional fallback job posts `@codex review`. Disabled. |
+| `.github/workflows/agent-pilot-run.yml` | Privileged run, dispatched only: `implement` (round 1) and `fix` (rounds 2 and 3). Always runs from `master`. Disabled. |
 | `.github/workflows/agent-identity-test.yml` | Identity acceptance test A1, A2, A4 to A7. A3 is manual. Runs no model. Disabled. |
-| `scripts/agent-collab/guard.mjs` | Deterministic guard: dispatch inputs, scope, PR state, round count, reviewer-findings filter, secret scan. |
-| `scripts/agent-collab/test-guard.mjs` | 60 offline tests for the guard. |
-| `scripts/agent-collab/test-workflow-safety.mjs` | Static checks of both workflows, with 17 mutation tests proving the checks bite. |
-| this document | Design, verification record, runbook, activation requirements. |
+| `scripts/agent-collab/guard.mjs` | Deterministic guard: inputs, scope, PR state, review binding, round and duplicate planning, findings filter, secret scan. |
+| `scripts/agent-collab/test-guard.mjs` | 80 offline tests, including loop and duplicate-event simulations. |
+| `scripts/agent-collab/test-workflow-safety.mjs` | Static checks of all three workflows, with 39 mutation tests proving the checks bite. |
+| `scripts/agent-collab/test-router-filter.mjs` | Runs the router's real pre-filter shell blocks against 29 synthetic events. |
+| this document | Verification record, design, runbook, activation requirements. |
 
 No `package.json` or lockfile change. The scripts use only Node built-ins.
 
-## 2. Verified: current Claude Code GitHub Actions setup
+## 2. Verified trigger support
 
-Read from the official documentation on 2026-11-28 (<https://code.claude.com/docs/en/github-actions>, <https://github.com/anthropics/claude-code-action/blob/main/docs/setup.md>).
+Read from official documentation on 2026-11-28. "Not stated" means the documentation does not say, so it is **unverified** and listed in section 2.3.
 
-- The action is `anthropics/claude-code-action@v1`. A `prompt` input selects automation mode. Without it the action waits for an `@claude` comment (interactive mode).
-- Authentication to Claude: `anthropic_api_key` (secret `ANTHROPIC_API_KEY`), or `claude_code_oauth_token`. Workload identity federation is also supported. This gate uses the API-key path because it is the simplest to revoke.
-- **A custom GitHub App is supported.** Mint a token with `actions/create-github-app-token` and pass it as `github_token`. The docs state the custom App needs **Contents, Issues and Pull requests, each read and write**.
-- Who can trigger: the action requires write access on issue and PR events, and rejects bot actors unless listed in `allowed_bots`. A manual `workflow_dispatch` by the founder passes these checks.
-- Cost controls named in the docs: `--max-turns`, workflow timeouts and concurrency groups. All three are used here.
-- Commits made with the default `GITHUB_TOKEN` do not trigger other workflows. Commits made with an App token do. This is a reason to use the App token for pushes.
-- `id-token: write` is documented as needed for the default Claude App authentication and for federation. With an own `github_token` and an API key it is documented as not needed. These workflows grant no `id-token`. If the first run shows the action needs it, that is a finding for the activation gate, not a silent change.
+### 2.1 Codex (<https://learn.chatgpt.com/docs/third-party/github>, which <https://developers.openai.com/codex/integrations/github> redirects to)
 
-**Correction to Gate 009A section 13.3.** 009A listed Contents and Pull requests only and said Issues was not needed. The official docs say the action's custom App needs Issues read and write too (PR comments use the issues API). The App token in these workflows therefore requests `contents`, `pull-requests` and `issues`, each write. This is one permission wider than 009A proposed. It is not granted by this gate. The founder decides when creating the App. Gate 009A's table should be updated if the founder accepts it.
-
-**Not verified** (needs a live run, so it belongs to activation):
-- the exact reviewer login that Codex posts as, which is why the workflow reads `vars.CBC_CODEX_REVIEWER_LOGIN`;
-- whether Codex review comments arrive as pull request review comments (the endpoint read here) or as issue comments;
-- that `claude-code-action` makes no commit or comment of its own when the only allowed tools are `Read,Write,Edit,Glob,Grep`;
-- the behaviour of `actions/create-github-app-token` v2.2.2 inputs. It was chosen because its `app-id` and `private-key` inputs are the ones the Claude docs use. Later versions exist (v3.x) and need their input names checked first.
-
-Pinned versions (resolved with `git ls-remote`, 2026-11-28):
-
-| Action | Pin |
+| Question | Documentation says |
 | --- | --- |
-| `actions/checkout` | `d23441a48e516b6c34aea4fa41551a30e30af803` (v6.1.0) |
-| `actions/create-github-app-token` | `fee1f7d63c2ff003460e3d139729b119787bc349` (v2.2.2) |
-| `anthropics/claude-code-action` | `4411a9e9b0283becf4b924f7bce360fd7756c78c` (v1.0.290, annotated tag peeled to its commit) |
+| Automatic review | **Supported.** Connect the repository to Codex, then in Codex settings turn on "Automatic review" under "Review code", and choose "Review trigger". Configuring needs GitHub push or admin permission. The available trigger options are not listed. |
+| Manual review | A pull request comment containing `@codex review`. |
+| How findings arrive | A standard GitHub **code review**, "just like a teammate would". Flags **only P0 and P1** issues. |
+| Author | The bot shown as `chatgpt-codex-connector`. The full login string is not stated. |
+| Completion signal | Codex reacts with a 👀 to the trigger comment, then posts the review. No separate completion event is described. The submitted review is the signal. |
+| Re-review on new commits | **Not stated.** |
+| Draft pull requests | **Not stated.** |
+| Repository guidance | Reads `AGENTS.md` files, including a "## Code Review Rules" section. |
+| Fix or implement from a comment | Not covered. Only review. |
 
-## 3. Design: how Claude's work reaches the App-owned branch
+### 2.2 Claude Code GitHub Action (<https://code.claude.com/docs/en/github-actions>, setup guide)
 
-The key choice: **Claude never holds write power over the repository.**
+- Automation mode (a `prompt` input) runs on any GitHub event, including `workflow_dispatch`.
+- A custom GitHub App token is supported through `github_token`. The custom App needs Contents, Issues and Pull requests, each read and write.
+- Actor checks run before Claude starts: on issue and PR events the actor must have write access (override: `allowed_non_write_users` plus an own `github_token`), and on every event a bot actor is rejected unless listed in `allowed_bots`.
+- Cost controls: `--max-turns`, workflow timeouts, concurrency groups.
+- `--allowedTools` and `--disallowedTools` restrict Claude's tools.
+- Commits made with the default `GITHUB_TOKEN` do not start other workflows. Commits made with an App token do.
 
-1. Claude runs with only `Read, Write, Edit, Glob, Grep`. `Bash`, web and sub-agent tools are disallowed. It cannot run git, call the API, comment, approve or merge.
-2. Claude edits files in the runner's working tree only.
-3. A deterministic step then runs `guard.mjs`. It checks that the diff touches only the task's allowlisted file, uses statuses `A` or `M` only (no delete, rename or mode change), has no unsafe path, and contains no secret-like text. It fails closed.
-4. Only after that does the same job commit as the implementer App and push to the task branch. The App token is short-lived and minted per run.
-5. The PR is opened as a **draft** by the App, so GitHub shows `cbc-implementer[bot]` as the author. The founder approves and merges as a different identity.
+### 2.3 What is NOT verified, and what that changes
+
+| # | Unverified | Why it matters | Planned handling |
+| --- | --- | --- | --- |
+| U1 | Codex's exact login string | The router and the run both match it exactly. | Founder reads it from the first Codex review and stores it in `CBC_CODEX_REVIEWER_LOGIN`. A wrong value makes the filter drop everything. It fails closed. |
+| U2 | Whether Codex re-reviews a new commit pushed to an existing PR | "A new commit triggers a review" depends on it. | The optional fallback job posts `@codex review` once per head SHA when `CBC_CODEX_TRIGGER_MODE=comment`. |
+| U3 | Whether Codex answers an `@codex review` comment written by a GitHub App or `github-actions`, rather than a person | The fallback depends on it. | Test once at activation. If it does not answer, the founder comments by hand. This is exactly the pre-existing founder-triggered flow. |
+| U4 | Whether Codex reviews **draft** pull requests | The pilot PR is a draft by design. | Test at activation. If it skips drafts, the founder triggers by hand, or the pilot PR is opened ready (a founder decision, because it changes the PR rules). |
+| U5 | The exact value format of the Claude action's `allowed_bots` | The privileged run is dispatched as `github-actions[bot]`. | The workflow sets `allowed_bots: "github-actions"` with a comment. Verified by the first activation run. If refused, the fix job fails closed and the founder dispatches by hand. |
+| U6 | Whether the Claude action posts or commits on its own when only `Read,Write,Edit,Glob,Grep` are allowed | The App token could otherwise write. | Verified by the first activation run, and the scope check still gates every push. |
+| U7 | Behaviour of `actions/create-github-app-token` versions newer than v2.2.2 | Pinned to v2.2.2, whose inputs match the Claude docs. | Re-check before changing the pin. |
+| U8 | Whether a review with no P0 or P1 issues is posted as a review at all | The loop must end cleanly either way. | Both outcomes end the loop. No review means no event. A review with no usable findings ends the run without a model call. |
+
+GitHub platform behaviour relied on, **from general knowledge, not re-verified in this session**: `pull_request_review` runs the workflow file from the pull request, so a secret-free router is needed; `workflow_dispatch` and `repository_dispatch` are the events that a `GITHUB_TOKEN` is allowed to start; `workflow_dispatch` always uses the workflow file from the ref given. Check these against GitHub's documentation in the activation gate.
+
+## 3. Design
+
+### 3.1 Two workflows, because of one GitHub fact
+
+Codex reviews arrive as `pull_request_review` events, and for that event GitHub uses the workflow file **from the pull request**. Anything that holds a secret must therefore not run on that event. So:
 
 ```text
-founder dispatch -> guard(inputs) -> mint App token -> Claude edits working tree
-   -> guard(scope, secrets) -> commit + push as App -> draft PR (author: App bot)
-founder: "@codex review" on the PR  -> Codex posts findings (data)
-founder dispatch (fix) -> guard(PR, round, sha) -> fetch + filter findings -> Claude edits
-   -> guard(scope, secrets) -> commit + push same branch
+Codex submits a review on the App's draft PR
+      |  (pull_request_review)
+      v
+ROUTER  agent-pilot-router.yml     no secrets, no checkout, no repository code, read-only plus actions:write
+      |  pre-filter in shell, then: gh workflow run agent-pilot-run.yml --ref master -f mode=fix ...
+      v  (workflow_dispatch, always the file from master)
+RUN     agent-pilot-run.yml (fix)  secrets, environment agent-implementer
+        1. guard: dispatcher is the founder or github-actions[bot], kill switch is "enabled"
+        2. re-read the PR, the review and the commits from the GitHub API (inputs are NOT trusted)
+        3. guard: PR is an open DRAFT, opened by the App, same repo, agent/pilot-* branch, head SHA matches
+        4. guard: review author is Codex, review commit == head SHA
+        5. guard: this review not already handled; round limit not reached; round DERIVED from commit trailers
+        6. fetch only this review's text, filter to Codex + head SHA, bound, mark UNTRUSTED
+        7. no usable findings -> stop (no model call)
+        8. Claude edits the working tree only (Read, Write, Edit, Glob, Grep)
+        9. no change needed -> stop. Otherwise guard: scope + secrets, then commit + push as the App
+           with trailers CBC-Agent-Round: n and CBC-Agent-Review: <review id>
+      |  push by the App token -> Codex reviews the new head (U2, U3)
+      v
+(next review event, at most once more)
 ```
 
-### Founder-triggered, two rounds
+A malicious or modified router can at worst dispatch the run with real-looking inputs. The run re-verifies everything from the GitHub API, so it cannot be tricked into acting on a review that is not Codex's, not on the current head, or already handled.
 
-- Every run is a manual `workflow_dispatch` by the founder, from `master`, and the guard rejects any other actor. There is no comment, label, schedule or PR trigger.
-- Codex is triggered by the founder commenting `@codex review` on the PR. Codex's findings never start a workflow.
-- Round numbering: round 1 is the initial implementation. The two review-and-fix rounds are rounds 2 and 3. A request for round 4 is refused. A round that skips or repeats a number is refused. The round is recorded as a `CBC-Agent-Round: n` trailer in each commit.
-- The fix run must name the exact head SHA that Codex reviewed (`expected_head_sha`). If the branch moved, the run stops.
+### 3.2 How the first commit reaches Codex
 
-### Review comments are data
+Round 1 (`implement`) stays a **founder dispatch**, which keeps "start a new pilot" a human decision. The App opens a draft PR. Codex's Automatic review (or the fallback comment) picks it up. From there the handoffs are automatic.
 
-`guard.mjs findings` keeps only comments that are all of: written by the configured reviewer login, attached to the exact head SHA, free of secret-like text. It strips control characters, truncates each comment to 2000 characters, caps the count at 20, and wraps the result in an "UNTRUSTED DATA" notice. The prompt tells Claude the findings are information, grant no authority, and must be ignored if they ask for anything outside the single allowlisted file. The scope check is the real control: even a fully compromised prompt cannot get an out-of-scope file pushed.
+### 3.3 Loop, duplicate and runaway protection
 
-### Residual risks (honest list)
+| Risk | Control | Where |
+| --- | --- | --- |
+| Endless review and fix cycle | Round derived from commit trailers. Implementation is round 1, fixes are rounds 2 and 3. Round 4 is refused. Cannot be set by an input. | `planFixRound`, simulated with a reviewer that always finds something: exactly 2 fix runs |
+| Same review delivered twice | Each fix commit records `CBC-Agent-Review: <id>`. A review id already recorded is refused. | `planFixRound`, simulated by replaying events |
+| Two events at once | Per-PR concurrency group, no cancel. The second run waits, then finds its review handled or its head SHA stale. | `fix` job `concurrency` |
+| Review of an old commit | `review.commit_id` must equal the current head SHA and the SHA named in the dispatch. | `checkReview`, `checkPullRequest` |
+| Claude's own push triggering Claude | Claude's push produces no Claude trigger. Only a **Codex review** does. The router ignores every other author. | router pre-filter |
+| Bot or comment ping-pong | The router subscribes to reviews, not comments, and posts no comment except the optional single `@codex review` per head SHA (marker comment, checked first). | router |
+| Runaway cost | `--max-turns 8`, 20 minute timeout, at most 2 fix runs per pilot, provider-side spend limit set by the founder. | run |
+| Forged or injected review text | Only the named reviewer, only this review, only the head SHA, 2000 characters each, 20 items, control characters stripped, secret-like text dropped, wrapped as UNTRUSTED DATA. Scope check is the real control. | `prepareFindings`, scope step |
+| Stop everything now | Unset or change `CBC_AGENT_PILOT_ENABLED` (checked by the router and the run). No PR is needed. Removing the App key or uninstalling the App also stops it. | router, run |
 
-- Claude can write anything to the allowlisted file, including misleading text. The founder reviews the diff before any merge.
-- The Codex reviewer login is configured by the founder. If it is wrong, the filter drops everything and the fix run sees no findings. It does not fail open.
-- A GitHub App token pushed through a `git` URL is masked by GitHub in logs, and A7 checks the transcript. It is still the most sensitive value in the run.
-- The workflows were validated offline only. Nothing here proves the action or Codex behave as described until the founder runs the activation steps.
+### 3.4 Founder authority is unchanged
+
+- Claude is given no Bash, no git, no network tools. It cannot push, comment, approve or merge.
+- Only deterministic steps hold the App token's write power, and only after `guard.mjs` passes.
+- The App has no Workflows, Administration or Secrets permission, so it cannot change CI or settings.
+- PRs stay drafts. The existing ruleset needs a human approval to merge. No step calls merge or enables auto-merge (the static check forbids it).
+- Nothing deploys. A merge to `master` is still a Vercel production deployment (AGENTS.md section 20) and is the founder's act.
+
+### 3.5 Residual risks (honest list)
+
+- **The environment must have no required reviewer** for the loop to run unattended. A required reviewer would pause every run for the founder's click. Without it, the controls are: the master-only deployment branch for the environment, the kill switch, the provider spend limit, the scope check and the ruleset. This is a founder decision (section 9).
+- Claude can write anything to the one allowlisted file, including misleading text. The founder reviews the diff before any merge.
+- A prompt-injected Codex review cannot get an out-of-scope file pushed (scope check), cannot start a third round, and cannot repeat a review. It can still waste one bounded run.
+- Codex reports only P0 and P1. A docs-only pilot may get an empty review and end after round 1. That is a valid result but a weak test of the fix path. Section 9 offers a founder option for this.
+- The App token embedded in git operations is masked by GitHub in logs and checked by A7. It is still the most sensitive value in a run.
+- Everything here was validated offline only. No workflow has ever executed.
 
 ## 4. Pilot task (trusted, one file)
 
 Task id `cbc-doc-pilot-001`. Allowed file: `docs/engineering/agent-pilot-sample.md`. Nothing else may change.
 
-The implementer writes a short document (about 15 lines) with exactly these headings: `Purpose`, `How a round works`, `Round limit`, `Who decides`. It states, in its own words, that: the founder triggers every run; Codex reviews and Claude fixes; at most two review-and-fix rounds; the founder alone merges. It must not mention any secret, URL or credential.
+The implementer writes a short document (about 15 lines) with exactly these headings: `Purpose`, `How a round works`, `Round limit`, `Who decides`. It states, in its own words, that: the founder starts the pilot; Codex reviews and Claude fixes automatically; at most two review-and-fix rounds; the founder alone merges. It must not mention any secret, URL or credential.
 
 ## 5. Identity acceptance test A1 to A7
 
@@ -108,56 +156,74 @@ Run once, by the founder, after the App is installed and `agent-identity-test.ym
 
 If A2 fails the identity model does not work and the pilot does not start. Record the result in a follow-up gate document.
 
-## 6. Runbook: founder steps in order
+## 6. Exact credential and setting requirements
+
+Nothing here is created by this gate. **Never paste any value into chat.**
+
+| Where | Name | Kind | Content |
+| --- | --- | --- | --- |
+| GitHub App (Settings, Developer settings) | `cbc-implementer` | App | Webhook off. Install on **this repository only**. Permissions: Metadata read, Contents read and write, Pull requests read and write, Issues read and write. Nothing else. |
+| Environment `agent-implementer` | `CBC_APP_PRIVATE_KEY` | secret | the App's `.pem` private key |
+| Environment `agent-implementer` | `ANTHROPIC_API_KEY` | secret | an Anthropic API key with a console spend limit |
+| Environment `agent-implementer` | (settings) | environment | deployment branches: `master` only. **No required reviewer** (decision 1, section 9). |
+| Repository variables | `CBC_APP_ID` | variable | the App's numeric ID |
+| | `CBC_APP_SLUG` | variable | `cbc-implementer` (the name, without `[bot]`) |
+| | `CBC_FOUNDER_LOGIN` | variable | the founder's GitHub login |
+| | `CBC_CODEX_REVIEWER_LOGIN` | variable | the exact login on a real Codex review (probably `chatgpt-codex-connector[bot]`, **unverified**) |
+| | `CBC_AGENT_PILOT_ENABLED` | variable | set to `enabled` only while a pilot is allowed to run. Unset or any other value stops it. |
+| | `CBC_CODEX_TRIGGER_MODE` | variable | leave unset. Set to `comment` only if Codex does not review the App's pushes by itself. |
+| Codex settings | Code review, "Automatic review", "Review trigger" | setting | enable for **this repository only** |
+
+## 7. Runbook: founder steps in order
 
 Nothing in this list is done by this gate.
 
-1. Codex reviews the exact head commit of this PR. The founder reads the findings.
-2. The founder merges this PR (a merge into `master` is also a Vercel production deployment under AGENTS.md section 20; this PR changes no application code).
-3. The founder creates the GitHub App (Gate 009A section 13), with Contents, Pull requests and Issues set to read and write, and installs it on this repository only.
-4. The founder creates the GitHub environment `agent-implementer` with the founder as required reviewer and `master` as the only deployment branch.
-5. In that environment, the founder stores the secrets `CBC_APP_PRIVATE_KEY` and `ANTHROPIC_API_KEY`, and sets a hard spend limit for the Anthropic key in the provider console. Never paste either into chat.
-6. As repository or environment variables, the founder sets `CBC_APP_ID`, `CBC_APP_SLUG`, `CBC_FOUNDER_LOGIN` and `CBC_CODEX_REVIEWER_LOGIN`. The reviewer login is learned from a first Codex review comment on any PR.
-7. The founder approves a **separate activation PR** that removes `if: ${{ false }}` from `agent-identity-test.yml` only, after Codex reviews it.
-8. The founder dispatches the identity test once and checks A1 to A7, including A3 by hand.
-9. If A1 to A7 pass, a second activation PR enables `agent-pilot-run.yml`. Codex reviews it. The founder merges it.
-10. Pilot, all manual:
-    1. dispatch `agent-pilot-run` with mode `implement`, round `1`;
-    2. open the draft PR, comment `@codex review`, wait for findings;
-    3. dispatch with mode `fix`, round `2`, the PR number and the reviewed head SHA;
-    4. comment `@codex review` again;
-    5. dispatch with mode `fix`, round `3`;
-    6. read the diff, then decide whether to approve and merge. The workflow never merges.
-11. Pilot acceptance: the PR author is the App bot; only the allowlisted file changed; round trailers are 1, 2, 3 and no more; Codex findings were applied or explicitly ignored; no secret appears in any log; the founder merged or closed it by hand.
+1. **Observe Codex first (cheap, before creating the App).** Enable Codex code review and Automatic review for this repository. Open or use any small PR and note: (a) does Codex review a **draft** PR (U4)? (b) does it review again after a new commit (U2)? (c) the exact author login on its review (U1). Write the three answers into the PR conversation or tell Claude. These decide whether the fallback job is needed.
+2. Codex reviews the exact head commit of the gate PR. The founder reads the findings.
+3. The founder merges this PR (a merge to `master` is also a Vercel production deployment under AGENTS.md section 20; this PR changes no application code).
+4. Create and install the App, create the environment, store the two secrets, set the variables (section 6). Leave `CBC_AGENT_PILOT_ENABLED` unset.
+5. Activation PR 1 removes `if: ${{ false }}` from `agent-identity-test.yml` only. Codex reviews it. The founder merges it.
+6. Dispatch the identity test once. Check A1 to A7, including A3 by hand.
+7. If A1 to A7 pass: activation PR 2 replaces `if: ${{ false }}` in the run and router workflows. Codex reviews it. The founder merges it.
+8. Set `CBC_AGENT_PILOT_ENABLED=enabled`. Dispatch `agent-pilot-run` once with mode `implement`.
+9. Watch the loop. Expected: draft PR by the App, Codex review, router run, fix run, new commit, Codex review, router run, fix run (or an earlier clean stop). At most rounds 1, 2, 3.
+10. Unset `CBC_AGENT_PILOT_ENABLED`. Read the diff and decide whether to approve and merge. The workflows never merge.
+11. Pilot acceptance: PR author is the App bot; only the allowlisted file changed; round trailers 1, 2, 3 and no more; no review handled twice; no secret in any log; every handoff happened without a founder click except the first dispatch.
 
-Stop at any step if a check fails. Revoke by removing the App key, uninstalling the App, or deleting the environment secrets.
+Stop at any step if a check fails. Revoke by removing the App key, uninstalling the App, deleting the environment secrets, or unsetting `CBC_AGENT_PILOT_ENABLED`.
 
-## 7. Activation requirements (for the later PRs, not this one)
+## 8. Activation requirements and offline validation
 
-- Each activation PR changes only the `if:` line of one workflow, and nothing else.
-- Re-run both offline test scripts on the activation commit.
-- Re-check the pinned actions and the Claude docs for changes since 2026-11-28.
-- Codex reviews the exact activation commit before the founder approves execution.
+Activation PRs change only `if:` lines, and nothing else. Re-run all four offline scripts on each activation commit. Re-check the pinned actions and the Claude and Codex documentation. Codex reviews the exact activation commit before the founder approves execution.
 
-## 8. Offline validation performed (2026-11-28)
+Pinned versions (resolved with `git ls-remote`, 2026-11-28):
 
-Commands, run in a clean checkout of this branch:
+| Action | Pin |
+| --- | --- |
+| `actions/checkout` | `d23441a48e516b6c34aea4fa41551a30e30af803` (v6.1.0) |
+| `actions/create-github-app-token` | `fee1f7d63c2ff003460e3d139729b119787bc349` (v2.2.2) |
+| `anthropics/claude-code-action` | `4411a9e9b0283becf4b924f7bce360fd7756c78c` (v1.0.290, annotated tag peeled to its commit) |
+
+Offline validation performed (2026-11-28), in a clean checkout of this branch:
 
 ```text
-node scripts/agent-collab/test-guard.mjs               -> 60 passed, 0 failed
-node scripts/agent-collab/test-workflow-safety.mjs     -> 19 passed, 0 failed (2 real files + 17 mutation tests)
-python3 -c "yaml.safe_load(...)" on both workflows     -> parse OK
+node scripts/agent-collab/test-guard.mjs               -> 80 passed, 0 failed
+node scripts/agent-collab/test-workflow-safety.mjs     -> 42 passed, 0 failed (3 real files + 39 mutation tests)
+node scripts/agent-collab/test-router-filter.mjs       -> 29 passed, 0 failed
+yaml.safe_load on the three workflows                  -> parse OK
 bash -n on every run block (expressions replaced)      -> 0 syntax errors
 ```
 
-Not run: `actionlint` (not installed in the session), any GitHub-hosted run, any dispatch. The workflows have therefore never executed anywhere.
+Not run: `actionlint` (not installed in the session), any GitHub-hosted run, any dispatch. **The workflows have never executed anywhere.**
 
 ## 9. Open founder decisions
 
-1. Accept the wider App permission (Issues read and write)? If not, the Claude action may not work, and the activation gate must test that.
-2. Keep `ANTHROPIC_API_KEY` as the credential, or use the subscription OAuth token or federation? The API key is the proposed default.
-3. Relationship to the older pilot draft (PR #61): this gate is an alternative that avoids a separate API-key reviewer script. Close, keep or merge PR #61 later. This gate does not touch it.
+1. **Environment without a required reviewer.** Needed for unattended rounds (section 3.5). Alternative: keep the founder as required reviewer, so each run waits for one click, which is semi-automatic.
+2. **Wider App permission** (Issues read and write), required by the Claude docs.
+3. **Credential:** an Anthropic API key (proposed), or the subscription OAuth token, or federation.
+4. **Seeding the pilot.** Codex only reports P0 and P1, so a docs-only task may produce no findings. Options: accept an empty pilot; or the founder approves a "## Code Review Rules" section in `AGENTS.md` (an amendment under section 19, a separate docs-only gate) that tells Codex to treat contradictions with the gate document as P1.
+5. **Older pilot draft (PR #61).** This gate is an alternative that avoids a separate API-key reviewer script. Close, keep or merge it later. This gate does not touch it.
 
 ## 10. Out of scope
 
-Enabling or dispatching any workflow; creating the App, the environment, secrets or variables; changing the ruleset or any setting; merging; deploying; Azure, Key Vault, Supabase or database access; package or lockfile changes; changing `AGENTS.md`.
+Enabling or dispatching any workflow; creating the App, the environment, secrets or variables; enabling Codex; changing the ruleset or any setting; merging; deploying; Azure, Key Vault, Supabase or database access; package or lockfile changes; changing `AGENTS.md`.

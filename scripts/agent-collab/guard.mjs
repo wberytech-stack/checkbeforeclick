@@ -31,6 +31,11 @@ export function scanForSecrets(text) {
   return hits;
 }
 
+export const ROUTER_ACTOR = "github-actions[bot]";
+
+// mode "implement": founder dispatch only, round 1.
+// mode "fix": dispatched by the founder, or by the secret-free router workflow (actor github-actions[bot]).
+// The router is NOT trusted: every fact is re-read from the GitHub API and checked again below.
 export function validateDispatchInputs(i) {
   const reasons = [];
   if (!i || typeof i !== "object") return { ok: false, reasons: ["inputs missing"] };
@@ -38,16 +43,14 @@ export function validateDispatchInputs(i) {
   if (!task) reasons.push("task id is not on the trusted list");
   if (i.mode !== "implement" && i.mode !== "fix") reasons.push("mode must be implement or fix");
   if (i.ref !== "refs/heads/master") reasons.push("workflow must be dispatched from master");
-  if (!i.founderLogin || i.actor !== i.founderLogin) reasons.push("dispatching actor is not the founder");
-  if (i.mode === "implement") {
-    if (String(i.round) !== "1") reasons.push("implement mode is round 1 only");
-  }
+  const founderOk = Boolean(i.founderLogin) && i.actor === i.founderLogin;
+  if (i.mode === "implement" && !founderOk) reasons.push("implement must be dispatched by the founder");
+  if (i.mode === "fix" && !(founderOk || i.actor === ROUTER_ACTOR)) reasons.push("fix must be dispatched by the founder or the router");
   if (i.mode === "fix") {
     if (!/^[1-9][0-9]{0,5}$/.test(String(i.prNumber ?? ""))) reasons.push("pr number invalid");
+    if (!/^[1-9][0-9]{0,15}$/.test(String(i.reviewId ?? ""))) reasons.push("review id invalid");
     if (!/^[0-9a-f]{40}$/.test(String(i.expectedHeadSha ?? ""))) reasons.push("expected head sha must be 40 hex chars");
-    const r = Number(i.round);
-    if (!(r === 2 || r === 3)) reasons.push("fix round must be 2 or 3");
-    if (task && r > task.maxRounds + 1) reasons.push("round limit exceeded");
+    if (i.pilotEnabled !== "enabled") reasons.push("pilot switch CBC_AGENT_PILOT_ENABLED is not 'enabled'");
   }
   return { ok: reasons.length === 0, reasons };
 }
@@ -113,26 +116,66 @@ export function countRounds(commits) {
   return max;
 }
 
-export function checkRoundSequence(commits, requestedRound, taskId) {
+export const REVIEW_TRAILER = "CBC-Agent-Review";
+
+export function handledReviewIds(commits) {
+  const ids = new Set();
+  for (const c of commits) {
+    for (const m of String(c.message ?? "").matchAll(new RegExp(`^${REVIEW_TRAILER}: ([0-9]+)$`, "gm"))) ids.add(m[1]);
+  }
+  return ids;
+}
+
+// Decide whether a fix run may proceed and which round it is. The round is derived from
+// commit trailers on the PR branch, never from an input. Round 1 is the implementation;
+// fix rounds are 2 and 3 (two review-and-fix rounds).
+export function planFixRound(commits, reviewId, taskId) {
   const reasons = [];
   const task = TASKS[taskId];
   if (!task) return { ok: false, reasons: ["unknown task"] };
   const done = countRounds(commits);
-  if (Number(requestedRound) !== done + 1) reasons.push(`requested round ${requestedRound} but last recorded round is ${done}`);
-  if (Number(requestedRound) > task.maxRounds + 1) reasons.push("round limit exceeded");
+  if (done < 1) reasons.push("no implementation round recorded on this branch");
+  const round = done + 1;
+  if (round > task.maxRounds + 1) reasons.push(`round limit reached: ${done} rounds already recorded`);
+  if (handledReviewIds(commits).has(String(reviewId))) reasons.push("this review was already handled (duplicate event)");
+  return { ok: reasons.length === 0, round, reasons };
+}
+
+// Keep the old name working for callers that only need the sequence check.
+export function checkRoundSequence(commits, requestedRound, taskId) {
+  const plan = planFixRound(commits, "0", taskId);
+  const reasons = [...plan.reasons];
+  if (plan.round !== Number(requestedRound)) reasons.push(`requested round ${requestedRound} but the next round is ${plan.round}`);
+  return { ok: reasons.length === 0, reasons };
+}
+
+export function checkReview(review, ctx) {
+  const reasons = [];
+  if (!review || typeof review !== "object") return { ok: false, reasons: ["review missing"] };
+  if (String(review.id) !== String(ctx.reviewId)) reasons.push("review id does not match the dispatch");
+  if (!ctx.reviewerLogin || review.user?.login !== ctx.reviewerLogin) reasons.push("review was not written by the configured Codex reviewer");
+  if (review.commit_id !== ctx.headSha) reasons.push("review is of a different commit than the current head (stale)");
+  if (review.state === "PENDING" || review.state === "DISMISSED") reasons.push(`review state ${review.state} is not usable`);
   return { ok: reasons.length === 0, reasons };
 }
 
 // Review comments are DATA. Keep only the named reviewer's comments on the exact head sha,
 // bound their size, strip control characters, and wrap them so the prompt can say so.
-export function prepareFindings(comments, { reviewerLogin, headSha }) {
+export function prepareFindings(input, { reviewerLogin, headSha }) {
+  // input is either an array of comments (legacy) or { review, comments } for one review.
+  const review = Array.isArray(input) ? null : input?.review ?? null;
+  const comments = Array.isArray(input) ? input : Array.isArray(input?.comments) ? input.comments : [];
+  const items = [];
+  if (review) items.push({ user: review.user, commit_id: review.commit_id, body: review.body, path: null, line: null });
+  for (const c of comments) items.push(c);
   const kept = [];
   let dropped = 0;
-  for (const c of Array.isArray(comments) ? comments : []) {
+  for (const c of items) {
     if (!c || c.user?.login !== reviewerLogin) { dropped++; continue; }
     const sha = c.commit_id ?? c.head_sha;
     if (sha !== headSha) { dropped++; continue; }
     const body = String(c.body ?? "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").slice(0, MAX_FINDING_CHARS);
+    if (body.trim() === "") { dropped++; continue; }
     if (scanForSecrets(body).length) { dropped++; continue; }
     kept.push({ path: typeof c.path === "string" ? c.path : null, line: Number.isInteger(c.line) ? c.line : null, body });
     if (kept.length >= MAX_FINDINGS) break;
@@ -157,8 +200,9 @@ function cli(argv) {
     case "inputs":
       result = validateDispatchInputs({
         taskId: arg(args, "task"), mode: arg(args, "mode"), ref: arg(args, "ref"),
-        actor: arg(args, "actor"), founderLogin: arg(args, "founder"), round: arg(args, "round"),
-        prNumber: arg(args, "pr"), expectedHeadSha: arg(args, "sha"),
+        actor: arg(args, "actor"), founderLogin: arg(args, "founder"),
+        prNumber: arg(args, "pr"), reviewId: arg(args, "review"), expectedHeadSha: arg(args, "sha"),
+        pilotEnabled: arg(args, "enabled"),
       });
       break;
     case "files": {
@@ -170,21 +214,27 @@ function cli(argv) {
     case "pr":
       result = checkPullRequest(readJson(arg(args, "json")), { appSlug: arg(args, "slug"), expectedHeadSha: arg(args, "sha") });
       break;
-    case "round":
-      result = checkRoundSequence(readJson(arg(args, "commits")), arg(args, "round"), arg(args, "task"));
+    case "review":
+      result = checkReview(readJson(arg(args, "json")), { reviewId: arg(args, "review"), reviewerLogin: arg(args, "reviewer"), headSha: arg(args, "sha") });
       break;
+    case "plan": {
+      const plan = planFixRound(readJson(arg(args, "commits")), arg(args, "review"), arg(args, "task"));
+      process.stdout.write(JSON.stringify(plan) + "\n");
+      return plan.ok ? 0 : 1;
+    }
     case "secrets": {
       const hits = scanForSecrets(readFileSync(arg(args, "file"), "utf8"));
       result = { ok: hits.length === 0, reasons: hits.map((h) => `secret-like text matched ${h}`) };
       break;
     }
     case "findings": {
-      const out = prepareFindings(readJson(arg(args, "json")), { reviewerLogin: arg(args, "reviewer"), headSha: arg(args, "sha") });
+      const out = prepareFindings({ review: readJson(arg(args, "review-json")), comments: readJson(arg(args, "comments-json")) },
+        { reviewerLogin: arg(args, "reviewer"), headSha: arg(args, "sha") });
       process.stdout.write(JSON.stringify(out, null, 2) + "\n");
       return 0;
     }
     default:
-      process.stderr.write("usage: guard.mjs inputs|files|pr|round|secrets|findings ...\n");
+      process.stderr.write("usage: guard.mjs inputs|files|pr|review|plan|secrets|findings ...\n");
       return 2;
   }
   process.stdout.write(JSON.stringify(result) + "\n");

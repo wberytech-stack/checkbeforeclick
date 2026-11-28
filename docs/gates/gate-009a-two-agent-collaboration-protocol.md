@@ -111,7 +111,7 @@ Founder decisions, stated by the founder in conversation on 2026-11-28 (they acc
    - the reviewer's findings are advisory, and the real controls are GitHub branch protection, required checks and the founder's merge;
    - no new code or API key is needed, so the loop's value can be tested quickly.
    - The API-script reviewer in PR #61 stays as the hardened option for security-heavy gates later.
-   - Only the founder's account and the implementer's account may trigger a Codex review, because comment text is an injection path. The current Codex trigger settings must be checked before relying on this.
+   - Only trusted GitHub identities may trigger a Codex review, because comment text is an injection path. **This needs distinct identities for the founder and the implementer** (section 12.0). Until the implementer has its own identity, GitHub cannot tell the founder from Claude, so a trigger restriction would not separate them. The current Codex trigger settings must be checked before relying on this.
 2. **Implementer by default:** Claude Code.
 3. **Round limit:** 2 for the pilot, then 3.
 4. **Spend limit:** a hard monthly limit set in each provider's console, starting at about $50 per provider (a working guess to be adjusted). No per-gate counting is built yet.
@@ -144,17 +144,30 @@ These decisions do not activate anything. Applying the settings and any activati
 
 ## 12. Founder checklist: GitHub settings (founder-only, not applied by this gate)
 
+### 12.0 Findings from a read-only check (2026-11-28)
+
+Observed through the GitHub REST API from the Claude session:
+
+- **Identity.** Draft PR #64 was opened by the founder's user account (`wberytech-stack`). The commits carry the git author `claude`, but that is commit metadata set by the committer and is not an authenticated identity. For permissions, review triggers and approvals, GitHub saw the founder's account. **Claude and the founder are currently one actor.**
+- **Existing protection.** An active ruleset, "CBC Production Branch Protection" (created 2026-11-10), targets the default branch. It blocks deletion and force-push, and requires a pull request with 1 approval, dismisses stale approvals on push, and requires approval of the last push. It has no bypass actors and **no required status checks**.
+- **Consequence to confirm.** Because the founder's account opens the PRs, and GitHub does not let a PR author approve their own PR, a merge may currently be impossible for the founder alone. That could explain why `master` has not changed since 2026-10-29. This is an inference. It has not been confirmed with the founder.
+- **Not checkable from this session.** The proxy blocks the Actions settings and installed-app endpoints, so workflow token permissions and Codex installation could not be read.
+
+So section 12.1 is partly done already. What remains is required status checks, and a decision on how a merge gets approved (section 12.2).
+
 Menu names change over time, so treat the labels as approximate. All steps are in the repository on github.com. Each one is reversible. Do them in this order and stop after any step.
 
 ### 12.1 Protect `master`
 
 Repository Settings, Rules (or Branches), add a rule for `master`:
 
-1. Require a pull request before merging.
-2. Require at least 1 approval. Do not add the agent accounts as bypass actors.
-3. Block force pushes.
-4. Block deletion of the branch.
-5. Leave auto-merge off.
+Already in the existing ruleset (verify, do not recreate): pull request required, 1 approval, stale approvals dismissed, last-push approval, force-push blocked, deletion blocked, no bypass actors.
+
+Still to decide:
+
+1. Required status checks, as described below.
+2. Leave auto-merge off.
+3. Who approves. See 12.2: with one shared account nobody can approve a PR that account opened.
 
 Required status checks: add **only** checks that already run and pass on `master`. A required check that does not exist blocks every merge. Add more later as CI gates land.
 
@@ -162,14 +175,16 @@ Reminder: a merge into `master` is still a Vercel production deployment (AGENTS.
 
 ### 12.2 Agent identities
 
-1. Give each agent its own GitHub identity, so history shows who did what. Use a machine account or a GitHub App per agent.
+1. Give the implementer its own authenticated GitHub identity, so GitHub can tell the founder from Claude. A GitHub App or a separate machine account both work. Commit author names are not identities.
+   - With a separate implementer identity, PRs are opened by that identity and the founder can approve and merge them. This also fits the existing "last-push approval" rule.
+   - Without it, either the founder cannot approve their own PRs, or a bypass is needed, which weakens the protection.
 2. Give each the minimum scope: write to non-protected branches and pull requests, nothing else.
 3. Do not give any agent merge rights, admin rights, or secrets for Azure, Key Vault, Supabase or production.
 
 ### 12.3 Codex reviewer
 
 1. Install the Codex GitHub integration on this repository only, not the whole account.
-2. Check its settings for who can trigger a review. Restrict it to the founder and the implementer. If it cannot be restricted, use manual triggering by the founder only.
+2. Check its settings for who can trigger a review. Restrict it to the founder and the implementer's own identity (12.2). If it cannot be restricted, or the implementer has no separate identity yet, use manual triggering by the founder only. Do not call the restriction effective until it is tested.
 3. Confirm that it posts comments and cannot approve or merge.
 4. Confirm that repository files such as `AGENTS.md` are treated as its instructions, and that PR text is not.
 

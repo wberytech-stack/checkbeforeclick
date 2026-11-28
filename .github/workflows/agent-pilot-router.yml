@@ -1,0 +1,121 @@
+# Gate 009B: secret-free router for the event-driven agent pilot. DISABLED. Review only.
+#
+# Both jobs are hard-disabled with a leading `false &&` and each names its own event. The activation PR
+# removes only the `false && ` prefix. The full condition is also re-checked in each pre-filter step.
+#
+# Why a router: Codex reviews arrive as `pull_request_review` events. GitHub runs the workflow
+# file of the pull request for that event, so anything that holds secrets must NOT run here.
+# This workflow therefore has no secrets, never checks out code, never runs pull request content,
+# and only does one thing: dispatch the privileged workflow, which GitHub always runs from `master`.
+# The privileged workflow then re-reads and re-verifies every fact from the GitHub API.
+#
+#   route-review          : Codex review submitted on an App-owned draft agent PR -> dispatch `fix`.
+#   request-codex-review  : OPTIONAL fallback. If Codex's automatic review does not fire on a new
+#                           commit pushed by the App, post `@codex review` once per head sha.
+#                           Needs CBC_CODEX_TRIGGER_MODE = comment. Unverified that Codex answers a bot comment.
+name: CBC agent pilot router (DISABLED)
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [synchronize]
+
+permissions: {}
+
+env:
+  APP_SLUG: ${{ vars.CBC_APP_SLUG }}
+  REVIEWER_LOGIN: ${{ vars.CBC_CODEX_REVIEWER_LOGIN }}
+  PILOT_ENABLED: ${{ vars.CBC_AGENT_PILOT_ENABLED }}
+  TRIGGER_MODE: ${{ vars.CBC_CODEX_TRIGGER_MODE }}
+  EVENT_NAME: ${{ github.event_name }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  PR_DRAFT: ${{ github.event.pull_request.draft }}
+  PR_USER: ${{ github.event.pull_request.user.login }}
+  PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+  REVIEW_ID: ${{ github.event.review.id }}
+  REVIEW_USER: ${{ github.event.review.user.login }}
+  REVIEW_COMMIT: ${{ github.event.review.commit_id }}
+  SENDER: ${{ github.event.sender.login }}
+
+jobs:
+  route-review:
+    if: ${{ false && github.event_name == 'pull_request_review' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: cbc-agent-router-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Pre-filter (all must hold, otherwise stop quietly)
+        id: filter
+        run: |
+          set -euo pipefail
+          ok=true
+          [ "$PILOT_ENABLED" = "enabled" ] || ok=false
+          [ "$EVENT_NAME" = "pull_request_review" ] || ok=false
+          [ -n "$REVIEWER_LOGIN" ] && [ "$REVIEW_USER" = "$REVIEWER_LOGIN" ] || ok=false
+          [ "$REVIEW_COMMIT" = "$PR_HEAD_SHA" ] || ok=false
+          [ "$PR_DRAFT" = "true" ] || ok=false
+          [ -n "$APP_SLUG" ] && [ "$PR_USER" = "${APP_SLUG}[bot]" ] || ok=false
+          case "$PR_HEAD_REF" in agent/pilot-*) ;; *) ok=false ;; esac
+          [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ] || ok=false
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,5}$ ]] || ok=false
+          [[ "$REVIEW_ID" =~ ^[1-9][0-9]{0,15}$ ]] || ok=false
+          [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || ok=false
+          echo "go=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch the privileged fix run (from master)
+        if: steps.filter.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run agent-pilot-run.yml --repo "$GITHUB_REPOSITORY" --ref master \
+            -f mode=fix -f task_id=cbc-doc-pilot-001 \
+            -f pr_number="$PR_NUMBER" -f review_id="$REVIEW_ID" -f expected_head_sha="$PR_HEAD_SHA"
+
+  request-codex-review:
+    if: ${{ false && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: cbc-agent-router-comment-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Pre-filter (all must hold, otherwise stop quietly)
+        id: filter
+        run: |
+          set -euo pipefail
+          ok=true
+          [ "$PILOT_ENABLED" = "enabled" ] || ok=false
+          [ "$TRIGGER_MODE" = "comment" ] || ok=false
+          [ "$EVENT_NAME" = "pull_request" ] || ok=false
+          [ -n "$APP_SLUG" ] && [ "$SENDER" = "${APP_SLUG}[bot]" ] || ok=false
+          [ -n "$APP_SLUG" ] && [ "$PR_USER" = "${APP_SLUG}[bot]" ] || ok=false
+          [ "$PR_DRAFT" = "true" ] || ok=false
+          case "$PR_HEAD_REF" in agent/pilot-*) ;; *) ok=false ;; esac
+          [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ] || ok=false
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,5}$ ]] || ok=false
+          [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || ok=false
+          echo "go=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Ask Codex to review this head sha, once
+        if: steps.filter.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          MARK="<!-- cbc-agent-review-request:${PR_HEAD_SHA} -->"
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --jq '.[].body' | grep -qF "$MARK"; then
+            echo "Review already requested for ${PR_HEAD_SHA}."; exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="@codex review ${MARK}"

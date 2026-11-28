@@ -1,0 +1,157 @@
+# Gate 009B: implementer GitHub App identity acceptance test (A1-A7). DISABLED. Review only.
+#
+# The job is hard-disabled with `if: ${{ false }}`. Enabling it is a separate activation PR
+# that the founder approves after Codex reviews the exact commit.
+# It runs no model and needs no Anthropic key. Manual dispatch by the founder only.
+#
+# A3 (founder approves the draft PR) is manual and recorded in the gate runbook.
+#
+# Safety choices:
+#  - A4 does NOT push to master. A failed protection would write to master. It reads the active
+#    rules for master through the API and asserts the pull-request rule is present.
+#  - A5 pushes a workflow-file change to a throwaway branch and expects GitHub to refuse it.
+#    If it is accepted the test fails and the throwaway branch is deleted.
+#  - A6 asks the App to approve its own draft PR and expects refusal, then asserts the PR is blocked.
+#    It never calls the merge endpoint.
+name: CBC agent identity test (DISABLED)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type RUN-A1-A7 to confirm"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: cbc-agent-identity-test
+  cancel-in-progress: false
+
+env:
+  CONFIRM: ${{ inputs.confirm }}
+  FOUNDER_LOGIN: ${{ vars.CBC_FOUNDER_LOGIN }}
+  APP_SLUG: ${{ vars.CBC_APP_SLUG }}
+
+jobs:
+  identity:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: agent-implementer
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the dispatched master commit (read-only token)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Pre-flight
+        run: |
+          set -euo pipefail
+          [ "$CONFIRM" = "RUN-A1-A7" ] || { echo "confirmation text wrong"; exit 1; }
+          [ "$GITHUB_REF" = "refs/heads/master" ] || { echo "must run from master"; exit 1; }
+          [ -n "$FOUNDER_LOGIN" ] && [ "$GITHUB_ACTOR" = "$FOUNDER_LOGIN" ] || { echo "actor is not the founder"; exit 1; }
+
+      - name: Mint implementer App token (short-lived)
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.CBC_APP_ID }}
+          private-key: ${{ secrets.CBC_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      - name: A1 to A7
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          # Everything printed goes through the transcript so A7 can scan it.
+          TRANSCRIPT="$RUNNER_TEMP/transcript.log"
+          : > "$TRANSCRIPT"
+          exec > >(tee -a "$TRANSCRIPT") 2>&1
+          FAILS=0
+          pass() { echo "PASS $1"; }
+          fail() { echo "FAIL $1: $2"; FAILS=$((FAILS+1)); }
+          REPO="$GITHUB_REPOSITORY"
+          BR="agent/identity-test-${RUN_ID}"
+          WF_BR="agent/identity-test-wf-${RUN_ID}"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "noreply@users.noreply.github.com"
+          AUTH_URL="https://x-access-token:${APP_TOKEN}@github.com/${REPO}.git"
+
+          # A1: push a one-line docs change to a branch as the App.
+          git switch -q -c "$BR"
+          mkdir -p docs/engineering
+          echo "Identity test ${RUN_ID}. Safe to delete." > docs/engineering/agent-identity-test.md
+          git add docs/engineering/agent-identity-test.md
+          git commit -q -m "docs(identity-test): ${RUN_ID}"
+          if git push -q "$AUTH_URL" "$BR" 2>/dev/null; then pass "A1 branch pushed as the App"; else fail "A1" "push refused"; fi
+
+          # A2: open a DRAFT PR and check its author is the App bot.
+          PR_JSON="$(gh api "repos/${REPO}/pulls" -f title="docs(identity-test): ${RUN_ID} (draft)" -f head="$BR" -f base=master -F draft=true -f body="Identity acceptance test. Do not merge. Close after review." 2>/dev/null || true)"
+          PR_NUM="$(echo "$PR_JSON" | jq -r '.number // empty')"
+          PR_LOGIN="$(echo "$PR_JSON" | jq -r '.user.login // empty')"
+          PR_TYPE="$(echo "$PR_JSON" | jq -r '.user.type // empty')"
+          if [ -n "$PR_NUM" ] && [ "$PR_LOGIN" = "${APP_SLUG}[bot]" ] && [ "$PR_TYPE" = "Bot" ] && [ "$(echo "$PR_JSON" | jq -r .draft)" = "true" ]; then
+            pass "A2 draft PR #${PR_NUM} authored by ${PR_LOGIN}"
+          else
+            fail "A2" "PR missing, not draft, or author is '${PR_LOGIN}' (${PR_TYPE})"
+          fi
+
+          echo "A3 MANUAL: the founder reviews and approves PR #${PR_NUM:-?} from the founder account, then records the result."
+
+          # A4: the pull-request rule is active for master. No push to master is attempted.
+          if gh api "repos/${REPO}/rules/branches/master" --jq '[.[].type] | (index("pull_request") != null) and (index("non_fast_forward") != null) and (index("deletion") != null)' 2>/dev/null | grep -qx true; then
+            pass "A4 master rules include pull_request, non_fast_forward and deletion"
+          else
+            fail "A4" "master rules readout missing pull_request, non_fast_forward or deletion"
+          fi
+
+          # A5: a workflow-file change must be refused for the App (no Workflows permission).
+          git switch -q -c "$WF_BR" "$BR"
+          mkdir -p .github/workflows
+          printf 'name: should-not-exist\non: workflow_dispatch\njobs: {}\n' > .github/workflows/zz-identity-test-refused.yml
+          git add .github/workflows/zz-identity-test-refused.yml
+          git commit -q -m "test: workflow change that must be refused"
+          if git push -q "$AUTH_URL" "$WF_BR" 2>/dev/null; then
+            fail "A5" "workflow file push was ACCEPTED"
+            gh api -X DELETE "repos/${REPO}/git/refs/heads/${WF_BR}" >/dev/null 2>&1 || echo "cleanup needed: delete branch ${WF_BR}"
+          else
+            pass "A5 workflow file push refused"
+          fi
+
+          # A6: the App cannot approve its own PR, and the PR is blocked by the review rule.
+          if [ -n "$PR_NUM" ]; then
+            if gh api "repos/${REPO}/pulls/${PR_NUM}/reviews" -f event=APPROVE -f body="self-approval attempt" >/dev/null 2>&1; then
+              fail "A6" "App approval was accepted"
+            else
+              pass "A6a App approval refused"
+            fi
+            STATE="$(gh api "repos/${REPO}/pulls/${PR_NUM}" --jq .mergeable_state 2>/dev/null || echo unknown)"
+            [ "$STATE" = "blocked" ] && pass "A6b PR is blocked pending a human approval" || fail "A6b" "mergeable_state is ${STATE}"
+          else
+            fail "A6" "no PR to test"
+          fi
+
+          # A7: the transcript contains no key or token.
+          if node scripts/agent-collab/guard.mjs secrets --file "$TRANSCRIPT" >/dev/null 2>&1; then
+            pass "A7 transcript has no secret-like text"
+          else
+            fail "A7" "transcript matched a secret pattern"
+          fi
+          # The App token embedded in AUTH_URL must never be echoed. Fail if the literal token is present.
+          if grep -qF "$APP_TOKEN" "$TRANSCRIPT"; then fail "A7b" "App token appears in transcript"; else pass "A7b token literal absent from transcript"; fi
+
+          echo "RESULT fails=${FAILS}"
+          echo "Clean up: close PR #${PR_NUM:-?} unmerged and delete branch ${BR}."
+          [ "$FAILS" -eq 0 ]

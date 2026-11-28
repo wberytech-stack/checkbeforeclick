@@ -14,6 +14,10 @@ function isProtectedPath(pathname: string) {
 }
 
 export async function proxy(request: NextRequest) {
+  // The public homepage does not require an authentication service round trip.
+  // Protected routes below retain their existing session checks.
+  if (request.nextUrl.pathname === "/") return NextResponse.next()
+
   let response = NextResponse.next({
     request,
   })

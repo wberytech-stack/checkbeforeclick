@@ -21,11 +21,11 @@ export default function AzureWelcomePage() {
     <div className={styles.page}>
       <a href="#main" className={styles.skip}>Skip to main content</a>
       <header className={styles.header}>
-        <Link href={destinations.home} className={styles.brand} aria-label="CheckBeforeClick home"><LensMark /><span>checkbeforeclick<span className={styles.brandPeriod}>.</span></span></Link>
+        <Link prefetch={false} href={destinations.home} className={styles.brand} aria-label="CheckBeforeClick home"><LensMark /><span>checkbeforeclick<span className={styles.brandPeriod}>.</span></span></Link>
         <nav aria-label="Main navigation" className={styles.navigation}>
           <a className={styles.sectionLink} href="#the-experience">The experience</a>
           <a className={styles.sectionLink} href="#inside-a-verdict">Inside a verdict</a>
-          <Link className={styles.accountLink} href={destinations.account}>Your workspace <span aria-hidden="true">↗</span></Link>
+          <Link prefetch={false} className={styles.accountLink} href={destinations.account}>Your workspace <span aria-hidden="true">↗</span></Link>
         </nav>
       </header>
       <main id="main" tabIndex={-1}>
@@ -34,7 +34,7 @@ export default function AzureWelcomePage() {
             <p className={styles.eyebrow}><span className={styles.star} aria-hidden="true">✳</span> A MOMENT OF CLARITY</p>
             <h1 id="hero-title">Look closer.<br /><em>Click wiser.</em></h1>
             <p className={styles.lead}>The internet asks for your trust.<br />Take a moment to understand what’s behind a suspicious link before you give it.</p>
-            <div className={styles.actions}><Link className={styles.primaryAction} href={destinations.check}>Check a link <span aria-hidden="true">↗</span></Link><a className={styles.textAction} href="#inside-a-verdict">See a considered decision <span aria-hidden="true">↓</span></a></div>
+            <div className={styles.actions}><Link prefetch={false} className={styles.primaryAction} href={destinations.check}>Check a link <span aria-hidden="true">↗</span></Link><a className={styles.textAction} href="#inside-a-verdict">See a considered decision <span aria-hidden="true">↓</span></a></div>
             <p className={styles.signInNote}>Sign in is required to submit a check and view your history.</p>
             <div className={styles.heroNote}><span aria-hidden="true" /><p>Not a promise of perfect safety.<br /><strong>A better basis for your next decision.</strong></p></div>
           </div>
@@ -59,11 +59,11 @@ export default function AzureWelcomePage() {
         </section>
         <section className={styles.experience} id="the-experience" aria-labelledby="experience-title">
           <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>THE EXPERIENCE / 02</p><h2 id="experience-title">Intelligence that meets you<br /><em>where the doubt begins.</em></h2></div></div>
-          <ol className={styles.steps}><li><span>01 / BRING THE QUESTION</span><h3>That message.<br />That request.<br />That uneasy feeling.</h3><p>Start with the URL you want to understand. You don’t need to visit the destination to submit it for a check.</p><Link href={destinations.check}>Start an investigation <span aria-hidden="true">↗</span></Link></li><li><span>02 / SEE WHAT’S KNOWN</span><h3>The signals.<br />The explanation.<br />The missing pieces.</h3><p>Review the available findings. Uncertainty should stay visible; incomplete evidence should never become false reassurance.</p><a href="#inside-a-verdict">Explore the example <span aria-hidden="true">↗</span></a></li><li><span>03 / CHOOSE YOUR NEXT STEP</span><h3>Less guesswork.<br />A practical action.<br />A considered click.</h3><p>Use the recommendation, verify through a trusted channel, and revisit your recent checks in your workspace.</p><Link href={destinations.history}>View your history <span aria-hidden="true">↗</span></Link></li></ol>
+          <ol className={styles.steps}><li><span>01 / BRING THE QUESTION</span><h3>That message.<br />That request.<br />That uneasy feeling.</h3><p>Start with the URL you want to understand. You don’t need to visit the destination to submit it for a check.</p><Link prefetch={false} href={destinations.check}>Start an investigation <span aria-hidden="true">↗</span></Link></li><li><span>02 / SEE WHAT’S KNOWN</span><h3>The signals.<br />The explanation.<br />The missing pieces.</h3><p>Review the available findings. Uncertainty should stay visible; incomplete evidence should never become false reassurance.</p><a href="#inside-a-verdict">Explore the example <span aria-hidden="true">↗</span></a></li><li><span>03 / CHOOSE YOUR NEXT STEP</span><h3>Less guesswork.<br />A practical action.<br />A considered click.</h3><p>Use the recommendation, verify through a trusted channel, and revisit your recent checks in your workspace.</p><Link prefetch={false} href={destinations.history}>View your history <span aria-hidden="true">↗</span></Link></li></ol>
         </section>
-        <section className={styles.closing} aria-labelledby="closing-title"><LensMark /><p className={styles.eyebrow}>THE SMALL PAUSE BEFORE THE NEXT MOVE</p><h2 id="closing-title">A link is a possibility.<br /><em>Trust is a decision.</em></h2><Link className={styles.primaryAction} href={destinations.check}>Make an informed one <span aria-hidden="true">↗</span></Link><p>CheckBeforeClick. A moment of clarity.</p></section>
+        <section className={styles.closing} aria-labelledby="closing-title"><LensMark /><p className={styles.eyebrow}>THE SMALL PAUSE BEFORE THE NEXT MOVE</p><h2 id="closing-title">A link is a possibility.<br /><em>Trust is a decision.</em></h2><Link prefetch={false} className={styles.primaryAction} href={destinations.check}>Make an informed one <span aria-hidden="true">↗</span></Link><p>CheckBeforeClick. A moment of clarity.</p></section>
       </main>
-      <nav aria-label="Homepage footer" className={styles.footer}><Link href={destinations.home} className={styles.footerBrand}><LensMark />checkbeforeclick.</Link><span>A product of Wabcan Inc.</span><Link href={destinations.account}>Your workspace <span aria-hidden="true">↗</span></Link></nav>
+      <nav aria-label="Homepage footer" className={styles.footer}><Link prefetch={false} href={destinations.home} className={styles.footerBrand}><LensMark />checkbeforeclick.</Link><span>A product of Wabcan Inc.</span><Link prefetch={false} href={destinations.account}>Your workspace <span aria-hidden="true">↗</span></Link></nav>
     </div>
   </>;
 }

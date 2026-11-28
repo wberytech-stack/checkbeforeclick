@@ -105,13 +105,20 @@ The loop stops and notifies the founder when any of these occurs:
 
 The founder interface is a single summary per gate: what changed, review rounds, open findings, validation results, link to the draft PR. Notification channel (GitHub notification, email, or other) is a founder choice.
 
-Decisions required before any activation:
+Founder decisions, stated by the founder in conversation on 2026-11-28 (they accepted the recommendations given there):
 
-1. Reviewer identity: OpenAI model called through an API key, or Codex through its GitHub integration.
-2. Which agent implements by default.
-3. Round limit (proposed: 3) and spend limit per gate.
-4. Whether to apply the section 6.1 GitHub settings, and when.
-5. Which gate runs the first pilot. Proposed: a docs-only gate with a one-file allowlist, as in PR #61.
+1. **Reviewer identity:** start with Codex through its GitHub integration. Reasons:
+   - the reviewer's findings are advisory, and the real controls are GitHub branch protection, required checks and the founder's merge;
+   - no new code or API key is needed, so the loop's value can be tested quickly.
+   - The API-script reviewer in PR #61 stays as the hardened option for security-heavy gates later.
+   - Only the founder's account and the implementer's account may trigger a Codex review, because comment text is an injection path. The current Codex trigger settings must be checked before relying on this.
+2. **Implementer by default:** Claude Code.
+3. **Round limit:** 2 for the pilot, then 3.
+4. **Spend limit:** a hard monthly limit set in each provider's console, starting at about $50 per provider (a working guess to be adjusted). No per-gate counting is built yet.
+5. **GitHub settings (section 6.1):** apply them before the pilot, in the minimal order in section 12.
+6. **First pilot:** a docs-only gate with a one-file allowlist, as in PR #61.
+
+These decisions do not activate anything. Applying the settings and any activation remain founder actions.
 
 ## 9. Pilot plan (not authorized by this gate)
 
@@ -134,3 +141,48 @@ Decisions required before any activation:
 - Calling any provider API.
 - Changing AGENTS.md (a change to it needs its own amendment gate, section 19).
 - Anything on Azure, Key Vault, production, Supabase or any database.
+
+## 12. Founder checklist: GitHub settings (founder-only, not applied by this gate)
+
+Menu names change over time, so treat the labels as approximate. All steps are in the repository on github.com. Each one is reversible. Do them in this order and stop after any step.
+
+### 12.1 Protect `master`
+
+Repository Settings, Rules (or Branches), add a rule for `master`:
+
+1. Require a pull request before merging.
+2. Require at least 1 approval. Do not add the agent accounts as bypass actors.
+3. Block force pushes.
+4. Block deletion of the branch.
+5. Leave auto-merge off.
+
+Required status checks: add **only** checks that already run and pass on `master`. A required check that does not exist blocks every merge. Add more later as CI gates land.
+
+Reminder: a merge into `master` is still a Vercel production deployment (AGENTS.md section 20).
+
+### 12.2 Agent identities
+
+1. Give each agent its own GitHub identity, so history shows who did what. Use a machine account or a GitHub App per agent.
+2. Give each the minimum scope: write to non-protected branches and pull requests, nothing else.
+3. Do not give any agent merge rights, admin rights, or secrets for Azure, Key Vault, Supabase or production.
+
+### 12.3 Codex reviewer
+
+1. Install the Codex GitHub integration on this repository only, not the whole account.
+2. Check its settings for who can trigger a review. Restrict it to the founder and the implementer. If it cannot be restricted, use manual triggering by the founder only.
+3. Confirm that it posts comments and cannot approve or merge.
+4. Confirm that repository files such as `AGENTS.md` are treated as its instructions, and that PR text is not.
+
+### 12.4 Spend limits
+
+Set a monthly hard limit in each provider's console (starting guess, about $50 each). Check usage after the first pilot and adjust.
+
+### 12.5 Workflow safety
+
+1. Under Settings, Actions: set the default workflow token permission to read-only.
+2. Keep `pull_request_target` unused, and require approval before workflows run for first-time contributors.
+3. Keep the Azure deploy environments with the founder as required reviewer.
+
+### 12.6 Verify
+
+After applying the settings, open a throwaway docs-only PR and confirm: direct push to `master` is refused, merge is blocked without approval, and an agent identity cannot merge. Record the result in a follow-up gate document. Do not claim the guardrails work until this is observed.

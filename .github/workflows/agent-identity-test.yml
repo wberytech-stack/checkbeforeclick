@@ -1,6 +1,6 @@
 # Gate 009B: implementer GitHub App identity acceptance test (A1-A7). DISABLED. Review only.
 #
-# The job is hard-disabled with `if: ${{ false }}`. Enabling it is a separate activation PR
+# The job is hard-disabled with a leading `false &&`. Enabling it is a separate activation PR
 # that the founder approves after Codex reviews the exact commit.
 # It runs no model and needs no Anthropic key. Manual dispatch by the founder only.
 #
@@ -36,10 +36,10 @@ env:
 
 jobs:
   identity:
-    if: ${{ false }}
+    if: ${{ false && inputs.confirm == 'RUN-A1-A7' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: agent-implementer
+    environment: agent-publisher
     permissions:
       contents: read
     steps:

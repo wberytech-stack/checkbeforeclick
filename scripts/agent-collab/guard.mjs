@@ -1,7 +1,8 @@
 // Gate 009B: deterministic guard for the founder-triggered agent pilot.
 // Pure functions plus a small CLI. No network, no secrets, no model calls.
 // The workflows call this CLI; the offline tests call the functions directly.
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, lstatSync } from "node:fs";
+import { join } from "node:path";
 
 export const TASKS = Object.freeze({
   "cbc-doc-pilot-001": Object.freeze({
@@ -76,7 +77,8 @@ export function checkChangedFiles(entries, allowedFiles) {
     if (!(e.status === "A" || e.status === "M")) reasons.push(`status ${e.status} not allowed: ${path}`);
     if (!allowed.has(path)) reasons.push(`outside allowlist: ${path}`);
     if (e.oldPath !== undefined) reasons.push(`rename or copy not allowed: ${path}`);
-    if (e.mode !== undefined && e.mode !== "100644") reasons.push(`file mode ${e.mode} not allowed: ${path}`);
+    if (e.mode === undefined) reasons.push(`file mode information missing: ${path}`);
+    else if (e.mode !== "100644") reasons.push(`file mode ${e.mode} not allowed (only a regular non-executable file): ${path}`);
   }
   return { ok: reasons.length === 0, reasons };
 }
@@ -129,15 +131,15 @@ export function handledReviewIds(commits) {
 // Decide whether a fix run may proceed and which round it is. The round is derived from
 // commit trailers on the PR branch, never from an input. Round 1 is the implementation;
 // fix rounds are 2 and 3 (two review-and-fix rounds).
-export function planFixRound(commits, reviewId, taskId) {
+export function planFixRound(commits, reviewId, taskId, markers = { ids: new Set(), maxRound: 0 }) {
   const reasons = [];
   const task = TASKS[taskId];
   if (!task) return { ok: false, reasons: ["unknown task"] };
-  const done = countRounds(commits);
-  if (done < 1) reasons.push("no implementation round recorded on this branch");
+  const done = Math.max(countRounds(commits), markers.maxRound);
+  if (countRounds(commits) < 1) reasons.push("no implementation round recorded on this branch");
   const round = done + 1;
   if (round > task.maxRounds + 1) reasons.push(`round limit reached: ${done} rounds already recorded`);
-  if (handledReviewIds(commits).has(String(reviewId))) reasons.push("this review was already handled (duplicate event)");
+  if (handledReviewIds(commits).has(String(reviewId)) || markers.ids.has(String(reviewId))) reasons.push("this review was already handled (duplicate event)");
   return { ok: reasons.length === 0, round, reasons };
 }
 
@@ -190,6 +192,86 @@ export function prepareFindings(input, { reviewerLogin, headSha }) {
   };
 }
 
+
+// ---- tree comparison without git ------------------------------------------------------
+// The model's working tree is never trusted: its .git directory may hold hooks or config.
+// This compares two plain directories with lstat, so symlinks and modes are visible.
+const TREE_IGNORE = new Set([".git"]);
+
+function walk(root, rel = "", out = new Map()) {
+  for (const name of readdirSync(join(root, rel)).sort()) {
+    if (rel === "" && TREE_IGNORE.has(name)) continue;
+    const r = rel ? `${rel}/${name}` : name;
+    const st = lstatSync(join(root, r));
+    if (st.isDirectory()) walk(root, r, out);
+    else out.set(r, { kind: st.isSymbolicLink() ? "symlink" : st.isFile() ? "file" : "other", exec: (st.mode & 0o111) !== 0, size: st.size });
+  }
+  return out;
+}
+
+export function modeString(info) {
+  if (info.kind === "symlink") return "120000";
+  if (info.kind !== "file") return "000000";
+  return info.exec ? "100755" : "100644";
+}
+
+// ignore: extra file names (relative paths) to leave out, for example the findings file we place ourselves.
+export function treeDiff(baseDir, workDir, { ignore = [], readFile = (d, r) => readFileSync(join(d, r)) } = {}) {
+  const base = walk(baseDir), work = walk(workDir), skip = new Set(ignore);
+  const entries = [];
+  for (const [path, info] of work) {
+    if (skip.has(path)) continue;
+    const b = base.get(path);
+    if (!b) { entries.push({ status: "A", path, mode: modeString(info) }); continue; }
+    const changed = b.kind !== info.kind || b.exec !== info.exec || b.size !== info.size ||
+      (info.kind === "file" && !readFile(baseDir, path).equals(readFile(workDir, path)));
+    if (changed) entries.push({ status: "M", path, mode: modeString(info) });
+  }
+  for (const path of base.keys()) if (!skip.has(path) && !work.has(path)) entries.push({ status: "D", path, mode: "000000" });
+  return entries.sort((a, c) => (a.path < c.path ? -1 : 1));
+}
+
+export const MAX_FILE_BYTES = 64 * 1024;
+
+// A candidate is the one file the edit job hands to the publish job.
+export function checkCandidateContent(buf) {
+  const reasons = [];
+  if (!Buffer.isBuffer(buf)) return { ok: false, reasons: ["candidate is not a buffer"] };
+  if (buf.length === 0) reasons.push("candidate is empty");
+  if (buf.length > MAX_FILE_BYTES) reasons.push(`candidate larger than ${MAX_FILE_BYTES} bytes`);
+  if (buf.includes(0)) reasons.push("candidate contains a NUL byte (not text)");
+  const text = buf.toString("utf8");
+  if (text.includes("\uFFFD")) reasons.push("candidate is not valid UTF-8");
+  for (const h of scanForSecrets(text)) reasons.push(`secret-like text matched ${h}`);
+  return { ok: reasons.length === 0, reasons };
+}
+
+// ---- handled-review records -----------------------------------------------------------
+// A review that produces no commit still must never run (and bill) twice. The publish job writes one
+// marker comment as the implementer App. Only a comment authored by that App counts.
+export const MARKER_RE = /^<!-- cbc-agent-handled-review:([1-9][0-9]{0,15}) round:([0-3]) outcome:(committed|no_change|no_findings) -->$/m;
+
+export function buildMarker({ reviewId, round, outcome }) {
+  if (!/^[1-9][0-9]{0,15}$/.test(String(reviewId))) throw new Error("review id invalid");
+  if (![0, 1, 2, 3].includes(Number(round))) throw new Error("round invalid");
+  if (!["committed", "no_change", "no_findings"].includes(outcome)) throw new Error("outcome invalid");
+  return `<!-- cbc-agent-handled-review:${reviewId} round:${Number(round)} outcome:${outcome} -->`;
+}
+
+export function parseHandledMarkers(comments, appLogin) {
+  const ids = new Set();
+  let maxRound = 0;
+  if (!appLogin) return { ids, maxRound };
+  for (const c of Array.isArray(comments) ? comments : []) {
+    if (!c || c.user?.login !== appLogin || c.user?.type !== "Bot") continue;
+    const m = MARKER_RE.exec(String(c.body ?? ""));
+    if (!m) continue;
+    ids.add(m[1]);
+    maxRound = Math.max(maxRound, Number(m[2]));
+  }
+  return { ids, maxRound };
+}
+
 function readJson(p) { return JSON.parse(readFileSync(p, "utf8")); }
 function arg(args, name) { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined; }
 
@@ -205,11 +287,32 @@ function cli(argv) {
         pilotEnabled: arg(args, "enabled"),
       });
       break;
-    case "files": {
+    case "tree": {
       const task = TASKS[arg(args, "task")];
       if (!task) { result = { ok: false, reasons: ["unknown task"] }; break; }
-      result = checkChangedFiles(parseNameStatus(readFileSync(arg(args, "list"), "utf8")), task.allowedFiles);
+      const ignore = (arg(args, "ignore") ?? "").split(",").filter(Boolean);
+      result = checkChangedFiles(treeDiff(arg(args, "base"), arg(args, "work"), { ignore }), task.allowedFiles);
       break;
+    }
+    case "candidate": {
+      const task = TASKS[arg(args, "task")];
+      if (!task) { result = { ok: false, reasons: ["unknown task"] }; break; }
+      const dir = arg(args, "dir");
+      const entries = [...walk(dir).entries()];
+      const reasons = [];
+      if (entries.length !== 1) reasons.push(`candidate directory must hold exactly one file, found ${entries.length}`);
+      else {
+        const [path, info] = entries[0];
+        const checked = checkChangedFiles([{ status: "M", path, mode: modeString(info) }], task.allowedFiles);
+        reasons.push(...checked.reasons);
+        if (info.kind === "file") reasons.push(...checkCandidateContent(readFileSync(join(dir, path))).reasons);
+      }
+      result = { ok: reasons.length === 0, reasons };
+      break;
+    }
+    case "marker": {
+      process.stdout.write(buildMarker({ reviewId: arg(args, "review"), round: arg(args, "round"), outcome: arg(args, "outcome") }) + "\n");
+      return 0;
     }
     case "pr":
       result = checkPullRequest(readJson(arg(args, "json")), { appSlug: arg(args, "slug"), expectedHeadSha: arg(args, "sha") });
@@ -218,7 +321,8 @@ function cli(argv) {
       result = checkReview(readJson(arg(args, "json")), { reviewId: arg(args, "review"), reviewerLogin: arg(args, "reviewer"), headSha: arg(args, "sha") });
       break;
     case "plan": {
-      const plan = planFixRound(readJson(arg(args, "commits")), arg(args, "review"), arg(args, "task"));
+      const comments = arg(args, "comments") ? readJson(arg(args, "comments")) : [];
+      const plan = planFixRound(readJson(arg(args, "commits")), arg(args, "review"), arg(args, "task"), parseHandledMarkers(comments, `${arg(args, "slug")}[bot]`));
       process.stdout.write(JSON.stringify(plan) + "\n");
       return plan.ok ? 0 : 1;
     }
@@ -234,7 +338,7 @@ function cli(argv) {
       return 0;
     }
     default:
-      process.stderr.write("usage: guard.mjs inputs|files|pr|review|plan|secrets|findings ...\n");
+      process.stderr.write("usage: guard.mjs inputs|tree|candidate|marker|pr|review|plan|secrets|findings ...\n");
       return 2;
   }
   process.stdout.write(JSON.stringify(result) + "\n");

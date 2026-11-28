@@ -1,7 +1,7 @@
 # Gate 009B: secret-free router for the event-driven agent pilot. DISABLED. Review only.
 #
-# Both jobs are hard-disabled with `if: ${{ false }}`. The activation PR replaces that line
-# with the real condition, which is listed in the pre-filter step below and re-checked there.
+# Both jobs are hard-disabled with a leading `false &&` and each names its own event. The activation PR
+# removes only the `false && ` prefix. The full condition is also re-checked in each pre-filter step.
 #
 # Why a router: Codex reviews arrive as `pull_request_review` events. GitHub runs the workflow
 # file of the pull request for that event, so anything that holds secrets must NOT run here.
@@ -42,7 +42,7 @@ env:
 
 jobs:
   route-review:
-    if: ${{ false }}
+    if: ${{ false && github.event_name == 'pull_request_review' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
@@ -81,7 +81,7 @@ jobs:
             -f pr_number="$PR_NUMBER" -f review_id="$REVIEW_ID" -f expected_head_sha="$PR_HEAD_SHA"
 
   request-codex-review:
-    if: ${{ false }}
+    if: ${{ false && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
